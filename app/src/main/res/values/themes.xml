@@ -2,10 +2,17 @@
 <resources>
     <style name="Theme.SprutHubHelper" parent="Theme.MaterialComponents.DayNight.NoActionBar">
         <item name="colorPrimary">@color/sprut_green</item>
-        <item name="colorPrimaryVariant">@color/sprut_navy</item>
+        <item name="colorPrimaryVariant">@color/sprut_surface_elevated</item>
+        <item name="colorOnPrimary">@color/sprut_on_green</item>
         <item name="colorSecondary">@color/sprut_green</item>
-        <item name="android:windowLightStatusBar">true</item>
-        <item name="android:navigationBarColor">@color/sprut_cream</item>
-        <item name="android:statusBarColor">@color/sprut_cream</item>
+        <item name="colorSurface">@color/sprut_surface</item>
+        <item name="colorOnSurface">@color/sprut_text</item>
+        <item name="colorError">@color/sprut_error</item>
+        <item name="android:windowBackground">@color/sprut_navy</item>
+        <item name="android:navigationBarColor">@color/sprut_navy</item>
+        <item name="android:statusBarColor">@color/sprut_navy</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+        <item name="android:forceDarkAllowed">false</item>
     </style>
 </resources>

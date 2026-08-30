@@ -58,6 +58,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -116,23 +117,73 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private val SprutGreen = Color(0xFF1F7A5B)
-private val SprutDark = Color(0xFF10251E)
-private val SprutCream = Color(0xFFF6F7F1)
+private val SprutGreen = Color(0xFF72DDB2)
+private val SprutDark = Color(0xFF0B1412)
+private val SprutSurface = Color(0xFF111D1A)
+private val SprutSurfaceElevated = Color(0xFF182824)
+private val SprutField = Color(0xFF20322D)
+private val SprutFieldFocused = Color(0xFF263D36)
+private val SprutText = Color(0xFFF1F7F4)
+private val SprutTextMuted = Color(0xFFB6C8C0)
+private val SprutOutline = Color(0xFF748A81)
+private val SprutError = Color(0xFFFFB4AB)
 
 @Composable
 private fun SprutHelperTheme(content: @Composable () -> Unit) {
-    val scheme = androidx.compose.material3.lightColorScheme(
+    val scheme = androidx.compose.material3.darkColorScheme(
         primary = SprutGreen,
-        onPrimary = Color.White,
-        secondary = Color(0xFF4B6358),
-        background = SprutCream,
-        surface = Color.White,
-        onBackground = SprutDark,
-        onSurface = SprutDark,
+        onPrimary = Color(0xFF003827),
+        primaryContainer = Color(0xFF15513D),
+        onPrimaryContainer = Color(0xFFA7F2D1),
+        secondary = Color(0xFFB4CCBF),
+        onSecondary = Color(0xFF20352C),
+        secondaryContainer = Color(0xFF374B42),
+        onSecondaryContainer = Color(0xFFD0E8DA),
+        background = SprutDark,
+        surface = SprutSurface,
+        surfaceVariant = SprutSurfaceElevated,
+        onBackground = SprutText,
+        onSurface = SprutText,
+        onSurfaceVariant = SprutTextMuted,
+        outline = SprutOutline,
+        outlineVariant = Color(0xFF40544C),
+        error = SprutError,
+        onError = Color(0xFF690005),
+        errorContainer = Color(0xFF93000A),
+        onErrorContainer = Color(0xFFFFDAD6),
     )
     MaterialTheme(colorScheme = scheme, content = content)
 }
+
+@Composable
+private fun sprutTextFieldColors() = OutlinedTextFieldDefaults.colors(
+    focusedTextColor = SprutText,
+    unfocusedTextColor = SprutText,
+    disabledTextColor = SprutText.copy(alpha = 0.5f),
+    errorTextColor = SprutText,
+    focusedContainerColor = SprutFieldFocused,
+    unfocusedContainerColor = SprutField,
+    disabledContainerColor = SprutField.copy(alpha = 0.5f),
+    errorContainerColor = SprutField,
+    cursorColor = SprutGreen,
+    errorCursorColor = SprutError,
+    focusedBorderColor = SprutGreen,
+    unfocusedBorderColor = SprutOutline,
+    disabledBorderColor = SprutOutline.copy(alpha = 0.45f),
+    errorBorderColor = SprutError,
+    focusedLabelColor = SprutGreen,
+    unfocusedLabelColor = SprutTextMuted,
+    disabledLabelColor = SprutTextMuted.copy(alpha = 0.5f),
+    errorLabelColor = SprutError,
+    focusedLeadingIconColor = SprutGreen,
+    unfocusedLeadingIconColor = SprutTextMuted,
+    disabledLeadingIconColor = SprutTextMuted.copy(alpha = 0.5f),
+    errorLeadingIconColor = SprutError,
+    focusedSupportingTextColor = SprutTextMuted,
+    unfocusedSupportingTextColor = SprutTextMuted,
+    disabledSupportingTextColor = SprutTextMuted.copy(alpha = 0.5f),
+    errorSupportingTextColor = SprutError,
+)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -169,7 +220,10 @@ private fun MainScreen(viewModel: MainViewModel = viewModel()) {
                         Text("Устройства Android", style = MaterialTheme.typography.labelMedium)
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = SprutCream),
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = SprutDark,
+                    titleContentColor = SprutText,
+                ),
             )
         },
     ) { padding ->
@@ -202,6 +256,7 @@ private fun MainScreen(viewModel: MainViewModel = viewModel()) {
                         singleLine = true,
                         label = { Text("Поиск") },
                         leadingIcon = { Icon(Icons.Rounded.Search, null) },
+                        colors = sprutTextFieldColors(),
                     )
                 }
             }
@@ -399,7 +454,7 @@ private fun ConnectionCard(ui: MainUiState, busy: Boolean, viewModel: MainViewMo
     Card(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
         shape = RoundedCornerShape(24.dp),
-        colors = CardDefaults.cardColors(containerColor = SprutDark),
+        colors = CardDefaults.cardColors(containerColor = SprutSurfaceElevated),
     ) {
         Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -438,6 +493,7 @@ private fun ConnectionCard(ui: MainUiState, busy: Boolean, viewModel: MainViewMo
                         modifier = Modifier.fillMaxWidth(),
                         label = { Text("Серийный номер хаба") },
                         singleLine = true,
+                        colors = sprutTextFieldColors(),
                     )
                     OutlinedTextField(
                         value = email,
@@ -446,6 +502,7 @@ private fun ConnectionCard(ui: MainUiState, busy: Boolean, viewModel: MainViewMo
                         label = { Text("E-mail SprutHub") },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
                         singleLine = true,
+                        colors = sprutTextFieldColors(),
                     )
                     OutlinedTextField(
                         value = password,
@@ -455,6 +512,7 @@ private fun ConnectionCard(ui: MainUiState, busy: Boolean, viewModel: MainViewMo
                         visualTransformation = PasswordVisualTransformation(),
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                         singleLine = true,
+                        colors = sprutTextFieldColors(),
                     )
                     OutlinedTextField(
                         value = localUrl,
@@ -463,6 +521,7 @@ private fun ConnectionCard(ui: MainUiState, busy: Boolean, viewModel: MainViewMo
                         label = { Text("Локальный WebSocket") },
                         supportingText = { Text("Незашифрованный доступ ограничен вашим IP 192.168.1.135") },
                         singleLine = true,
+                        colors = sprutTextFieldColors(),
                     )
                     OutlinedTextField(
                         value = cloudUrl,
@@ -470,6 +529,7 @@ private fun ConnectionCard(ui: MainUiState, busy: Boolean, viewModel: MainViewMo
                         modifier = Modifier.fillMaxWidth(),
                         label = { Text("Облачный WebSocket") },
                         singleLine = true,
+                        colors = sprutTextFieldColors(),
                     )
                     OutlinedButton(
                         onClick = { viewModel.saveSettings(mode, localUrl, cloudUrl, serial, email, password) },
