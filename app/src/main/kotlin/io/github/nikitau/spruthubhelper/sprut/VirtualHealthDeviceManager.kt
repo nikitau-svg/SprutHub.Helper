@@ -247,9 +247,11 @@ class VirtualHealthDeviceManager(
                 .orEmpty()
                 .mapNotNull { it as? JsonObject }
             val expectedType = expectedTypes?.get(field.kind)?.lowercase()
-            val candidates = characteristics
-                .filterNot { it.isNameCharacteristic() }
-                .filter { findBoolean(it, "write") == true }
+            // `write` describes whether a person may control a characteristic
+            // from the SprutHub UI. Read-only sensor characteristics are still
+            // updated by their virtual accessory provider through
+            // characteristic.update, which is exactly our role here.
+            val candidates = characteristics.filterNot { it.isNameCharacteristic() }
             val characteristic = expectedType?.let { expected ->
                 candidates.firstOrNull { candidate ->
                     candidate.typeIdentifiers().any { actual -> actual.sameTypeAs(expected) }
@@ -261,10 +263,13 @@ class VirtualHealthDeviceManager(
                     .filter { candidate -> candidate.typeIdentifiers().matches(field.kind) }
                     .singleOrNull()
                 // SprutHub omits the value object for an empty GenericString.
-                // A service created by this app has exactly one writable,
-                // non-name characteristic, so this fallback remains unambiguous.
+                // A service created by this app has exactly one data
+                // characteristic besides C_Name, so this remains unambiguous.
                 ?: candidates.singleOrNull()
-                ?: return@mapNotNull null
+                ?: run {
+                    Log.w(LOG_TAG, healthFieldDiagnostic(field, serviceId, characteristics))
+                    return@mapNotNull null
+                }
             val characteristicId = characteristic.scalar("cId", "id")
             val valueField = findValueField(characteristic) ?: defaultValueField(field.kind)
             if (serviceId.isBlank() || characteristicId.isBlank()) return@mapNotNull null
@@ -525,12 +530,14 @@ class VirtualHealthDeviceManager(
     private fun JsonObject.array(key: String): JsonArray? =
         entries.firstOrNull { it.key.equals(key, true) }?.value as? JsonArray
 
-    private fun JsonObject.isNameCharacteristic(): Boolean = listOf(
-        scalar("type"),
-        scalar("id").takeIf { it.toLongOrNull() == null }.orEmpty(),
-        scalar("shortId"),
-        scalar("name"),
-    ).map { it.lowercase() }.any { it == "name" || it == "c_name" || it.endsWith(".name") }
+    private fun JsonObject.isNameCharacteristic(): Boolean = (
+        listOf(
+            scalar("type"),
+            scalar("id").takeIf { it.toLongOrNull() == null }.orEmpty(),
+            scalar("shortId"),
+            scalar("name"),
+        ) + typeIdentifiers()
+        ).any(::isSprutNameTypeIdentifier)
 
     private fun JsonObject.typeIdentifiers(): List<String> = buildList {
         fun collect(element: JsonElement) {
@@ -557,6 +564,22 @@ class VirtualHealthDeviceManager(
         val characteristics = services.sumOf { it.array("characteristics")?.size ?: 0 }
         return "Health binding pending: accessoryId=${accessory.scalar("id", "aId")}, " +
             "services=${services.size}, matchedServices=$matched, characteristics=$characteristics"
+    }
+
+    private fun healthFieldDiagnostic(
+        field: VirtualFieldSpec,
+        serviceId: String,
+        characteristics: List<JsonObject>,
+    ): String {
+        val metadata = characteristics.joinToString(separator = ";", limit = 6) { characteristic ->
+            val id = characteristic.scalar("cId", "id")
+            val types = characteristic.typeIdentifiers().joinToString("|").take(120)
+            val valueField = findValueField(characteristic).orEmpty()
+            val write = findBoolean(characteristic, "write")
+            "id=$id,name=${characteristic.isNameCharacteristic()},write=$write,valueField=$valueField,types=$types"
+        }
+        return "Health field unresolved: key=${field.key}, serviceId=$serviceId, " +
+            "characteristics=${characteristics.size}, metadata=$metadata"
     }
 
     private fun String.sameTypeAs(other: String): Boolean = normalizeType() == other.normalizeType()
@@ -602,6 +625,7 @@ class VirtualHealthDeviceManager(
         )
         private val TYPE_IDENTIFIER_KEYS = setOf(
             "type",
+            "id",
             "shortid",
             "characteristictype",
             "typename",
@@ -619,6 +643,11 @@ internal fun healthTypeDescriptorMatches(descriptor: String, kind: HealthValueKi
         HealthValueKind.STRING -> normalized.contains("string") || normalized.contains("text")
         HealthValueKind.BOOL -> normalized.contains("bool")
     }
+}
+
+internal fun isSprutNameTypeIdentifier(value: String): Boolean {
+    val normalized = value.lowercase().filter(Char::isLetterOrDigit)
+    return normalized == "name" || normalized == "cname" || normalized == "characteristicname"
 }
 
 internal fun sameSprutLabel(first: String, second: String): Boolean =

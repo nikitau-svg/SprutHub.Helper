@@ -24,4 +24,11 @@ class VirtualHealthDeviceManagerTest {
         assertTrue(healthTypeDescriptorMatches("format=String", HealthValueKind.STRING))
         assertFalse(healthTypeDescriptorMatches("C_GenericDouble", HealthValueKind.STRING))
     }
+
+    @Test
+    fun recognizesNestedNameCharacteristicType() {
+        assertTrue(isSprutNameTypeIdentifier("C_Name"))
+        assertTrue(isSprutNameTypeIdentifier("characteristic.name"))
+        assertFalse(isSprutNameTypeIdentifier("C_GenericString"))
+    }
 }
