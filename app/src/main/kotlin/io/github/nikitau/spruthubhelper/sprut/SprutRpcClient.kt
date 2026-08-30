@@ -3,6 +3,8 @@ package io.github.nikitau.spruthubhelper.sprut
 import io.github.nikitau.spruthubhelper.data.ConnectionMode
 import io.github.nikitau.spruthubhelper.data.HubConfig
 import java.io.IOException
+import java.nio.charset.StandardCharsets
+import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
@@ -27,6 +29,29 @@ import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 
+internal class SprutEndpointCandidate(
+    val url: String,
+    val isLocal: Boolean,
+    val password: String,
+) {
+    override fun toString(): String =
+        "SprutEndpointCandidate(url=$url, isLocal=$isLocal, password=<redacted>)"
+}
+
+internal fun connectionCandidates(config: HubConfig): List<SprutEndpointCandidate> {
+    fun candidate(url: String, isLocal: Boolean) = SprutEndpointCandidate(
+        url = url.trim(),
+        isLocal = isLocal,
+        password = config.passwordFor(isLocal),
+    )
+
+    return when (config.mode) {
+        ConnectionMode.AUTO -> listOf(candidate(config.localUrl, true), candidate(config.cloudUrl, false))
+        ConnectionMode.LOCAL -> listOf(candidate(config.localUrl, true))
+        ConnectionMode.CLOUD -> listOf(candidate(config.cloudUrl, false))
+    }.filter { it.url.isNotBlank() }
+}
+
 class SprutRpcClient {
     private val json = Json { ignoreUnknownKeys = true }
     private val httpClient = OkHttpClient.Builder()
@@ -46,30 +71,35 @@ class SprutRpcClient {
     val events: SharedFlow<JsonElement> = _events
 
     suspend fun connect(config: HubConfig, force: Boolean = false): ConnectedEndpoint = connectionMutex.withLock {
-        val key = listOf(config.mode, config.localUrl, config.cloudUrl, config.serial, config.email, config.password.hashCode())
-            .joinToString("|")
+        val candidates = connectionCandidates(config)
+        val key = sessionIdentity(config, candidates)
         session?.takeIf { !force && sessionKey == key && it.isOpen }?.let {
-            return ConnectedEndpoint(it.endpoint, it.endpoint == config.localUrl)
+            return ConnectedEndpoint(it.endpoint, it.isLocal)
         }
 
         session?.close()
         session = null
         val failures = mutableListOf<String>()
-        for (endpoint in endpoints(config)) {
-            val candidate = SocketSession(endpoint, config.serial)
+        for (endpoint in candidates) {
+            val candidate = SocketSession(endpoint.url, config.serial, endpoint.isLocal)
             val attempt = runCatching {
                 candidate.open()
-                authenticate(candidate, config)
+                authenticate(
+                    socket = candidate,
+                    email = config.email,
+                    password = endpoint.password,
+                    isLocal = endpoint.isLocal,
+                )
                 candidate
             }
             val connected = attempt.getOrNull()
             if (connected != null) {
                 session = connected
                 sessionKey = key
-                return ConnectedEndpoint(endpoint, endpoint == config.localUrl)
+                return ConnectedEndpoint(endpoint.url, endpoint.isLocal)
             }
             candidate.close()
-            failures += "${safeEndpoint(endpoint)}: ${attempt.exceptionOrNull()?.message ?: "ошибка"}"
+            failures += "${safeEndpoint(endpoint.url)}: ${safeFailureMessage(attempt.exceptionOrNull(), endpoint.password)}"
         }
         throw SprutConnectionException(failures.joinToString("; "))
     }
@@ -91,13 +121,12 @@ class SprutRpcClient {
         sessionKey = ""
     }
 
-    private fun endpoints(config: HubConfig): List<String> = when (config.mode) {
-        ConnectionMode.AUTO -> listOf(config.localUrl, config.cloudUrl)
-        ConnectionMode.LOCAL -> listOf(config.localUrl)
-        ConnectionMode.CLOUD -> listOf(config.cloudUrl)
-    }.map(String::trim).filter(String::isNotBlank).distinct()
-
-    private suspend fun authenticate(socket: SocketSession, config: HubConfig) {
+    private suspend fun authenticate(
+        socket: SocketSession,
+        email: String,
+        password: String,
+        isLocal: Boolean,
+    ) {
         var response = socket.request(accountRequest("auth"))
         repeat(4) {
             findStringByKey(response, "token")?.takeIf(String::isNotBlank)?.let {
@@ -107,12 +136,13 @@ class SprutRpcClient {
             val marker = response.toString().uppercase()
             response = when {
                 marker.contains("QUESTION_TYPE_EMAIL") || marker.contains("\"EMAIL\"") -> {
-                    require(config.email.isNotBlank()) { "SprutHub запросил e-mail" }
-                    socket.request(answerRequest(config.email))
+                    require(email.isNotBlank()) { "SprutHub запросил e-mail" }
+                    socket.request(answerRequest(email))
                 }
                 marker.contains("QUESTION_TYPE_PASSWORD") || marker.contains("\"PASSWORD\"") -> {
-                    require(config.password.isNotBlank()) { "SprutHub запросил пароль" }
-                    socket.request(answerRequest(config.password))
+                    val endpointLabel = if (isLocal) "локальный" else "облачный"
+                    require(password.isNotBlank()) { "SprutHub запросил $endpointLabel пароль" }
+                    socket.request(answerRequest(password))
                 }
                 else -> return
             }
@@ -123,16 +153,16 @@ class SprutRpcClient {
             return
         }
 
-        if (config.email.isNotBlank()) {
+        if (email.isNotBlank()) {
             var legacy = socket.request(
                 buildJsonObject {
                     put("account", buildJsonObject {
-                        put("login", buildJsonObject { put("login", config.email) })
+                        put("login", buildJsonObject { put("login", email) })
                     })
                 },
             )
-            if (legacy.toString().uppercase().contains("PASSWORD") && config.password.isNotBlank()) {
-                legacy = socket.request(answerRequest(config.password))
+            if (legacy.toString().uppercase().contains("PASSWORD") && password.isNotBlank()) {
+                legacy = socket.request(answerRequest(password))
             }
             findStringByKey(legacy, "token")?.takeIf(String::isNotBlank)?.let {
                 socket.token = it
@@ -166,9 +196,33 @@ class SprutRpcClient {
         "${uri.scheme}://${uri.host}${if (uri.port > 0) ":${uri.port}" else ""}${uri.path.orEmpty()}"
     }.getOrDefault("адрес SprutHub")
 
+    private fun safeFailureMessage(error: Throwable?, password: String): String {
+        val message = error?.message ?: return "ошибка"
+        return if (password.isEmpty()) message else message.replace(password, "<redacted>")
+    }
+
+    private fun sessionIdentity(
+        config: HubConfig,
+        candidates: List<SprutEndpointCandidate>,
+    ): String = buildString {
+        append(config.mode).append('|')
+        append(config.serial).append('|')
+        append(config.email).append('|')
+        candidates.forEach { candidate ->
+            append(if (candidate.isLocal) "local" else "cloud").append(':')
+            append(candidate.url).append(':')
+            append(secretFingerprint(candidate.password)).append('|')
+        }
+    }
+
+    private fun secretFingerprint(secret: String): String = MessageDigest.getInstance("SHA-256")
+        .digest(secret.toByteArray(StandardCharsets.UTF_8))
+        .joinToString(separator = "") { byte -> "%02x".format(byte) }
+
     inner class SocketSession(
         val endpoint: String,
         private val serial: String,
+        val isLocal: Boolean,
     ) : WebSocketListener() {
         private val opened = CompletableDeferred<Unit>()
         private val requestIds = AtomicLong(1)

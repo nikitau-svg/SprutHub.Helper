@@ -50,7 +50,7 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun currentConfig(): HubConfig = config.first()
 
-    suspend fun saveConfig(config: HubConfig, replacePassword: Boolean) {
+    suspend fun saveConfig(config: HubConfig, passwordUpdate: HubPasswordUpdate) {
         validate(config)
         context.settingsDataStore.edit { preferences ->
             preferences[Keys.MODE] = config.mode.name
@@ -59,7 +59,25 @@ class SettingsRepository(private val context: Context) {
             preferences[Keys.SERIAL] = config.serial.trim()
             preferences[Keys.EMAIL] = config.email.trim()
         }
-        if (replacePassword) secretStore.savePassword(config.password)
+        secretStore.updatePasswords(passwordUpdate)
+    }
+
+    /**
+     * Compatibility bridge for the original single-password UI. A replacement
+     * updates both endpoint credentials, matching the behaviour before v2.
+     */
+    suspend fun saveConfig(config: HubConfig, replacePassword: Boolean) {
+        saveConfig(
+            config = config,
+            passwordUpdate = if (replacePassword) {
+                HubPasswordUpdate(
+                    localPassword = config.password,
+                    cloudPassword = config.password,
+                )
+            } else {
+                HubPasswordUpdate()
+            },
+        )
     }
 
     suspend fun assignTile(slot: Int, controlId: String) {
@@ -121,16 +139,21 @@ class SettingsRepository(private val context: Context) {
         context.settingsDataStore.edit { it[Keys.LAST_HEALTH_SYNC] = epochMs }
     }
 
-    private fun preferencesToConfig(preferences: Preferences): HubConfig = HubConfig(
-        mode = preferences[Keys.MODE]
-            ?.let { runCatching { ConnectionMode.valueOf(it) }.getOrNull() }
-            ?: ConnectionMode.AUTO,
-        localUrl = preferences[Keys.LOCAL_URL] ?: HubConfig.DEFAULT_LOCAL_URL,
-        cloudUrl = preferences[Keys.CLOUD_URL] ?: HubConfig.DEFAULT_CLOUD_URL,
-        serial = preferences[Keys.SERIAL] ?: HubConfig.DEFAULT_SERIAL,
-        email = preferences[Keys.EMAIL].orEmpty(),
-        password = secretStore.readPassword(),
-    )
+    private fun preferencesToConfig(preferences: Preferences): HubConfig {
+        val passwords = secretStore.readPasswords()
+        return HubConfig(
+            mode = preferences[Keys.MODE]
+                ?.let { runCatching { ConnectionMode.valueOf(it) }.getOrNull() }
+                ?: ConnectionMode.AUTO,
+            localUrl = preferences[Keys.LOCAL_URL] ?: HubConfig.DEFAULT_LOCAL_URL,
+            cloudUrl = preferences[Keys.CLOUD_URL] ?: HubConfig.DEFAULT_CLOUD_URL,
+            serial = preferences[Keys.SERIAL] ?: HubConfig.DEFAULT_SERIAL,
+            email = preferences[Keys.EMAIL].orEmpty(),
+            localPassword = passwords.localPassword,
+            cloudPassword = passwords.cloudPassword,
+            password = passwords.legacyCompatiblePassword,
+        )
+    }
 
     private fun decodeAssignments(preferences: Preferences): List<TileAssignment> =
         preferences[Keys.TILE_ASSIGNMENTS]
