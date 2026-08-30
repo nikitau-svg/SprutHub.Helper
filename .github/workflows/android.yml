@@ -36,6 +36,19 @@ jobs:
       - name: Lint, test and build debug APK
         run: gradle --no-daemon :app:lintDebug :app:testDebugUnitTest :app:assembleDebug
 
+      - name: Prepare beta APK and checksum
+        if: >-
+          (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+          github.ref == 'refs/heads/beta'
+        shell: bash
+        run: |
+          mkdir -p dist
+          short_sha="${GITHUB_SHA::7}"
+          apk="SprutHub.Helper-beta-${short_sha}.apk"
+          cp app/build/outputs/apk/debug/app-debug.apk "dist/$apk"
+          cd dist
+          sha256sum "$apk" > "$apk.sha256"
+
       - name: Upload beta APK
         if: >-
           (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
@@ -43,6 +56,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: SprutHub.Helper-beta-${{ github.sha }}
-          path: app/build/outputs/apk/debug/app-debug.apk
+          path: dist/
           if-no-files-found: error
           retention-days: 14

@@ -15,12 +15,20 @@ jobs:
     steps:
       - name: Checkout tagged source
         uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       - name: Validate stable tag
         shell: bash
         run: |
           if [[ ! "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "Stable tags must use vX.Y.Z" >&2
+            exit 1
+          fi
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          tag_commit="$(git rev-parse "${GITHUB_REF_NAME}^{commit}")"
+          if ! git merge-base --is-ancestor "$tag_commit" refs/remotes/origin/main; then
+            echo "Stable tag must point to a commit contained in main" >&2
             exit 1
           fi
           app_version="$(sed -n 's/^[[:space:]]*versionName = "\([^"]*\)"/\1/p' app/build.gradle.kts)"
