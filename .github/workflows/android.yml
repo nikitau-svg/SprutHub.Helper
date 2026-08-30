@@ -18,6 +18,11 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      ANDROID_SIGNING_STORE_FILE: ${{ github.workspace }}/.signing/spruthub-helper.p12
+      ANDROID_SIGNING_STORE_PASSWORD: ${{ secrets.ANDROID_SIGNING_STORE_PASSWORD }}
+      ANDROID_SIGNING_KEY_ALIAS: ${{ secrets.ANDROID_SIGNING_KEY_ALIAS }}
+      ANDROID_SIGNING_KEY_PASSWORD: ${{ secrets.ANDROID_SIGNING_KEY_PASSWORD }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -32,6 +37,17 @@ jobs:
         uses: gradle/actions/setup-gradle@v5
         with:
           gradle-version: "8.11.1"
+
+      - name: Restore stable APK signing key
+        if: github.event_name != 'pull_request'
+        env:
+          ANDROID_SIGNING_KEY_BASE64: ${{ secrets.ANDROID_SIGNING_KEY_BASE64 }}
+        shell: bash
+        run: |
+          test -n "$ANDROID_SIGNING_KEY_BASE64"
+          mkdir -p .signing
+          printf '%s' "$ANDROID_SIGNING_KEY_BASE64" | base64 --decode > "$ANDROID_SIGNING_STORE_FILE"
+          chmod 600 "$ANDROID_SIGNING_STORE_FILE"
 
       - name: Lint, test and build debug APK
         run: gradle --no-daemon :app:lintDebug :app:testDebugUnitTest :app:assembleDebug
@@ -48,6 +64,16 @@ jobs:
           cp app/build/outputs/apk/debug/app-debug.apk "dist/$apk"
           cd dist
           sha256sum "$apk" > "$apk.sha256"
+
+      - name: Verify beta APK signature
+        if: >-
+          (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+          github.ref == 'refs/heads/beta'
+        shell: bash
+        run: |
+          apk="$(find dist -maxdepth 1 -name '*.apk' -print -quit)"
+          test -n "$apk"
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs "$apk"
 
       - name: Upload beta APK
         if: >-
