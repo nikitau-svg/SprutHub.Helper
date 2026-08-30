@@ -257,6 +257,13 @@ class VirtualHealthDeviceManager(
             } ?: candidates
                 .filter { findValueField(it)?.matches(field.kind) == true }
                 .singleOrNull()
+                ?: candidates
+                    .filter { candidate -> candidate.typeIdentifiers().matches(field.kind) }
+                    .singleOrNull()
+                // SprutHub omits the value object for an empty GenericString.
+                // A service created by this app has exactly one writable,
+                // non-name characteristic, so this fallback remains unambiguous.
+                ?: candidates.singleOrNull()
                 ?: return@mapNotNull null
             val characteristicId = characteristic.scalar("cId", "id")
             val valueField = findValueField(characteristic) ?: defaultValueField(field.kind)
@@ -563,6 +570,10 @@ class VirtualHealthDeviceManager(
         HealthValueKind.BOOL -> this == "boolValue"
     }
 
+    private fun List<String>.matches(kind: HealthValueKind): Boolean = any { descriptor ->
+        healthTypeDescriptorMatches(descriptor, kind)
+    }
+
     private data class VirtualFieldSpec(val key: String, val title: String, val kind: HealthValueKind)
 
     companion object {
@@ -589,7 +600,24 @@ class VirtualHealthDeviceManager(
             "stringValue",
             "enumValue",
         )
-        private val TYPE_IDENTIFIER_KEYS = setOf("type", "shortid", "characteristictype", "typename")
+        private val TYPE_IDENTIFIER_KEYS = setOf(
+            "type",
+            "shortid",
+            "characteristictype",
+            "typename",
+            "format",
+        )
+    }
+}
+
+internal fun healthTypeDescriptorMatches(descriptor: String, kind: HealthValueKind): Boolean {
+    val normalized = descriptor.lowercase().filter(Char::isLetterOrDigit)
+    return when (kind) {
+        HealthValueKind.INT -> (normalized.contains("integer") || normalized.contains("int")) &&
+            !normalized.contains("long")
+        HealthValueKind.DOUBLE -> normalized.contains("float") || normalized.contains("double")
+        HealthValueKind.STRING -> normalized.contains("string") || normalized.contains("text")
+        HealthValueKind.BOOL -> normalized.contains("bool")
     }
 }
 

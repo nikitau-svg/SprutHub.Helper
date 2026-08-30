@@ -40,6 +40,20 @@ class MainViewModel : ViewModel() {
         MainUiState(config, catalog, connection, assignments, diagnostics)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), MainUiState())
 
+    init {
+        viewModelScope.launch {
+            val config = settings.currentConfig()
+            val hasEndpoint = when (config.mode) {
+                ConnectionMode.AUTO -> config.localUrl.isNotBlank() || config.cloudUrl.isNotBlank()
+                ConnectionMode.LOCAL -> config.localUrl.isNotBlank()
+                ConnectionMode.CLOUD -> config.cloudUrl.isNotBlank()
+            }
+            if (config.serial.isNotBlank() && hasEndpoint) {
+                repository.refresh()
+            }
+        }
+    }
+
     fun saveSettings(
         mode: ConnectionMode,
         localUrl: String,
