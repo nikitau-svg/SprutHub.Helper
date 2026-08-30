@@ -91,7 +91,8 @@ class SprutCatalogParserTest {
             """.trimIndent(),
         )
 
-        val control = parser.parse(rooms, accessories).controls.single()
+        val parsedControls = parser.parse(rooms, accessories).controls
+        val control = parsedControls.single { it.behavior == ControlBehavior.TOGGLE_RANGE }
 
         assertEquals("11:13:main", control.id)
         assertEquals(DeviceKind.THERMOSTAT, control.kind)
@@ -102,6 +103,9 @@ class SprutCatalogParserTest {
         assertEquals("doubleValue", control.rangeValueField)
         assertEquals(true, control.value.boolValue)
         assertEquals(22.0, control.value.numberValue!!, 0.0)
+        val currentTemperature = parsedControls.single { it.behavior == ControlBehavior.SENSOR }
+        assertEquals("20", currentTemperature.characteristicId)
+        assertEquals(23.5, currentTemperature.value.numberValue!!, 0.0)
     }
 
     @Test
@@ -141,7 +145,10 @@ class SprutCatalogParserTest {
             """.trimIndent(),
         )
 
-        val controls = parser.parse(rooms, accessories).controls.associateBy(SprutControl::serviceId)
+        val parsedControls = parser.parse(rooms, accessories).controls
+        val controls = parsedControls
+            .filter { it.behavior != ControlBehavior.SENSOR }
+            .associateBy(SprutControl::serviceId)
 
         assertEquals(setOf("1", "3", "4", "5"), controls.keys)
         assertEquals(DeviceKind.OUTLET, controls.getValue("1").kind)
@@ -153,6 +160,40 @@ class SprutCatalogParserTest {
         assertEquals(ControlBehavior.TOGGLE_RANGE, controls.getValue("4").behavior)
         assertEquals(DeviceKind.LOCK, controls.getValue("5").kind)
         assertEquals(ControlBehavior.TOGGLE, controls.getValue("5").behavior)
+        assertEquals(
+            setOf("2", "3", "5"),
+            parsedControls.filter { it.behavior == ControlBehavior.SENSOR }
+                .map(SprutControl::serviceId)
+                .toSet(),
+        )
+    }
+
+    @Test
+    fun keepsServiceAndCharacteristicNamesForMultiServiceAccessory() {
+        val rooms = json.parseToJsonElement("""{"rooms":[{"id":1,"name":"Дом"}]}""")
+        val accessories = json.parseToJsonElement(
+            """
+            {"accessories":[{
+              "id":50,"name":"Комбинированный модуль","roomId":1,"services":[
+                {"id":1,"type":"S_Switch","name":"Первый канал","characteristics":[
+                  {"id":1,"type":"C_On","name":"Питание","control":{"write":true,"value":{"boolValue":false}}}
+                ]},
+                {"id":2,"type":"S_Switch","name":"Второй канал","characteristics":[
+                  {"id":1,"type":"C_On","name":"Питание","control":{"write":true,"value":{"boolValue":true}}}
+                ]}
+              ]
+            }]}
+            """.trimIndent(),
+        )
+
+        val controls = parser.parse(rooms, accessories).controls
+
+        assertEquals(2, controls.size)
+        assertEquals(
+            listOf("Первый канал · Питание", "Второй канал · Питание"),
+            controls.map(SprutControl::subtitle),
+        )
+        assertEquals(2, controls.map(SprutControl::id).distinct().size)
     }
 
     @Test

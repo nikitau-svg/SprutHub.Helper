@@ -53,6 +53,16 @@
             android:theme="@style/Theme.SprutHubHelper" />
 
         <activity
+            android:name=".ui.WidgetConfigureActivity"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:theme="@style/Theme.SprutHubHelper">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_CONFIGURE" />
+            </intent-filter>
+        </activity>
+
+        <activity
             android:name=".ui.HealthPermissionsRationaleActivity"
             android:exported="true"
             android:theme="@style/Theme.SprutHubHelper">
@@ -110,6 +120,19 @@
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
             </intent-filter>
+        </receiver>
+
+        <receiver
+            android:name=".widget.SprutAppWidgetProvider"
+            android:enabled="true"
+            android:exported="false"
+            android:label="@string/widget_name">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/sprut_app_widget_info" />
         </receiver>
 
         <service

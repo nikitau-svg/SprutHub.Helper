@@ -90,7 +90,7 @@ abstract class SprutTileService(private val slot: Int) : TileService() {
             tile.icon = TileIconResolver.icon(this, DeviceKind.OTHER)
         } else {
             tile.label = control.title
-            tile.subtitle = error?.take(30) ?: control.room
+            tile.subtitle = error?.take(30) ?: control.subtitle.ifBlank { control.room }
             tile.icon = CustomIconManager(this).loadIcon(control.id)
                 ?: TileIconResolver.icon(this, control.kind)
             tile.state = if (error != null) {

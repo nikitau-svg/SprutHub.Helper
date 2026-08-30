@@ -17,10 +17,13 @@ import io.github.nikitau.spruthubhelper.sprut.VirtualDeviceProfile
 import io.github.nikitau.spruthubhelper.sprut.VirtualPresenceDeviceManager
 import io.github.nikitau.spruthubhelper.tiles.TileComponents
 import io.github.nikitau.spruthubhelper.tiles.TileInstallStateStore
+import io.github.nikitau.spruthubhelper.widget.SprutAppWidgetProvider
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
 class SprutHelperApplication : Application() {
@@ -91,6 +94,14 @@ object AppGraph {
         applicationScope.launch {
             repository.tileAssignments.collect { assignments ->
                 TileComponents.syncEnabled(appContext, assignments)
+            }
+        }
+        applicationScope.launch {
+            repository.catalog.collectLatest { catalog ->
+                delay(200)
+                if (catalog.controls.isNotEmpty()) {
+                    SprutAppWidgetProvider.updateAll(appContext)
+                }
             }
         }
         initialized = true

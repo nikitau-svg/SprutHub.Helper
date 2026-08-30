@@ -140,10 +140,15 @@ data class SprutControl(
                 if (unit.isNotBlank()) append(" ").append(unit)
             }
             ControlBehavior.BUTTON -> "Готово к запуску"
-            ControlBehavior.SENSOR -> value.stringValue
-                ?: value.numberValue?.formatCompact()
-                ?: value.boolValue?.toString()
-                ?: "—"
+            ControlBehavior.SENSOR -> buildString {
+                append(
+                    value.stringValue
+                        ?: value.numberValue?.formatCompact()
+                        ?: value.boolValue?.let { if (it) "Да" else "Нет" }
+                        ?: "—",
+                )
+                if (unit.isNotBlank() && value.numberValue != null) append(" ").append(unit)
+            }
         }
 }
 

@@ -140,7 +140,7 @@ class SprutCatalogParser {
         val title = accessoryName
         val subtitle = serviceName.takeIf { it.isNotBlank() && it != accessoryName }.orEmpty()
 
-        if (
+        val primaryActions = if (
             toggle != null && range != null &&
             kind in setOf(
                 DeviceKind.LIGHT,
@@ -151,7 +151,7 @@ class SprutCatalogParser {
                 DeviceKind.THERMOSTAT,
             )
         ) {
-            return listOf(
+            listOf(
                 SprutControl(
                     id = "$accessoryId:$serviceId:main",
                     accessoryId = accessoryId,
@@ -176,22 +176,69 @@ class SprutCatalogParser {
                     rangeValueField = range.valueField,
                 ),
             )
-        }
-
-        val actions = buildList {
-            toggle?.let {
-                add(it.toControl(accessoryId, serviceId, title, subtitle, room, kind, sourceType, ControlBehavior.TOGGLE))
-            }
-            if (toggle == null) {
-                range?.let {
-                    add(it.toControl(accessoryId, serviceId, title, subtitle, room, kind, sourceType, ControlBehavior.RANGE))
+        } else {
+            buildList {
+                toggle?.let {
+                    add(
+                        it.toControl(
+                            accessoryId,
+                            serviceId,
+                            title,
+                            actionSubtitle(subtitle, it),
+                            room,
+                            kind,
+                            sourceType,
+                            ControlBehavior.TOGGLE,
+                        ),
+                    )
+                }
+                if (toggle == null) {
+                    range?.let {
+                        add(
+                            it.toControl(
+                                accessoryId,
+                                serviceId,
+                                title,
+                                actionSubtitle(subtitle, it),
+                                room,
+                                kind,
+                                sourceType,
+                                ControlBehavior.RANGE,
+                            ),
+                        )
+                    }
+                }
+                button?.let {
+                    add(
+                        it.toControl(
+                            accessoryId,
+                            serviceId,
+                            title,
+                            actionSubtitle(subtitle, it),
+                            room,
+                            kind,
+                            sourceType,
+                            ControlBehavior.BUTTON,
+                        ),
+                    )
                 }
             }
-            button?.let {
-                add(it.toControl(accessoryId, serviceId, title, subtitle, room, kind, sourceType, ControlBehavior.BUTTON))
-            }
         }
-        return actions.distinctBy(SprutControl::id)
+        val sensors = parsed
+            .filter { it.hasValue && !it.writable && !it.isNameMetadata }
+            .map { characteristic ->
+                characteristic.toControl(
+                    accessoryId,
+                    serviceId,
+                    title,
+                    actionSubtitle(subtitle, characteristic),
+                    room,
+                    kind,
+                    sourceType,
+                    ControlBehavior.SENSOR,
+                )
+            }
+        return (primaryActions + sensors).distinctBy(SprutControl::id)
     }
 
     private fun ParsedCharacteristic.toControl(
@@ -227,7 +274,10 @@ class SprutCatalogParser {
     private fun parseCharacteristic(characteristic: JsonObject, index: Int): ParsedCharacteristic {
         val id = characteristic.scalar("id", "cId", "index").ifBlank { index.toString() }
         val descriptor = collectDescriptors(characteristic).lowercase()
+        val displayName = characteristic.scalar("name", "title", "displayName", "description")
+        val typeName = characteristic.scalar("type", "characteristicType", "typeName", "shortId")
         val value = extractValue(characteristic)
+        val hasValue = findValueObject(characteristic) != null
         val field = extractValueField(characteristic)
         val role = when {
             descriptor.containsMarker(BUTTON_MARKERS) -> CharacteristicRole.BUTTON
@@ -241,6 +291,10 @@ class SprutCatalogParser {
         return ParsedCharacteristic(
             id = id,
             descriptor = descriptor,
+            displayName = displayName,
+            typeName = typeName,
+            hasValue = hasValue,
+            isNameMetadata = isNameType(typeName),
             role = role,
             value = value,
             valueField = field,
@@ -406,6 +460,33 @@ class SprutCatalogParser {
         }
     }
 
+    private fun actionSubtitle(serviceName: String, characteristic: ParsedCharacteristic): String {
+        val characteristicName = characteristic.displayName
+            .takeIf(String::isNotBlank)
+            ?: readableIdentifier(characteristic.typeName)
+        return listOf(serviceName, characteristicName)
+            .filter(String::isNotBlank)
+            .distinctBy { it.lowercase().filter(Char::isLetterOrDigit) }
+            .joinToString(" · ")
+    }
+
+    private fun readableIdentifier(identifier: String): String {
+        if (identifier.isBlank()) return ""
+        val normalized = identifier
+            .replace(Regex("^(HS|HC)[.:_]", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("^[SC]_", RegexOption.IGNORE_CASE), "")
+            .replace('_', ' ')
+            .replace('-', ' ')
+            .replace(Regex("(?<=[a-zа-я0-9])(?=[A-ZА-Я])"), " ")
+            .trim()
+        return normalized.replaceFirstChar { it.uppercase() }
+    }
+
+    private fun isNameType(identifier: String): Boolean {
+        val normalized = identifier.lowercase().filter(Char::isLetterOrDigit)
+        return normalized in setOf("name", "cname", "characteristicname")
+    }
+
     private fun ParsedCharacteristic.togglePriority(): Int = when {
         descriptor.containsMarker(listOf("c_on", "on_off", "power")) -> 300
         descriptor.containsMarker(listOf("c_active", "enabled")) -> 250
@@ -427,6 +508,10 @@ class SprutCatalogParser {
     private data class ParsedCharacteristic(
         val id: String,
         val descriptor: String,
+        val displayName: String,
+        val typeName: String,
+        val hasValue: Boolean,
+        val isNameMetadata: Boolean,
         val role: CharacteristicRole,
         val value: SprutValue,
         val valueField: String,
@@ -447,9 +532,6 @@ class SprutCatalogParser {
             "accessoryinformation",
             "accessory_information",
             "s_accessory_information",
-            "batteryservice",
-            "battery_service",
-            "s_battery",
         )
         val TOGGLE_MARKERS = listOf(
             "c_on",

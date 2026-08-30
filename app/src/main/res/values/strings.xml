@@ -2,6 +2,12 @@
 <resources>
     <string name="app_name">SprutHub Helper</string>
     <string name="controls_provider_name">SprutHub</string>
+    <string name="widget_name">SprutHub — устройство</string>
+    <string name="widget_description">Состояние и управление устройством SprutHub на главном экране</string>
+    <string name="widget_tap_to_configure">Нажмите, чтобы выбрать устройство</string>
+    <string name="widget_catalog_loading">Обновляю каталог…</string>
+    <string name="widget_control_missing">Устройство не найдено — нажмите для выбора</string>
+    <string name="widget_refresh">Обновить состояние</string>
     <string name="tile_1">SprutHub 1</string>
     <string name="tile_2">SprutHub 2</string>
     <string name="tile_3">SprutHub 3</string>

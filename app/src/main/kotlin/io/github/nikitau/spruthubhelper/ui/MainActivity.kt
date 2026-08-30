@@ -103,6 +103,7 @@ import io.github.nikitau.spruthubhelper.AppGraph
 import io.github.nikitau.spruthubhelper.R
 import io.github.nikitau.spruthubhelper.controls.ControlFactory
 import io.github.nikitau.spruthubhelper.controls.SprutControlsProviderService
+import io.github.nikitau.spruthubhelper.data.AccessoryControlGroup
 import io.github.nikitau.spruthubhelper.data.ConnectionMode
 import io.github.nikitau.spruthubhelper.data.ConnectionPhase
 import io.github.nikitau.spruthubhelper.data.DeviceKind
@@ -113,12 +114,14 @@ import io.github.nikitau.spruthubhelper.data.PhoneSensorCategory
 import io.github.nikitau.spruthubhelper.data.PhoneSyncMode
 import io.github.nikitau.spruthubhelper.data.SprutControl
 import io.github.nikitau.spruthubhelper.data.TileAssignment
+import io.github.nikitau.spruthubhelper.data.groupControlsByAccessory
 import io.github.nikitau.spruthubhelper.tiles.TileComponents
 import io.github.nikitau.spruthubhelper.tiles.TileIconResolver
 import io.github.nikitau.spruthubhelper.health.HealthUiState
 import io.github.nikitau.spruthubhelper.icons.CustomIconManager
 import io.github.nikitau.spruthubhelper.phone.PhoneUiState
 import io.github.nikitau.spruthubhelper.tiles.TileInstallStateStore
+import io.github.nikitau.spruthubhelper.widget.SprutAppWidgetProvider
 import java.text.DateFormat
 import java.util.Date
 import kotlinx.coroutines.flow.collect
@@ -165,7 +168,7 @@ private val CloudEndpointPresets = listOf(
 )
 
 @Composable
-private fun SprutHelperTheme(content: @Composable () -> Unit) {
+internal fun SprutHelperTheme(content: @Composable () -> Unit) {
     val scheme = androidx.compose.material3.darkColorScheme(
         primary = SprutGreen,
         onPrimary = Color(0xFF003827),
@@ -264,7 +267,8 @@ private fun MainScreen(viewModel: MainViewModel = viewModel()) {
                 result.onSuccess {
                     iconRevision += 1
                     TileComponents.syncEnabled(context, viewModel.uiState.value.assignments)
-                    viewModel.showNotice("PNG-иконка сохранена для Android-панели и плитки")
+                    SprutAppWidgetProvider.updateAll(context)
+                    viewModel.showNotice("PNG-иконка сохранена для виджета, Android-панели и плитки")
                 }.onFailure { error ->
                     viewModel.showNotice(error.message ?: "Не удалось прочитать изображение")
                 }
@@ -320,9 +324,7 @@ private fun MainScreen(viewModel: MainViewModel = viewModel()) {
     ) { padding ->
         var search by rememberSaveable { mutableStateOf("") }
         val filtered = remember(ui.catalog.controls, search) {
-            ui.catalog.controls.filter {
-                search.isBlank() || listOf(it.title, it.subtitle, it.room).any { field -> field.contains(search, true) }
-            }
+            groupControlsByAccessory(ui.catalog.controls).filter { it.matches(search) }
         }
         LazyColumn(
             modifier = Modifier.fillMaxSize().padding(padding),
@@ -409,14 +411,14 @@ private fun MainScreen(viewModel: MainViewModel = viewModel()) {
                     )
                 }
             } else {
-                items(filtered, key = SprutControl::id) { control ->
-                    DeviceCard(
-                        control = control,
+                items(filtered, key = AccessoryControlGroup::key) { group ->
+                    AccessoryCard(
+                        group = group,
                         assignments = ui.assignments,
                         viewModel = viewModel,
                         iconRevision = iconRevision,
-                        onPickIcon = {
-                            iconTargetId = control.id
+                        onPickIcon = { controlId ->
+                            iconTargetId = controlId
                             customIconLauncher.launch("image/*")
                         },
                     )
@@ -1233,21 +1235,13 @@ private fun TileSummaryCard(
 }
 
 @Composable
-private fun DeviceCard(
-    control: SprutControl,
+private fun AccessoryCard(
+    group: AccessoryControlGroup,
     assignments: List<TileAssignment>,
     viewModel: MainViewModel,
     iconRevision: Int,
-    onPickIcon: () -> Unit,
+    onPickIcon: (String) -> Unit,
 ) {
-    val context = LocalContext.current
-    var menuExpanded by remember { mutableStateOf(false) }
-    val iconManager = remember { CustomIconManager(context) }
-    var hasCustomIcon by remember(control.id, iconRevision) {
-        mutableStateOf(iconManager.hasIcon(control.id))
-    }
-    val assignedSlot = assignments.firstOrNull { it.controlId == control.id }?.slot
-    val firstFreeSlot = (1..12).firstOrNull { slot -> assignments.none { it.slot == slot } }
     OutlinedCard(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
         shape = RoundedCornerShape(18.dp),
@@ -1255,18 +1249,66 @@ private fun DeviceCard(
         Column(Modifier.padding(15.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Surface(shape = CircleShape, color = MaterialTheme.colorScheme.primaryContainer) {
-                    Icon(control.icon(), null, Modifier.padding(10.dp), tint = SprutGreen)
+                    Icon(group.controls.first().icon(), null, Modifier.padding(10.dp), tint = SprutGreen)
                 }
                 Spacer(Modifier.size(12.dp))
                 Column(Modifier.weight(1f)) {
-                    Text(control.title, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(group.title, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Text(
-                        listOf(control.room, control.displayValue).filter(String::isNotBlank).joinToString(" · "),
+                        listOf(
+                            group.room,
+                            if (group.controls.size > 1) "${group.controls.size} действия" else group.controls.single().displayValue,
+                        ).filter(String::isNotBlank).joinToString(" · "),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             }
+            group.controls.forEachIndexed { index, control ->
+                if (index > 0 || group.controls.size > 1) HorizontalDivider()
+                ControlActions(
+                    control = control,
+                    serviceLabel = group.serviceLabel(control),
+                    showServiceLabel = group.controls.size > 1 || control.subtitle.isNotBlank(),
+                    assignments = assignments,
+                    viewModel = viewModel,
+                    iconRevision = iconRevision,
+                    onPickIcon = { onPickIcon(control.id) },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ControlActions(
+    control: SprutControl,
+    serviceLabel: String,
+    showServiceLabel: Boolean,
+    assignments: List<TileAssignment>,
+    viewModel: MainViewModel,
+    iconRevision: Int,
+    onPickIcon: () -> Unit,
+) {
+    val context = LocalContext.current
+    var menuExpanded by remember(control.id) { mutableStateOf(false) }
+    val iconManager = remember { CustomIconManager(context) }
+    var hasCustomIcon by remember(control.id, iconRevision) {
+        mutableStateOf(iconManager.hasIcon(control.id))
+    }
+    val assignedSlot = assignments.firstOrNull { it.controlId == control.id }?.slot
+    val firstFreeSlot = (1..12).firstOrNull { slot -> assignments.none { it.slot == slot } }
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        if (showServiceLabel) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(serviceLabel, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
+                Text(
+                    control.displayValue,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(
                     onClick = {
@@ -1277,7 +1319,7 @@ private fun DeviceCard(
                         )
                     },
                     modifier = Modifier.weight(1f),
-                ) { Text("В панель") }
+                ) { Text("Панель Android") }
                 Box(Modifier.weight(1f)) {
                     Button(onClick = { menuExpanded = true }, modifier = Modifier.fillMaxWidth()) {
                         Text(assignedSlot?.let { "Плитка $it" } ?: "Добавить плитку")
@@ -1337,6 +1379,7 @@ private fun DeviceCard(
                             if (iconManager.remove(control.id)) {
                                 hasCustomIcon = false
                                 TileComponents.syncEnabled(context, assignments)
+                                SprutAppWidgetProvider.updateAll(context)
                                 viewModel.showNotice("Пользовательская иконка удалена")
                             }
                         },
@@ -1348,7 +1391,6 @@ private fun DeviceCard(
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-        }
     }
 }
 

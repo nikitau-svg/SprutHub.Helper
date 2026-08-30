@@ -106,12 +106,12 @@ class MainViewModel : ViewModel() {
             newCloudPassword,
         )
         val catalog = repository.refresh(forceConnection = true).getOrThrow()
-        _notice.value = "Готово: найдено ${catalog.controls.size} элементов"
+        _notice.value = "Каталог перечитан: найдено ${catalog.controls.size} элементов. Новые устройства не создавались"
     }
 
     fun testConnection() = launchWork(null) {
         val catalog = repository.refresh(forceConnection = true).getOrThrow()
-        _notice.value = "Готово: найдено ${catalog.controls.size} элементов"
+        _notice.value = "Каталог перечитан: найдено ${catalog.controls.size} элементов. Новые устройства не создавались"
     }
 
     fun assignTile(slot: Int, controlId: String) = launchWork(null) {
