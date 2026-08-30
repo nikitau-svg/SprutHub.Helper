@@ -7,7 +7,7 @@ plugins {
 
 android {
     namespace = "io.github.nikitau.spruthubhelper"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "io.github.nikitau.spruthubhelper"
