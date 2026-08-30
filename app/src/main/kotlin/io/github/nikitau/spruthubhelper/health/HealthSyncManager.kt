@@ -1,6 +1,7 @@
 package io.github.nikitau.spruthubhelper.health
 
 import android.content.Context
+import android.util.Log
 import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.HealthConnectFeatures
 import androidx.health.connect.client.permission.HealthPermission
@@ -61,6 +62,23 @@ class HealthSyncManager(
     init {
         scope.launch {
             refreshPermissions()
+            if (settings.healthBinding.first() == null) {
+                runCatching { virtualDevice.recoverExisting() }
+                    .onSuccess { binding ->
+                        if (binding != null) {
+                            val canRunInBackground = backgroundReadGranted()
+                            settings.setHealthEnabled(canRunInBackground)
+                            runtime.value = runtime.value.copy(
+                                message = "Найдено существующее устройство здоровья",
+                            )
+                            Log.i(LOG_TAG, "Existing health accessory recovered on startup")
+                            syncNow()
+                        }
+                    }
+                    .onFailure { error ->
+                        Log.i(LOG_TAG, "No recoverable health accessory on startup: ${error.message}")
+                    }
+            }
             settings.healthEnabled.collect { enabled ->
                 if (enabled) schedule() else cancel()
             }
@@ -129,7 +147,9 @@ class HealthSyncManager(
     suspend fun syncNow(fromBackground: Boolean = false): Result<Unit> {
         if (fromBackground && !settings.healthEnabled.first()) return Result.success(Unit)
         return runCatching {
-            val binding = settings.healthBinding.first() ?: error("Сначала создайте устройство здоровья в SprutHub")
+            val binding = settings.healthBinding.first()
+                ?: virtualDevice.recoverExisting()
+                ?: error("Сначала создайте устройство здоровья в SprutHub")
             runtime.value = runtime.value.copy(syncing = true, message = "Читаю Health Connect…")
             val readings = reader.read(settings.selectedHealthMetrics.first())
             check(readings.isNotEmpty()) { "Нет разрешённых данных для синхронизации" }
@@ -137,8 +157,10 @@ class HealthSyncManager(
             virtualDevice.publish(binding, readings)
             settings.markHealthSynced()
             runtime.value = runtime.value.copy(syncing = false, message = "Здоровье синхронизировано локально")
+            Log.i(LOG_TAG, "Health sync completed")
         }.onFailure {
             runtime.value = runtime.value.copy(syncing = false, message = it.message ?: "Ошибка синхронизации здоровья")
+            Log.e(LOG_TAG, "Health sync failed", it)
         }
     }
 
@@ -191,6 +213,7 @@ class HealthSyncManager(
 
     private companion object {
         const val WORK_NAME = "spruthub_health_sync"
+        const val LOG_TAG = "SprutHubHealth"
     }
 }
 

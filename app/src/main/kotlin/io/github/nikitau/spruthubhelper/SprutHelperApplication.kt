@@ -42,10 +42,11 @@ object AppGraph {
         val appContext = context.applicationContext
         applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         settings = SettingsRepository(appContext)
-        val client = SprutRpcClient()
+        val repositoryClient = SprutRpcClient()
+        val healthClient = SprutRpcClient()
         repository = SprutRepository(
             settings = settings,
-            client = client,
+            client = repositoryClient,
             parser = SprutCatalogParser(),
             cache = CatalogCache(appContext),
             scope = applicationScope,
@@ -54,7 +55,7 @@ object AppGraph {
             context = appContext,
             settings = settings,
             reader = HealthReader(appContext),
-            virtualDevice = VirtualHealthDeviceManager(settings, client),
+            virtualDevice = VirtualHealthDeviceManager(settings, healthClient),
             scope = applicationScope,
         )
         applicationScope.launch {

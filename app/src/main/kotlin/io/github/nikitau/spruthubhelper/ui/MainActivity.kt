@@ -3,7 +3,6 @@ package io.github.nikitau.spruthubhelper.ui
 import android.app.StatusBarManager
 import android.content.ComponentName
 import android.content.Intent
-import android.graphics.drawable.Icon as AndroidIcon
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -99,6 +98,7 @@ import io.github.nikitau.spruthubhelper.data.HealthMetric
 import io.github.nikitau.spruthubhelper.data.SprutControl
 import io.github.nikitau.spruthubhelper.data.TileAssignment
 import io.github.nikitau.spruthubhelper.tiles.TileComponents
+import io.github.nikitau.spruthubhelper.tiles.TileIconResolver
 import io.github.nikitau.spruthubhelper.health.HealthUiState
 import java.text.DateFormat
 import java.util.Date
@@ -609,7 +609,7 @@ private fun requestSystemTile(activity: ComponentActivity, slot: Int, control: S
     manager.requestAddTileService(
         TileComponents.component(activity, slot),
         control.title,
-        AndroidIcon.createWithResource(activity, R.drawable.ic_tile),
+        TileIconResolver.icon(activity, control.kind),
         activity.mainExecutor,
     ) { result ->
         if (result != StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_ADDED &&

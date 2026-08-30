@@ -98,7 +98,10 @@ class SprutCatalogParser {
         val serviceId = service.scalar("id", "sId", "index").ifBlank { serviceIndex.toString() }
         val serviceName = service.scalar("name", "title", "displayName")
         val sourceType = service.scalar("type", "serviceType", "typeName")
-        val descriptor = collectDescriptors(service).lowercase()
+        val descriptor = listOf(accessoryName, serviceName, sourceType, collectDescriptors(service))
+            .joinToString(" ")
+            .lowercase()
+        if (READ_ONLY_SERVICE_MARKERS.any(descriptor::contains)) return emptyList()
         val kind = detectKind(descriptor)
         val characteristics = service.arrayValue("characteristics")
             ?: findArray(service, "characteristics")
@@ -112,7 +115,17 @@ class SprutCatalogParser {
         val title = accessoryName
         val subtitle = serviceName.takeIf { it.isNotBlank() && it != accessoryName }.orEmpty()
 
-        if (toggle != null && range != null && kind in setOf(DeviceKind.LIGHT, DeviceKind.FAN, DeviceKind.CURTAIN, DeviceKind.BLINDS, DeviceKind.SHUTTER)) {
+        if (
+            toggle != null && range != null &&
+            kind in setOf(
+                DeviceKind.LIGHT,
+                DeviceKind.FAN,
+                DeviceKind.CURTAIN,
+                DeviceKind.BLINDS,
+                DeviceKind.SHUTTER,
+                DeviceKind.THERMOSTAT,
+            )
+        ) {
             return listOf(
                 SprutControl(
                     id = "$accessoryId:$serviceId:main",
@@ -192,12 +205,13 @@ class SprutCatalogParser {
         val value = extractValue(characteristic)
         val field = extractValueField(characteristic)
         val role = when {
-            BUTTON_MARKERS.any(descriptor::contains) -> CharacteristicRole.BUTTON
-            RANGE_MARKERS.any(descriptor::contains) || field in NUMBER_FIELDS -> CharacteristicRole.RANGE
-            TOGGLE_MARKERS.any(descriptor::contains) || field == "boolValue" -> CharacteristicRole.TOGGLE
+            descriptor.containsMarker(BUTTON_MARKERS) -> CharacteristicRole.BUTTON
+            descriptor.containsMarker(TOGGLE_MARKERS) || field == "boolValue" -> CharacteristicRole.TOGGLE
+            descriptor.containsMarker(RANGE_MARKERS) || field in NUMBER_FIELDS -> CharacteristicRole.RANGE
             else -> CharacteristicRole.SENSOR
         }
         val readOnly = findBoolean(characteristic, "readOnly") == true
+        val explicitWrite = findBoolean(characteristic, "write")
         return ParsedCharacteristic(
             id = id,
             role = role,
@@ -207,7 +221,9 @@ class SprutCatalogParser {
             maximum = findNumber(characteristic, "maxValue", "maximum", "max") ?: 100.0,
             step = findNumber(characteristic, "minStep", "step")?.takeIf { it > 0.0 } ?: 1.0,
             unit = findString(characteristic, "unit", "units").orEmpty(),
-            writable = !readOnly && !descriptor.contains("read_only") && !descriptor.contains("readonly"),
+            writable = explicitWrite ?: (
+                !readOnly && !descriptor.contains("read_only") && !descriptor.contains("readonly")
+                ),
         )
     }
 
@@ -320,7 +336,7 @@ class SprutCatalogParser {
             when (current) {
                 is JsonObject -> current.forEach { (key, value) ->
                     if (key in DESCRIPTOR_KEYS && value is JsonPrimitive) append(' ').append(value.content)
-                    else if (key != "value" && key != "control") visit(value, depth + 1)
+                    else if (key != "value") visit(value, depth + 1)
                 }
                 is JsonArray -> current.take(8).forEach { visit(it, depth + 1) }
                 else -> Unit
@@ -341,6 +357,13 @@ class SprutCatalogParser {
 
     private fun String.containsAny(vararg values: String): Boolean = values.any(::contains)
 
+    private fun String.containsMarker(markers: List<String>): Boolean {
+        val normalized = filter(Char::isLetterOrDigit)
+        return markers.any { marker ->
+            contains(marker) || normalized.contains(marker.filter(Char::isLetterOrDigit))
+        }
+    }
+
     private data class ParsedCharacteristic(
         val id: String,
         val role: CharacteristicRole,
@@ -359,8 +382,34 @@ class SprutCatalogParser {
         val NUMBER_FIELDS = listOf("intValue", "longValue", "floatValue", "doubleValue", "uintValue")
         val VALUE_FIELDS = listOf("boolValue") + NUMBER_FIELDS + listOf("stringValue", "enumValue")
         val DESCRIPTOR_KEYS = setOf("type", "name", "title", "description", "characteristicType", "serviceType", "typeName")
-        val TOGGLE_MARKERS = listOf("c_on", "on_off", "power", "enabled", "active", "targetlock", "targetdoor")
-        val RANGE_MARKERS = listOf("brightness", "position", "rotation", "speed", "targettemperature", "setpoint", "volume")
+        val READ_ONLY_SERVICE_MARKERS = listOf(
+            "accessoryinformation",
+            "accessory_information",
+            "s_accessory_information",
+            "batteryservice",
+            "battery_service",
+            "s_battery",
+        )
+        val TOGGLE_MARKERS = listOf(
+            "c_on",
+            "on_off",
+            "power",
+            "enabled",
+            "active",
+            "targetlock",
+            "targetdoor",
+        )
+        val RANGE_MARKERS = listOf(
+            "brightness",
+            "position",
+            "rotation",
+            "speed",
+            "targettemperature",
+            "coolingthresholdtemperature",
+            "heatingthresholdtemperature",
+            "setpoint",
+            "volume",
+        )
         val BUTTON_MARKERS = listOf("button", "execute", "run", "programmable", "stateless")
     }
 }

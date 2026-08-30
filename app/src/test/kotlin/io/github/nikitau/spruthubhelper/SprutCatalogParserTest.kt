@@ -28,9 +28,9 @@ class SprutCatalogParserTest {
                   "id": 11,
                   "type": "S_LIGHTBULB",
                   "characteristics": [
-                    {"id": 1, "type": "C_ON", "control": {"value": {"boolValue": true}}},
+                    {"id": 1, "type": "C_ON", "control": {"write": true, "value": {"boolValue": true}}},
                     {"id": 2, "type": "C_BRIGHTNESS", "minValue": 0, "maxValue": 100,
-                     "control": {"value": {"intValue": 42}}}
+                     "control": {"write": true, "value": {"intValue": 42}}}
                   ]
                 }]
               }]}}
@@ -50,6 +50,57 @@ class SprutCatalogParserTest {
         assertEquals(42.0, control.value.numberValue!!, 0.0)
         assertEquals("2", control.rangeCharacteristicId)
         assertEquals("intValue", control.rangeValueField)
+    }
+
+    @Test
+    fun ignoresAccessoryInformationAndBuildsWritableHeaterCoolerControl() {
+        val rooms = json.parseToJsonElement(
+            """{"room":{"list":{"rooms":[{"id":1,"name":"Зал"}]}}}""",
+        )
+        val accessories = json.parseToJsonElement(
+            """
+            {
+              "accessory": {"list": {"accessories": [{
+                "id": 11,
+                "name": "Midea AC",
+                "roomId": 1,
+                "services": [
+                  {
+                    "id": 1,
+                    "type": "AccessoryInformation",
+                    "name": "Информация об аксессуаре",
+                    "characteristics": [
+                      {"id": 4, "type": "C_IDENTIFY", "control": {"write": true, "value": {"boolValue": false}}}
+                    ]
+                  },
+                  {
+                    "id": 13,
+                    "type": "HeaterCooler",
+                    "name": "Кондиционер",
+                    "characteristics": [
+                      {"id": 18, "type": "C_ACTIVE", "control": {"write": true, "value": {"intValue": 1}}},
+                      {"id": 20, "type": "C_CURRENT_TEMPERATURE", "control": {"write": false, "value": {"doubleValue": 23.5}}},
+                      {"id": 19, "type": "C_COOLING_THRESHOLD_TEMPERATURE", "minValue": 17, "maxValue": 30,
+                       "control": {"write": true, "value": {"doubleValue": 22.0}}}
+                    ]
+                  }
+                ]
+              }]}}
+            }
+            """.trimIndent(),
+        )
+
+        val control = parser.parse(rooms, accessories).controls.single()
+
+        assertEquals("11:13:main", control.id)
+        assertEquals(DeviceKind.THERMOSTAT, control.kind)
+        assertEquals(ControlBehavior.TOGGLE_RANGE, control.behavior)
+        assertEquals("18", control.characteristicId)
+        assertEquals("intValue", control.valueField)
+        assertEquals("19", control.rangeCharacteristicId)
+        assertEquals("doubleValue", control.rangeValueField)
+        assertEquals(true, control.value.boolValue)
+        assertEquals(22.0, control.value.numberValue!!, 0.0)
     }
 
     @Test

@@ -2,6 +2,7 @@ package io.github.nikitau.spruthubhelper.tiles
 
 import android.service.quicksettings.Tile
 import android.service.quicksettings.TileService
+import android.util.Log
 import io.github.nikitau.spruthubhelper.AppGraph
 import io.github.nikitau.spruthubhelper.data.ControlBehavior
 import io.github.nikitau.spruthubhelper.data.SprutControl
@@ -18,8 +19,9 @@ abstract class SprutTileService(private val slot: Int) : TileService() {
     override fun onStartListening() {
         super.onStartListening()
         scope.launch {
-            repository.refreshIfStale()
-            updateTile()
+            val refreshed = repository.refreshIfStale()
+            val error = refreshed.exceptionOrNull()?.message.takeIf { assignedControl() == null }
+            updateTile(error)
         }
     }
 
@@ -30,12 +32,13 @@ abstract class SprutTileService(private val slot: Int) : TileService() {
     }
 
     private suspend fun performAssignedAction() {
+        repository.refreshIfStale(maxAgeMs = 10_000)
         val control = assignedControl()
         if (control == null) {
-            updateTile()
+            updateTile("Обновите назначение")
             return
         }
-        when (control.behavior) {
+        val result = when (control.behavior) {
             ControlBehavior.TOGGLE, ControlBehavior.TOGGLE_RANGE ->
                 repository.setBoolean(control.id, !control.value.asBoolean())
             ControlBehavior.RANGE -> {
@@ -43,26 +46,33 @@ abstract class SprutTileService(private val slot: Int) : TileService() {
                 repository.setRange(control.id, if (control.value.asDouble() > midpoint) control.minimum else control.maximum)
             }
             ControlBehavior.BUTTON -> repository.execute(control.id)
-            ControlBehavior.SENSOR -> Unit
+            ControlBehavior.SENSOR -> Result.failure(IllegalStateException("Только чтение"))
         }
-        updateTile()
+        result.onFailure { error -> Log.e(LOG_TAG, "Tile $slot action failed", error) }
+        updateTile(result.exceptionOrNull()?.message)
     }
 
-    private fun updateTile() {
+    private fun updateTile(error: String? = null) {
         val tile = qsTile ?: return
         val control = assignedControl()
         if (control == null) {
             tile.label = "SprutHub $slot"
-            tile.subtitle = "Не настроено"
+            tile.subtitle = error?.take(30) ?: "Не настроено"
             tile.state = Tile.STATE_UNAVAILABLE
+            tile.icon = TileIconResolver.icon(this, io.github.nikitau.spruthubhelper.data.DeviceKind.OTHER)
         } else {
             tile.label = control.title
-            tile.subtitle = control.room
-            tile.state = when (control.behavior) {
-                ControlBehavior.TOGGLE, ControlBehavior.TOGGLE_RANGE ->
-                    if (control.value.asBoolean()) Tile.STATE_ACTIVE else Tile.STATE_INACTIVE
-                ControlBehavior.BUTTON, ControlBehavior.RANGE -> Tile.STATE_INACTIVE
-                ControlBehavior.SENSOR -> Tile.STATE_UNAVAILABLE
+            tile.subtitle = error?.take(30) ?: control.room
+            tile.icon = TileIconResolver.icon(this, control.kind)
+            tile.state = if (error != null) {
+                Tile.STATE_UNAVAILABLE
+            } else {
+                when (control.behavior) {
+                    ControlBehavior.TOGGLE, ControlBehavior.TOGGLE_RANGE ->
+                        if (control.value.asBoolean()) Tile.STATE_ACTIVE else Tile.STATE_INACTIVE
+                    ControlBehavior.BUTTON, ControlBehavior.RANGE -> Tile.STATE_INACTIVE
+                    ControlBehavior.SENSOR -> Tile.STATE_UNAVAILABLE
+                }
             }
             tile.contentDescription = "${control.title}, ${control.displayValue}"
         }
@@ -77,6 +87,10 @@ abstract class SprutTileService(private val slot: Int) : TileService() {
     override fun onDestroy() {
         scope.cancel()
         super.onDestroy()
+    }
+
+    private companion object {
+        const val LOG_TAG = "SprutHubTile"
     }
 }
 

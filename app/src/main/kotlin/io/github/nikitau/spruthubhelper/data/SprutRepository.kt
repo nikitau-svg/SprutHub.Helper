@@ -1,5 +1,6 @@
 package io.github.nikitau.spruthubhelper.data
 
+import android.util.Log
 import io.github.nikitau.spruthubhelper.sprut.CharacteristicUpdate
 import io.github.nikitau.spruthubhelper.sprut.SprutCatalogParser
 import io.github.nikitau.spruthubhelper.sprut.SprutRpcClient
@@ -9,6 +10,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -88,6 +90,7 @@ class SprutRepository(
             check(parsed.controls.isNotEmpty()) {
                 "SprutHub ответил, но управляемые устройства не найдены"
             }
+            reconcileTileAssignments(_catalog.value.controls, parsed.controls)
             _catalog.value = parsed
             cache.write(parsed)
             _connectionStatus.value = ConnectionStatus(
@@ -122,7 +125,7 @@ class SprutRepository(
             control = control,
             characteristicId = control.characteristicId,
             field = control.valueField,
-            value = JsonPrimitive(value),
+            value = booleanWireValue(control.valueField, value),
         )
         updateOptimistically(control.id, control.value.copy(boolValue = value))
     }
@@ -155,7 +158,7 @@ class SprutRepository(
                 control,
                 control.characteristicId,
                 control.valueField,
-                JsonPrimitive(true),
+                booleanWireValue(control.valueField, true),
             )
         }
     }
@@ -218,6 +221,54 @@ class SprutRepository(
 
     private fun scalarId(value: String): JsonPrimitive = value.toLongOrNull()?.let { JsonPrimitive(it) } ?: JsonPrimitive(value)
 
+    private fun booleanWireValue(field: String, value: Boolean): JsonPrimitive = when (field) {
+        "intValue", "longValue", "uintValue", "floatValue", "doubleValue" -> JsonPrimitive(if (value) 1 else 0)
+        "stringValue", "enumValue" -> JsonPrimitive(if (value) "1" else "0")
+        else -> JsonPrimitive(value)
+    }
+
+    private suspend fun reconcileTileAssignments(
+        previousControls: List<SprutControl>,
+        currentControls: List<SprutControl>,
+    ) {
+        val validIds = currentControls.mapTo(mutableSetOf(), SprutControl::id)
+        val assignedIds = settings.tileAssignments.first().map(TileAssignment::controlId)
+        val replacements = assignedIds
+            .filterNot(validIds::contains)
+            .mapNotNull { oldId ->
+                val old = previousControls.firstOrNull { it.id == oldId }
+                val accessoryId = old?.accessoryId
+                    ?: oldId.substringBefore(':').takeIf { oldId.count { character -> character == ':' } >= 2 }
+                    ?: return@mapNotNull null
+                val replacement = currentControls
+                    .filter { it.accessoryId == accessoryId && it.writable }
+                    .maxByOrNull { candidate -> replacementScore(old, candidate) }
+                    ?: return@mapNotNull null
+                oldId to replacement.id
+            }
+            .toMap()
+        settings.reconcileTileAssignments(validIds, replacements)
+        replacements.forEach { (oldId, newId) ->
+            Log.i(LOG_TAG, "Tile assignment migrated: $oldId -> $newId")
+        }
+    }
+
+    private fun replacementScore(old: SprutControl?, candidate: SprutControl): Int =
+        (if (old?.serviceId == candidate.serviceId) 200 else 0) +
+            (if (old?.kind == candidate.kind && candidate.kind != DeviceKind.OTHER) 120 else 0) +
+            (if (old?.title == candidate.title) 40 else 0) +
+            when (candidate.behavior) {
+                ControlBehavior.TOGGLE_RANGE -> 90
+                ControlBehavior.TOGGLE -> 80
+                ControlBehavior.BUTTON -> 40
+                ControlBehavior.RANGE -> 25
+                ControlBehavior.SENSOR -> 0
+            } +
+            when (candidate.kind) {
+                DeviceKind.OTHER, DeviceKind.SENSOR -> 0
+                else -> 30
+            }
+
     private fun applyUpdate(update: CharacteristicUpdate) {
         val current = _catalog.value
         var changed = false
@@ -226,8 +277,12 @@ class SprutRepository(
             when (update.characteristicId) {
                 control.characteristicId -> {
                     changed = true
+                    val toggleUpdate = control.behavior == ControlBehavior.TOGGLE ||
+                        control.behavior == ControlBehavior.TOGGLE_RANGE
                     val merged = SprutValue(
-                        boolValue = update.value.boolValue ?: control.value.boolValue,
+                        boolValue = update.value.boolValue
+                            ?: if (toggleUpdate) update.value.numberValue?.let { it > 0.0 } else null
+                            ?: control.value.boolValue,
                         numberValue = update.value.numberValue ?: control.value.numberValue,
                         stringValue = update.value.stringValue ?: control.value.stringValue,
                     )
@@ -275,6 +330,11 @@ class SprutRepository(
     }
 
     private fun log(message: String, isError: Boolean = false) {
+        if (isError) Log.e(LOG_TAG, message) else Log.i(LOG_TAG, message)
         _diagnostics.value = (listOf(DiagnosticEvent(message = message, isError = isError)) + _diagnostics.value).take(40)
+    }
+
+    private companion object {
+        const val LOG_TAG = "SprutHubHelper"
     }
 }

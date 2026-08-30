@@ -81,6 +81,27 @@ class SettingsRepository(private val context: Context) {
         }
     }
 
+    suspend fun reconcileTileAssignments(
+        validControlIds: Set<String>,
+        replacements: Map<String, String>,
+    ) {
+        context.settingsDataStore.edit { preferences ->
+            val current = decodeAssignments(preferences)
+            val reconciled = current.mapNotNull { assignment ->
+                when {
+                    assignment.controlId in validControlIds -> assignment
+                    replacements[assignment.controlId] != null -> assignment.copy(
+                        controlId = replacements.getValue(assignment.controlId),
+                    )
+                    else -> null
+                }
+            }.distinctBy(TileAssignment::slot).sortedBy(TileAssignment::slot)
+            if (reconciled != current) {
+                preferences[Keys.TILE_ASSIGNMENTS] = json.encodeToString(reconciled)
+            }
+        }
+    }
+
     suspend fun saveHealthMetrics(metrics: Set<HealthMetric>) {
         require(metrics.isNotEmpty()) { "Выберите хотя бы один показатель здоровья" }
         context.settingsDataStore.edit { it[Keys.HEALTH_METRICS] = metrics.joinToString(",", transform = HealthMetric::name) }
