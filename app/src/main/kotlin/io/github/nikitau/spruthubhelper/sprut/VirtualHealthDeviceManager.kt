@@ -177,7 +177,7 @@ class VirtualHealthDeviceManager(
                 .onSuccess { accessories ->
                     val accessory = accessories.firstOrNull { candidate ->
                         (accessoryId.isNotBlank() && candidate.scalar("id", "aId") == accessoryId) ||
-                            candidate.scalar("name") == name
+                            sameSprutLabel(candidate.scalar("name", "title", "displayName"), name)
                     }
                     if (accessory == null) {
                         lastProblem = "аксессуар не найден"
@@ -194,8 +194,14 @@ class VirtualHealthDeviceManager(
                             val missing = missingFields(candidate)
                             if (missing.isEmpty()) return candidate
                             lastProblem = "не распознано полей ${missing.size}"
+                            Log.w(
+                                LOG_TAG,
+                                "Health binding incomplete: targets=${candidate.targets.size}, " +
+                                    "missing=${missing.sorted().joinToString()}",
+                            )
                         } else {
-                            lastProblem = "SprutHub ещё не вернул ID характеристик"
+                            lastProblem = "структура характеристик ещё не распознана"
+                            Log.w(LOG_TAG, bindingDiagnostic(accessory))
                         }
                     }
                 }
@@ -232,9 +238,10 @@ class VirtualHealthDeviceManager(
         val accessoryId = accessory.scalar("id", "aId")
         if (accessoryId.isBlank()) return null
         val services = accessory.array("services").orEmpty().mapNotNull { it as? JsonObject }
-        val fieldsByTitle = virtualFields().associateBy(VirtualFieldSpec::title)
+        val fieldsByTitle = virtualFields().associateBy { sprutLabelKey(it.title) }
         val targets = services.mapNotNull { service ->
-            val field = fieldsByTitle[service.scalar("name")] ?: return@mapNotNull null
+            val serviceName = service.scalar("name", "title", "displayName")
+            val field = fieldsByTitle[sprutLabelKey(serviceName)] ?: return@mapNotNull null
             val serviceId = service.scalar("sId", "id")
             val characteristics = service.array("characteristics")
                 .orEmpty()
@@ -243,12 +250,14 @@ class VirtualHealthDeviceManager(
             val candidates = characteristics
                 .filterNot { it.isNameCharacteristic() }
                 .filter { findBoolean(it, "write") == true }
-            val characteristic = candidates.firstOrNull { candidate ->
-                val typeMatches = expectedType?.let { expected ->
+            val characteristic = expectedType?.let { expected ->
+                candidates.firstOrNull { candidate ->
                     candidate.typeIdentifiers().any { actual -> actual.sameTypeAs(expected) }
                 }
-                typeMatches == true || (expectedType == null && findValueField(candidate)?.matches(field.kind) == true)
-            } ?: return@mapNotNull null
+            } ?: candidates
+                .filter { findValueField(it)?.matches(field.kind) == true }
+                .singleOrNull()
+                ?: return@mapNotNull null
             val characteristicId = characteristic.scalar("cId", "id")
             val valueField = findValueField(characteristic) ?: defaultValueField(field.kind)
             if (serviceId.isBlank() || characteristicId.isBlank()) return@mapNotNull null
@@ -431,7 +440,12 @@ class VirtualHealthDeviceManager(
     private fun idValue(value: String): JsonPrimitive = value.toLongOrNull()?.let { JsonPrimitive(it) } ?: JsonPrimitive(value)
 
     private fun findHealthAccessory(accessories: List<JsonObject>, name: String): JsonObject? =
-        accessories.firstOrNull { it.scalar("name") == name && it.boolean("virtual") != false }
+        accessories
+            .filter {
+                sameSprutLabel(it.scalar("name", "title", "displayName"), name) &&
+                    it.boolean("virtual") != false
+            }
+            .maxByOrNull { it.array("services")?.size ?: 0 }
 
     private fun findAccessory(element: JsonElement): JsonObject? = findAccessories(element).firstOrNull()
 
@@ -511,12 +525,32 @@ class VirtualHealthDeviceManager(
         scalar("name"),
     ).map { it.lowercase() }.any { it == "name" || it == "c_name" || it.endsWith(".name") }
 
-    private fun JsonObject.typeIdentifiers(): List<String> = listOf(
-        scalar("type"),
-        scalar("shortId"),
-        scalar("characteristicType"),
-        scalar("id").takeIf { it.toLongOrNull() == null }.orEmpty(),
-    ).filter(String::isNotBlank).map(String::lowercase)
+    private fun JsonObject.typeIdentifiers(): List<String> = buildList {
+        fun collect(element: JsonElement) {
+            when (element) {
+                is JsonObject -> element.forEach { (key, value) ->
+                    if (key.lowercase() in TYPE_IDENTIFIER_KEYS) {
+                        (value as? JsonPrimitive)?.content?.takeIf(String::isNotBlank)?.let(::add)
+                    }
+                    collect(value)
+                }
+                is JsonArray -> element.forEach(::collect)
+                else -> Unit
+            }
+        }
+        collect(this@typeIdentifiers)
+    }.map(String::lowercase).distinct()
+
+    private fun bindingDiagnostic(accessory: JsonObject): String {
+        val expected = virtualFields().map { sprutLabelKey(it.title) }.toSet()
+        val services = accessory.array("services").orEmpty().mapNotNull { it as? JsonObject }
+        val matched = services.count {
+            sprutLabelKey(it.scalar("name", "title", "displayName")) in expected
+        }
+        val characteristics = services.sumOf { it.array("characteristics")?.size ?: 0 }
+        return "Health binding pending: accessoryId=${accessory.scalar("id", "aId")}, " +
+            "services=${services.size}, matchedServices=$matched, characteristics=$characteristics"
+    }
 
     private fun String.sameTypeAs(other: String): Boolean = normalizeType() == other.normalizeType()
 
@@ -555,5 +589,13 @@ class VirtualHealthDeviceManager(
             "stringValue",
             "enumValue",
         )
+        private val TYPE_IDENTIFIER_KEYS = setOf("type", "shortid", "characteristictype", "typename")
     }
 }
+
+internal fun sameSprutLabel(first: String, second: String): Boolean =
+    sprutLabelKey(first) == sprutLabelKey(second)
+
+internal fun sprutLabelKey(value: String): String = value
+    .lowercase()
+    .filter(Char::isLetterOrDigit)

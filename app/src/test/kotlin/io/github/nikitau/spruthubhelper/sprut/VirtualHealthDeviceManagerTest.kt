@@ -1,0 +1,19 @@
+package io.github.nikitau.spruthubhelper.sprut
+
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class VirtualHealthDeviceManagerTest {
+    @Test
+    fun matchesLabelsAfterSprutHubRemovesFormattingSeparators() {
+        assertTrue(
+            sameSprutLabel(
+                "Здоровье · Samsung SM-F971B",
+                "Здоровье Samsung SM-F971B",
+            ),
+        )
+        assertTrue(sameSprutLabel("Телефон · Заряд", "Телефон Заряд"))
+        assertFalse(sameSprutLabel("Пульс", "Пульс в покое"))
+    }
+}
