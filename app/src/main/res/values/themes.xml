@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.SprutHubHelper" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/sprut_green</item>
+        <item name="colorPrimaryVariant">@color/sprut_navy</item>
+        <item name="colorSecondary">@color/sprut_green</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:navigationBarColor">@color/sprut_cream</item>
+        <item name="android:statusBarColor">@color/sprut_cream</item>
+    </style>
+</resources>

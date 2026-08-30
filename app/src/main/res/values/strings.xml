@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">SprutHub Helper</string>
+    <string name="controls_provider_name">SprutHub</string>
+    <string name="tile_1">SprutHub 1</string>
+    <string name="tile_2">SprutHub 2</string>
+    <string name="tile_3">SprutHub 3</string>
+    <string name="tile_4">SprutHub 4</string>
+    <string name="tile_5">SprutHub 5</string>
+    <string name="tile_6">SprutHub 6</string>
+    <string name="tile_7">SprutHub 7</string>
+    <string name="tile_8">SprutHub 8</string>
+    <string name="tile_9">SprutHub 9</string>
+    <string name="tile_10">SprutHub 10</string>
+    <string name="tile_11">SprutHub 11</string>
+    <string name="tile_12">SprutHub 12</string>
+</resources>
