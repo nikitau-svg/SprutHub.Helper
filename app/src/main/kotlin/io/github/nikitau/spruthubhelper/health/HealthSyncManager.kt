@@ -158,6 +158,7 @@ class HealthSyncManager(
             settings.markHealthSynced()
             runtime.value = runtime.value.copy(syncing = false, message = "Здоровье синхронизировано локально")
             Log.i(LOG_TAG, "Health sync completed")
+            Unit
         }.onFailure {
             runtime.value = runtime.value.copy(syncing = false, message = it.message ?: "Ошибка синхронизации здоровья")
             Log.e(LOG_TAG, "Health sync failed", it)

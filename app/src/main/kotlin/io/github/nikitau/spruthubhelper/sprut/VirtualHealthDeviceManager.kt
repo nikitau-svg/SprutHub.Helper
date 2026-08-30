@@ -296,32 +296,34 @@ class VirtualHealthDeviceManager(
         return selected.scalar("type", "id", "shortId").takeIf(String::isNotBlank)
     }
 
-    private fun wireValue(field: String, reading: HealthReading): JsonPrimitive? = when (field) {
-        "boolValue" -> JsonPrimitive(
-            reading.boolValue
-                ?: reading.numberValue?.let { it != 0.0 }
-                ?: reading.stringValue?.let { it == "1" || it.equals("true", true) }
-                ?: return null,
-        )
-        "intValue", "longValue", "uintValue" -> JsonPrimitive(
-            reading.numberValue?.roundToLong()
-                ?: reading.boolValue?.let { if (it) 1L else 0L }
-                ?: reading.stringValue?.toLongOrNull()
-                ?: return null,
-        )
-        "floatValue", "doubleValue" -> JsonPrimitive(
-            reading.numberValue
-                ?: reading.boolValue?.let { if (it) 1.0 else 0.0 }
-                ?: reading.stringValue?.toDoubleOrNull()
-                ?: return null,
-        )
-        "stringValue", "enumValue" -> JsonPrimitive(
-            reading.stringValue
-                ?: reading.numberValue?.toString()
-                ?: reading.boolValue?.toString()
-                ?: return null,
-        )
-        else -> null
+    private fun wireValue(field: String, reading: HealthReading): JsonPrimitive? {
+        return when (field) {
+            "boolValue" -> JsonPrimitive(
+                reading.boolValue
+                    ?: reading.numberValue?.let { it != 0.0 }
+                    ?: reading.stringValue?.let { it == "1" || it.equals("true", true) }
+                    ?: return null,
+            )
+            "intValue", "longValue", "uintValue" -> JsonPrimitive(
+                reading.numberValue?.roundToLong()
+                    ?: reading.boolValue?.let { if (it) 1L else 0L }
+                    ?: reading.stringValue?.toLongOrNull()
+                    ?: return null,
+            )
+            "floatValue", "doubleValue" -> JsonPrimitive(
+                reading.numberValue
+                    ?: reading.boolValue?.let { if (it) 1.0 else 0.0 }
+                    ?: reading.stringValue?.toDoubleOrNull()
+                    ?: return null,
+            )
+            "stringValue", "enumValue" -> JsonPrimitive(
+                reading.stringValue
+                    ?: reading.numberValue?.toString()
+                    ?: reading.boolValue?.toString()
+                    ?: return null,
+            )
+            else -> null
+        }
     }
 
     private fun virtualFields(): List<VirtualFieldSpec> = buildList {

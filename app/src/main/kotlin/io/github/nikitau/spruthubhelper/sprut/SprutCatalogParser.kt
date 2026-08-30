@@ -109,8 +109,12 @@ class SprutCatalogParser {
         val parsed = characteristics.mapNotNull { it as? JsonObject }
             .mapIndexed { index, characteristic -> parseCharacteristic(characteristic, index) }
 
-        val toggle = parsed.firstOrNull { it.role == CharacteristicRole.TOGGLE && it.writable }
-        val range = parsed.firstOrNull { it.role == CharacteristicRole.RANGE && it.writable }
+        val toggle = parsed
+            .filter { it.role == CharacteristicRole.TOGGLE && it.writable }
+            .maxByOrNull { it.togglePriority() }
+        val range = parsed
+            .filter { it.role == CharacteristicRole.RANGE && it.writable }
+            .maxByOrNull { it.rangePriority(kind) }
         val button = parsed.firstOrNull { it.role == CharacteristicRole.BUTTON && it.writable }
         val title = accessoryName
         val subtitle = serviceName.takeIf { it.isNotBlank() && it != accessoryName }.orEmpty()
@@ -206,7 +210,8 @@ class SprutCatalogParser {
         val field = extractValueField(characteristic)
         val role = when {
             descriptor.containsMarker(BUTTON_MARKERS) -> CharacteristicRole.BUTTON
-            descriptor.containsMarker(TOGGLE_MARKERS) || field == "boolValue" -> CharacteristicRole.TOGGLE
+            (descriptor.containsMarker(TOGGLE_MARKERS) && !descriptor.containsMarker(NON_TOGGLE_MARKERS)) ||
+                field == "boolValue" -> CharacteristicRole.TOGGLE
             descriptor.containsMarker(RANGE_MARKERS) || field in NUMBER_FIELDS -> CharacteristicRole.RANGE
             else -> CharacteristicRole.SENSOR
         }
@@ -214,6 +219,7 @@ class SprutCatalogParser {
         val explicitWrite = findBoolean(characteristic, "write")
         return ParsedCharacteristic(
             id = id,
+            descriptor = descriptor,
             role = role,
             value = value,
             valueField = field,
@@ -246,18 +252,31 @@ class SprutCatalogParser {
     }
 
     private fun detectKind(descriptor: String): DeviceKind = when {
-        descriptor.containsAny("light", "bulb", "lamp") -> DeviceKind.LIGHT
-        descriptor.containsAny("outlet", "socket") -> DeviceKind.OUTLET
-        descriptor.contains("fan") -> DeviceKind.FAN
-        descriptor.contains("curtain") -> DeviceKind.CURTAIN
-        descriptor.contains("blind") -> DeviceKind.BLINDS
-        descriptor.contains("shutter") -> DeviceKind.SHUTTER
-        descriptor.contains("lock") -> DeviceKind.LOCK
-        descriptor.containsAny("thermostat", "climate", "heater") -> DeviceKind.THERMOSTAT
-        descriptor.contains("garage") -> DeviceKind.GARAGE
-        descriptor.contains("valve") -> DeviceKind.VALVE
-        descriptor.containsAny("security", "alarm") -> DeviceKind.SECURITY
-        descriptor.contains("switch") -> DeviceKind.SWITCH
+        descriptor.containsAny("light", "bulb", "lamp", "свет", "ламп") -> DeviceKind.LIGHT
+        descriptor.containsAny("outlet", "socket", "розет") -> DeviceKind.OUTLET
+        descriptor.containsAny("fan", "вентил") -> DeviceKind.FAN
+        descriptor.containsAny("curtain", "awning", "штор") -> DeviceKind.CURTAIN
+        descriptor.containsAny("blind", "windowcovering", "window_covering", "roller", "жалюз") -> DeviceKind.BLINDS
+        descriptor.containsAny("shutter", "ставн") -> DeviceKind.SHUTTER
+        descriptor.containsAny("lock", "замок") -> DeviceKind.LOCK
+        descriptor.containsAny(
+            "thermostat",
+            "climate",
+            "heater",
+            "airconditioner",
+            "air_conditioner",
+            "heatpump",
+            "heat_pump",
+            "hvac",
+            "кондиционер",
+            "термостат",
+            "отоп",
+        ) -> DeviceKind.THERMOSTAT
+        descriptor.containsAny("garage", "гараж") -> DeviceKind.GARAGE
+        descriptor.containsAny("valve", "sprinkler", "клапан", "полив") -> DeviceKind.VALVE
+        descriptor.containsAny("security", "alarm", "сигнал") -> DeviceKind.SECURITY
+        descriptor.containsAny("switch", "переключ") -> DeviceKind.SWITCH
+        descriptor.containsAny("sensor", "датчик") -> DeviceKind.SENSOR
         else -> DeviceKind.OTHER
     }
 
@@ -364,8 +383,27 @@ class SprutCatalogParser {
         }
     }
 
+    private fun ParsedCharacteristic.togglePriority(): Int = when {
+        descriptor.containsMarker(listOf("c_on", "on_off", "power")) -> 300
+        descriptor.containsMarker(listOf("c_active", "enabled")) -> 250
+        descriptor.containsMarker(listOf("targetlock", "targetdoor")) -> 220
+        valueField == "boolValue" -> 150
+        else -> 50
+    }
+
+    private fun ParsedCharacteristic.rangePriority(kind: DeviceKind): Int = when {
+        kind == DeviceKind.THERMOSTAT && descriptor.containsMarker(THERMOSTAT_RANGE_MARKERS) -> 400
+        kind == DeviceKind.LIGHT && descriptor.containsMarker(listOf("brightness")) -> 400
+        kind == DeviceKind.FAN && descriptor.containsMarker(listOf("rotation", "speed")) -> 400
+        kind in setOf(DeviceKind.CURTAIN, DeviceKind.BLINDS, DeviceKind.SHUTTER) &&
+            descriptor.containsMarker(listOf("targetposition", "position")) -> 400
+        descriptor.containsMarker(RANGE_MARKERS) -> 200
+        else -> 50
+    }
+
     private data class ParsedCharacteristic(
         val id: String,
+        val descriptor: String,
         val role: CharacteristicRole,
         val value: SprutValue,
         val valueField: String,
@@ -398,6 +436,13 @@ class SprutCatalogParser {
             "active",
             "targetlock",
             "targetdoor",
+        )
+        val NON_TOGGLE_MARKERS = listOf("activeidentifier", "active_identifier")
+        val THERMOSTAT_RANGE_MARKERS = listOf(
+            "targettemperature",
+            "coolingthresholdtemperature",
+            "heatingthresholdtemperature",
+            "setpoint",
         )
         val RANGE_MARKERS = listOf(
             "brightness",
