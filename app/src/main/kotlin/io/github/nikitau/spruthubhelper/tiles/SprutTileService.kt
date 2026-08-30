@@ -1,11 +1,16 @@
 package io.github.nikitau.spruthubhelper.tiles
 
+import android.app.PendingIntent
+import android.content.Intent
+import android.os.Build
 import android.service.quicksettings.Tile
 import android.service.quicksettings.TileService
 import android.util.Log
 import io.github.nikitau.spruthubhelper.AppGraph
 import io.github.nikitau.spruthubhelper.data.ControlBehavior
+import io.github.nikitau.spruthubhelper.data.DeviceKind
 import io.github.nikitau.spruthubhelper.data.SprutControl
+import io.github.nikitau.spruthubhelper.ui.MainActivity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -42,8 +47,16 @@ abstract class SprutTileService(private val slot: Int) : TileService() {
             ControlBehavior.TOGGLE, ControlBehavior.TOGGLE_RANGE ->
                 repository.setBoolean(control.id, !control.value.asBoolean())
             ControlBehavior.RANGE -> {
-                val midpoint = (control.minimum + control.maximum) / 2.0
-                repository.setRange(control.id, if (control.value.asDouble() > midpoint) control.minimum else control.maximum)
+                if (control.kind in COVERING_KINDS) {
+                    val midpoint = (control.minimum + control.maximum) / 2.0
+                    repository.setRange(
+                        control.id,
+                        if (control.value.asDouble() > midpoint) control.minimum else control.maximum,
+                    )
+                } else {
+                    openControl(control)
+                    Result.success(Unit)
+                }
             }
             ControlBehavior.BUTTON -> repository.execute(control.id)
             ControlBehavior.SENSOR -> Result.failure(IllegalStateException("Только чтение"))
@@ -59,7 +72,7 @@ abstract class SprutTileService(private val slot: Int) : TileService() {
             tile.label = "SprutHub $slot"
             tile.subtitle = error?.take(30) ?: "Не настроено"
             tile.state = Tile.STATE_UNAVAILABLE
-            tile.icon = TileIconResolver.icon(this, io.github.nikitau.spruthubhelper.data.DeviceKind.OTHER)
+            tile.icon = TileIconResolver.icon(this, DeviceKind.OTHER)
         } else {
             tile.label = control.title
             tile.subtitle = error?.take(30) ?: control.room
@@ -84,6 +97,24 @@ abstract class SprutTileService(private val slot: Int) : TileService() {
         return repository.catalog.value.controls.firstOrNull { it.id == controlId }
     }
 
+    private fun openControl(control: SprutControl) {
+        val intent = Intent(this, MainActivity::class.java)
+            .putExtra(MainActivity.EXTRA_CONTROL_ID, control.id)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            val pendingIntent = PendingIntent.getActivity(
+                this,
+                control.id.hashCode(),
+                intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            )
+            startActivityAndCollapse(pendingIntent)
+        } else {
+            @Suppress("DEPRECATION")
+            startActivityAndCollapse(intent)
+        }
+    }
+
     override fun onDestroy() {
         scope.cancel()
         super.onDestroy()
@@ -91,6 +122,7 @@ abstract class SprutTileService(private val slot: Int) : TileService() {
 
     private companion object {
         const val LOG_TAG = "SprutHubTile"
+        val COVERING_KINDS = setOf(DeviceKind.CURTAIN, DeviceKind.BLINDS, DeviceKind.SHUTTER, DeviceKind.GARAGE)
     }
 }
 

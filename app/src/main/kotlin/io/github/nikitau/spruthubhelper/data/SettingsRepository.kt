@@ -50,16 +50,38 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun currentConfig(): HubConfig = config.first()
 
-    suspend fun saveConfig(config: HubConfig, replacePassword: Boolean) {
-        validate(config)
+    suspend fun saveConfig(config: HubConfig, passwordUpdate: HubPasswordUpdate) {
+        val normalized = config.copy(
+            localUrl = normalizeSprutEndpoint(config.localUrl, secureByDefault = false),
+            cloudUrl = normalizeSprutEndpoint(config.cloudUrl, secureByDefault = true),
+        )
+        validate(normalized)
         context.settingsDataStore.edit { preferences ->
-            preferences[Keys.MODE] = config.mode.name
-            preferences[Keys.LOCAL_URL] = config.localUrl.trim()
-            preferences[Keys.CLOUD_URL] = config.cloudUrl.trim()
-            preferences[Keys.SERIAL] = config.serial.trim()
-            preferences[Keys.EMAIL] = config.email.trim()
+            preferences[Keys.MODE] = normalized.mode.name
+            preferences[Keys.LOCAL_URL] = normalized.localUrl
+            preferences[Keys.CLOUD_URL] = normalized.cloudUrl
+            preferences[Keys.SERIAL] = normalized.serial.trim()
+            preferences[Keys.EMAIL] = normalized.email.trim()
         }
-        if (replacePassword) secretStore.savePassword(config.password)
+        secretStore.updatePasswords(passwordUpdate)
+    }
+
+    /**
+     * Compatibility bridge for the original single-password UI. A replacement
+     * updates both endpoint credentials, matching the behaviour before v2.
+     */
+    suspend fun saveConfig(config: HubConfig, replacePassword: Boolean) {
+        saveConfig(
+            config = config,
+            passwordUpdate = if (replacePassword) {
+                HubPasswordUpdate(
+                    localPassword = config.password,
+                    cloudPassword = config.password,
+                )
+            } else {
+                HubPasswordUpdate()
+            },
+        )
     }
 
     suspend fun assignTile(slot: Int, controlId: String) {
@@ -121,16 +143,21 @@ class SettingsRepository(private val context: Context) {
         context.settingsDataStore.edit { it[Keys.LAST_HEALTH_SYNC] = epochMs }
     }
 
-    private fun preferencesToConfig(preferences: Preferences): HubConfig = HubConfig(
-        mode = preferences[Keys.MODE]
-            ?.let { runCatching { ConnectionMode.valueOf(it) }.getOrNull() }
-            ?: ConnectionMode.AUTO,
-        localUrl = preferences[Keys.LOCAL_URL] ?: HubConfig.DEFAULT_LOCAL_URL,
-        cloudUrl = preferences[Keys.CLOUD_URL] ?: HubConfig.DEFAULT_CLOUD_URL,
-        serial = preferences[Keys.SERIAL] ?: HubConfig.DEFAULT_SERIAL,
-        email = preferences[Keys.EMAIL].orEmpty(),
-        password = secretStore.readPassword(),
-    )
+    private fun preferencesToConfig(preferences: Preferences): HubConfig {
+        val passwords = secretStore.readPasswords()
+        return HubConfig(
+            mode = preferences[Keys.MODE]
+                ?.let { runCatching { ConnectionMode.valueOf(it) }.getOrNull() }
+                ?: ConnectionMode.AUTO,
+            localUrl = preferences[Keys.LOCAL_URL] ?: HubConfig.DEFAULT_LOCAL_URL,
+            cloudUrl = preferences[Keys.CLOUD_URL] ?: HubConfig.DEFAULT_CLOUD_URL,
+            serial = preferences[Keys.SERIAL] ?: HubConfig.DEFAULT_SERIAL,
+            email = preferences[Keys.EMAIL].orEmpty(),
+            localPassword = passwords.localPassword,
+            cloudPassword = passwords.cloudPassword,
+            password = passwords.legacyCompatiblePassword,
+        )
+    }
 
     private fun decodeAssignments(preferences: Preferences): List<TileAssignment> =
         preferences[Keys.TILE_ASSIGNMENTS]
@@ -139,14 +166,23 @@ class SettingsRepository(private val context: Context) {
 
     private fun validate(config: HubConfig) {
         require(config.serial.isNotBlank()) { "Укажите серийный номер SprutHub" }
-        listOf(config.localUrl to "локальный", config.cloudUrl to "облачный").forEach { (url, label) ->
+        when (config.mode) {
+            ConnectionMode.AUTO -> require(config.localUrl.isNotBlank() || config.cloudUrl.isNotBlank()) {
+                "Укажите хотя бы один адрес SprutHub"
+            }
+            ConnectionMode.LOCAL -> require(config.localUrl.isNotBlank()) { "Укажите локальный адрес SprutHub" }
+            ConnectionMode.CLOUD -> require(config.cloudUrl.isNotBlank()) { "Укажите облачный адрес SprutHub" }
+        }
+        listOf(config.localUrl to "локальный", config.cloudUrl to "облачный")
+            .filter { (url) -> url.isNotBlank() }
+            .forEach { (url, label) ->
             val uri = runCatching { URI(url.trim()) }.getOrNull()
                 ?: error("Некорректный $label адрес")
             require(uri.scheme == "ws" || uri.scheme == "wss") { "$label адрес должен начинаться с ws:// или wss://" }
             require(uri.host != null) { "В $label адресе не найден хост" }
             if (uri.scheme == "ws") {
-                require(uri.host == LOCAL_CLEARTEXT_HOST) {
-                    "Незашифрованное локальное подключение разрешено только к $LOCAL_CLEARTEXT_HOST"
+                require(label == "локальный" && isPrivateLanHost(uri.host)) {
+                    "Незашифрованный ws:// разрешён только для локального адреса; используйте wss://"
                 }
             }
         }
@@ -167,7 +203,6 @@ class SettingsRepository(private val context: Context) {
 
     companion object {
         const val MAX_TILE_SLOTS = 12
-        const val LOCAL_CLEARTEXT_HOST = "192.168.1.135"
         val DEFAULT_HEALTH_METRICS = setOf(
             HealthMetric.STEPS,
             HealthMetric.HEART_RATE,
@@ -177,4 +212,37 @@ class SettingsRepository(private val context: Context) {
             HealthMetric.ACTIVE_CALORIES,
         )
     }
+}
+
+internal fun normalizeSprutEndpoint(raw: String, secureByDefault: Boolean): String {
+    val trimmed = raw.trim()
+    if (trimmed.isEmpty()) return ""
+    val withScheme = when {
+        trimmed.startsWith("https://", ignoreCase = true) -> "wss://${trimmed.substringAfter("://")}"
+        trimmed.startsWith("http://", ignoreCase = true) -> "ws://${trimmed.substringAfter("://")}"
+        "://" !in trimmed -> "${if (secureByDefault) "wss" else "ws"}://$trimmed"
+        else -> trimmed
+    }
+    val uri = runCatching { URI(withScheme) }.getOrNull() ?: return withScheme
+    val path = uri.rawPath.takeUnless { it.isNullOrBlank() || it == "/" } ?: "/spruthub"
+    return runCatching {
+        URI(uri.scheme?.lowercase(), uri.rawUserInfo, uri.host, uri.port, path, uri.rawQuery, uri.rawFragment)
+            .toASCIIString()
+    }.getOrDefault(withScheme)
+}
+
+internal fun isPrivateLanHost(rawHost: String): Boolean {
+    val host = rawHost.trim('[', ']').lowercase()
+    if (host == "localhost" || host == "::1" || host.endsWith(".local") || '.' !in host && ':' !in host) return true
+    if (host.startsWith("fc") || host.startsWith("fd") || host.startsWith("fe8") ||
+        host.startsWith("fe9") || host.startsWith("fea") || host.startsWith("feb")
+    ) return true
+    val octets = host.split('.').mapNotNull(String::toIntOrNull)
+    if (octets.size != 4 || octets.any { it !in 0..255 }) return false
+    return octets[0] == 10 ||
+        octets[0] == 127 ||
+        octets[0] == 169 && octets[1] == 254 ||
+        octets[0] == 172 && octets[1] in 16..31 ||
+        octets[0] == 192 && octets[1] == 168 ||
+        octets[0] == 100 && octets[1] in 64..127
 }

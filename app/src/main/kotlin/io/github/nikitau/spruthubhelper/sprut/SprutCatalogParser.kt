@@ -51,21 +51,42 @@ class SprutCatalogParser {
         )
     }
 
-    fun parseUpdate(event: JsonElement): CharacteristicUpdate? {
-        val characteristic = findArray(event, "characteristics")
-            ?.firstOrNull() as? JsonObject
-            ?: findObject(event, "characteristic")
-            ?: return null
+    fun parseUpdate(event: JsonElement): CharacteristicUpdate? = parseUpdates(event).firstOrNull()
+
+    fun parseUpdates(event: JsonElement): List<CharacteristicUpdate> {
+        val latestById = linkedMapOf<String, CharacteristicUpdate>()
+        findCharacteristicUpdates(event).forEach { characteristic ->
+            parseCharacteristicUpdate(characteristic)?.let { update ->
+                latestById["${update.accessoryId}:${update.serviceId}:${update.characteristicId}"] = update
+            }
+        }
+        return latestById.values.toList()
+    }
+
+    private fun parseCharacteristicUpdate(characteristic: JsonObject): CharacteristicUpdate? {
         val accessoryId = characteristic.scalar("aId", "accessoryId")
         val serviceId = characteristic.scalar("sId", "serviceId")
         val characteristicId = characteristic.scalar("cId", "characteristicId", "id")
         if (accessoryId.isBlank() || serviceId.isBlank() || characteristicId.isBlank()) return null
+        if (findValueObject(characteristic) == null) return null
         return CharacteristicUpdate(
             accessoryId = accessoryId,
             serviceId = serviceId,
             characteristicId = characteristicId,
             value = extractValue(characteristic),
         )
+    }
+
+    private fun findCharacteristicUpdates(element: JsonElement): List<JsonObject> = when (element) {
+        is JsonObject -> buildList {
+            val hasIds = element.scalar("aId", "accessoryId").isNotBlank() &&
+                element.scalar("sId", "serviceId").isNotBlank() &&
+                element.scalar("cId", "characteristicId", "id").isNotBlank()
+            if (hasIds && findValueObject(element) != null) add(element)
+            element.values.forEach { addAll(findCharacteristicUpdates(it)) }
+        }
+        is JsonArray -> element.flatMap(::findCharacteristicUpdates)
+        else -> emptyList()
     }
 
     private fun parseAccessory(
@@ -275,6 +296,8 @@ class SprutCatalogParser {
         descriptor.containsAny("garage", "гараж") -> DeviceKind.GARAGE
         descriptor.containsAny("valve", "sprinkler", "клапан", "полив") -> DeviceKind.VALVE
         descriptor.containsAny("security", "alarm", "сигнал") -> DeviceKind.SECURITY
+        descriptor.containsAny("vacuum", "пылесос") -> DeviceKind.VACUUM
+        descriptor.containsAny("television", "speaker", "телевизор") -> DeviceKind.TELEVISION
         descriptor.containsAny("switch", "переключ") -> DeviceKind.SWITCH
         descriptor.containsAny("sensor", "датчик") -> DeviceKind.SENSOR
         else -> DeviceKind.OTHER

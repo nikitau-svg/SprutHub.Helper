@@ -173,4 +173,23 @@ class SprutCatalogParserTest {
         assertEquals("1", update?.characteristicId)
         assertEquals(false, update?.value?.boolValue)
     }
+
+    @Test
+    fun readsEveryCharacteristicFromOneWebSocketEvent() {
+        val event = json.parseToJsonElement(
+            """
+            {"event":{"characteristic":{"event":"EVENT_UPDATE","characteristics":[
+              {"aId":7,"sId":11,"cId":1,"control":{"value":{"boolValue":false}}},
+              {"aId":7,"sId":11,"cId":2,"control":{"value":{"doubleValue":37.5}}}
+            ]}}}
+            """.trimIndent(),
+        )
+
+        val updates = parser.parseUpdates(event)
+
+        assertEquals(2, updates.size)
+        assertEquals(listOf("1", "2"), updates.map { it.characteristicId })
+        assertEquals(false, updates[0].value.boolValue)
+        assertEquals(37.5, updates[1].value.numberValue!!, 0.0)
+    }
 }

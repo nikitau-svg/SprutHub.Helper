@@ -83,6 +83,8 @@ object ControlFactory {
         DeviceKind.GARAGE -> DeviceTypes.TYPE_GARAGE
         DeviceKind.VALVE -> DeviceTypes.TYPE_VALVE
         DeviceKind.SECURITY -> DeviceTypes.TYPE_SECURITY_SYSTEM
+        DeviceKind.VACUUM -> DeviceTypes.TYPE_VACUUM
+        DeviceKind.TELEVISION -> DeviceTypes.TYPE_TV
         DeviceKind.SCENE -> DeviceTypes.TYPE_ROUTINE
         DeviceKind.SENSOR, DeviceKind.OTHER -> DeviceTypes.TYPE_UNKNOWN
     }

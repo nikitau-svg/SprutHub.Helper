@@ -10,6 +10,7 @@ import io.github.nikitau.spruthubhelper.data.HealthValueKind
 import io.github.nikitau.spruthubhelper.data.HubConfig
 import io.github.nikitau.spruthubhelper.data.SettingsRepository
 import io.github.nikitau.spruthubhelper.health.HealthReading
+import kotlin.math.abs
 import kotlin.math.roundToLong
 import kotlinx.coroutines.delay
 import kotlinx.serialization.json.JsonArray
@@ -43,7 +44,6 @@ class VirtualHealthDeviceManager(
                 existing = true,
             )
             validateBinding(binding, fields, existing = true)
-            settings.saveHealthBinding(binding)
             Log.i(LOG_TAG, "Existing health device recovered with ${binding.targets.size} targets")
             return binding
         }
@@ -90,7 +90,6 @@ class VirtualHealthDeviceManager(
             existing = false,
         )
         validateBinding(binding, fields, existing = false)
-        settings.saveHealthBinding(binding)
         Log.i(LOG_TAG, "Health device created with ${binding.targets.size} targets")
         return binding
     }
@@ -109,12 +108,14 @@ class VirtualHealthDeviceManager(
             existing = true,
         )
         validateBinding(binding, virtualFields(), existing = true)
-        settings.saveHealthBinding(binding)
         Log.i(LOG_TAG, "Health binding repaired automatically")
         return binding
     }
 
-    suspend fun publish(binding: HealthDeviceBinding, readings: Map<String, HealthReading>) {
+    suspend fun publish(
+        binding: HealthDeviceBinding,
+        readings: Map<String, HealthReading>,
+    ): HealthDeviceBinding {
         val config = healthConfig()
         client.connect(config)
         val liveBinding = awaitCompleteBinding(
@@ -127,10 +128,10 @@ class VirtualHealthDeviceManager(
             createdAtEpochMs = binding.createdAtEpochMs,
         )
         validateBinding(liveBinding, virtualFields(), existing = true)
-        if (liveBinding != binding) settings.saveHealthBinding(liveBinding)
 
         var published = 0
         val failures = mutableListOf<String>()
+        val expectedValues = linkedMapOf<String, JsonPrimitive>()
         liveBinding.targets.forEach { target ->
             val reading = readings[target.key] ?: return@forEach
             val value = wireValue(target.valueField, reading) ?: return@forEach
@@ -146,6 +147,7 @@ class VirtualHealthDeviceManager(
                 client.call(config, request("characteristic", "update", body))
             }.onSuccess {
                 published += 1
+                expectedValues[target.key] = value
             }.onFailure { error ->
                 failures += "${target.key}: ${error.message.orEmpty().take(100)}"
                 Log.e(LOG_TAG, "Health target ${target.key} failed", error)
@@ -155,7 +157,9 @@ class VirtualHealthDeviceManager(
         check(failures.isEmpty()) {
             "Обновлено $published полей, не обновлено ${failures.size}: ${failures.joinToString().take(240)}"
         }
-        Log.i(LOG_TAG, "Health sync published $published fields")
+        verifyPublishedValues(config, liveBinding, expectedValues)
+        Log.i(LOG_TAG, "Health sync published and verified $published fields")
+        return liveBinding
     }
 
     private suspend fun awaitCompleteBinding(
@@ -236,11 +240,15 @@ class VirtualHealthDeviceManager(
                 .orEmpty()
                 .mapNotNull { it as? JsonObject }
             val expectedType = expectedTypes?.get(field.kind)?.lowercase()
-            val candidates = characteristics.filterNot { it.isNameCharacteristic() }
+            val candidates = characteristics
+                .filterNot { it.isNameCharacteristic() }
+                .filter { findBoolean(it, "write") == true }
             val characteristic = candidates.firstOrNull { candidate ->
-                val descriptor = candidate.toString().lowercase()
-                (expectedType != null && descriptor.contains(expectedType)) || descriptor.matches(field.kind)
-            } ?: candidates.lastOrNull() ?: return@mapNotNull null
+                val typeMatches = expectedType?.let { expected ->
+                    candidate.typeIdentifiers().any { actual -> actual.sameTypeAs(expected) }
+                }
+                typeMatches == true || (expectedType == null && findValueField(candidate)?.matches(field.kind) == true)
+            } ?: return@mapNotNull null
             val characteristicId = characteristic.scalar("cId", "id")
             val valueField = findValueField(characteristic) ?: defaultValueField(field.kind)
             if (serviceId.isBlank() || characteristicId.isBlank()) return@mapNotNull null
@@ -271,6 +279,75 @@ class VirtualHealthDeviceManager(
             val prefix = if (existing) "Существующее" else "Созданное"
             "$prefix устройство здоровья несовместимо: не распознано полей ${missing.size}. " +
                 "Удалите аксессуар «${binding.name}» в SprutHub и повторите создание"
+        }
+        check(binding.targets.distinctBy { "${it.serviceId}:${it.characteristicId}" }.size == binding.targets.size) {
+            "Устройство «${binding.name}» содержит неоднозначную привязку характеристик"
+        }
+        val expectedKinds = fields.associate { it.key to it.kind }
+        val incompatible = binding.targets.filter { target ->
+            val expected = expectedKinds[target.key] ?: return@filter true
+            !target.valueField.matches(expected)
+        }
+        check(incompatible.isEmpty()) {
+            "Устройство «${binding.name}» содержит несовместимые типы полей: " +
+                incompatible.joinToString { it.key }
+        }
+    }
+
+    private suspend fun verifyPublishedValues(
+        config: HubConfig,
+        binding: HealthDeviceBinding,
+        expected: Map<String, JsonPrimitive>,
+    ) {
+        var lastMismatch = expected.keys.toList()
+        repeat(VERIFY_ATTEMPTS) { attempt ->
+            if (attempt > 0) delay(VERIFY_RETRY_MS)
+            val accessory = listExpandedAccessories(config).firstOrNull {
+                it.scalar("id", "aId") == binding.accessoryId
+            }
+            if (accessory != null) {
+                lastMismatch = binding.targets.mapNotNull { target ->
+                    val expectedValue = expected[target.key] ?: return@mapNotNull null
+                    val actualValue = accessory.valueFor(target) ?: return@mapNotNull target.key
+                    target.key.takeUnless { valuesEqual(target.valueField, expectedValue, actualValue) }
+                }
+                if (lastMismatch.isEmpty()) return
+            }
+        }
+        error(
+            "SprutHub принял обновление, но не подтвердил чтением полей: " +
+                lastMismatch.joinToString().take(220),
+        )
+    }
+
+    private fun JsonObject.valueFor(target: HealthTarget): JsonPrimitive? {
+        val service = array("services").orEmpty()
+            .mapNotNull { it as? JsonObject }
+            .firstOrNull { it.scalar("sId", "id") == target.serviceId }
+            ?: return null
+        val characteristic = service.array("characteristics").orEmpty()
+            .mapNotNull { it as? JsonObject }
+            .firstOrNull { it.scalar("cId", "id") == target.characteristicId }
+            ?: return null
+        return findPrimitive(characteristic, target.valueField)
+    }
+
+    private fun findPrimitive(element: JsonElement, field: String): JsonPrimitive? = when (element) {
+        is JsonObject -> (element[field] as? JsonPrimitive)
+            ?: element["value"]?.let { findPrimitive(it, field) }
+            ?: element["control"]?.let { findPrimitive(it, field) }
+        else -> null
+    }
+
+    private fun valuesEqual(field: String, expected: JsonPrimitive, actual: JsonPrimitive): Boolean {
+        return when (field) {
+            "boolValue" -> expected.booleanOrNull == actual.booleanOrNull
+            "intValue", "longValue", "uintValue", "floatValue", "doubleValue" -> {
+                val expectedNumber = expected.content.toDoubleOrNull() ?: return false
+                val actualNumber = actual.content.toDoubleOrNull() ?: return false
+                abs(expectedNumber - actualNumber) < 0.001
+            }
+            else -> expected.content == actual.content
         }
     }
 
@@ -339,9 +416,11 @@ class VirtualHealthDeviceManager(
 
     private suspend fun healthConfig(): HubConfig {
         val current = settings.currentConfig()
+        check(current.localUrl.isNotBlank()) {
+            "Для здоровья укажите локальный адрес SprutHub в настройках подключения"
+        }
         return current.copy(
             mode = ConnectionMode.LOCAL,
-            localUrl = current.localUrl.ifBlank { HubConfig.DEFAULT_LOCAL_URL },
             cloudUrl = "",
         )
     }
@@ -423,11 +502,22 @@ class VirtualHealthDeviceManager(
         scalar("name"),
     ).map { it.lowercase() }.any { it == "name" || it == "c_name" || it.endsWith(".name") }
 
+    private fun JsonObject.typeIdentifiers(): List<String> = listOf(
+        scalar("type"),
+        scalar("shortId"),
+        scalar("characteristicType"),
+        scalar("id").takeIf { it.toLongOrNull() == null }.orEmpty(),
+    ).filter(String::isNotBlank).map(String::lowercase)
+
+    private fun String.sameTypeAs(other: String): Boolean = normalizeType() == other.normalizeType()
+
+    private fun String.normalizeType(): String = filter(Char::isLetterOrDigit)
+
     private fun String.matches(kind: HealthValueKind): Boolean = when (kind) {
-        HealthValueKind.INT -> contains("integer") || contains("intvalue") || contains("c_int")
-        HealthValueKind.DOUBLE -> contains("float") || contains("double")
-        HealthValueKind.STRING -> contains("string")
-        HealthValueKind.BOOL -> contains("bool")
+        HealthValueKind.INT -> this in setOf("intValue", "longValue", "uintValue")
+        HealthValueKind.DOUBLE -> this in setOf("floatValue", "doubleValue")
+        HealthValueKind.STRING -> this in setOf("stringValue", "enumValue")
+        HealthValueKind.BOOL -> this == "boolValue"
     }
 
     private data class VirtualFieldSpec(val key: String, val title: String, val kind: HealthValueKind)
@@ -443,6 +533,8 @@ class VirtualHealthDeviceManager(
         private const val EXPAND_LEGACY = "services+characteristics"
         private const val BINDING_ATTEMPTS = 8
         private const val BINDING_RETRY_MS = 500L
+        private const val VERIFY_ATTEMPTS = 4
+        private const val VERIFY_RETRY_MS = 300L
         private const val LOG_TAG = "SprutHubHealth"
         private val VALUE_FIELDS = listOf(
             "boolValue",

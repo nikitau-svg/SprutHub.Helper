@@ -7,6 +7,7 @@ import io.github.nikitau.spruthubhelper.data.ConnectionMode
 import io.github.nikitau.spruthubhelper.data.ConnectionStatus
 import io.github.nikitau.spruthubhelper.data.DiagnosticEvent
 import io.github.nikitau.spruthubhelper.data.HubConfig
+import io.github.nikitau.spruthubhelper.data.HubPasswordUpdate
 import io.github.nikitau.spruthubhelper.data.HealthMetric
 import io.github.nikitau.spruthubhelper.data.SprutCatalog
 import io.github.nikitau.spruthubhelper.data.TileAssignment
@@ -45,21 +46,40 @@ class MainViewModel : ViewModel() {
         cloudUrl: String,
         serial: String,
         email: String,
-        newPassword: String,
+        newLocalPassword: String,
+        newCloudPassword: String,
     ) = launchWork("Настройки сохранены") {
-        val old = settings.currentConfig()
-        settings.saveConfig(
-            HubConfig(
-                mode = mode,
-                localUrl = localUrl,
-                cloudUrl = cloudUrl,
-                serial = serial,
-                email = email,
-                password = if (newPassword.isBlank()) old.password else newPassword,
-            ),
-            replacePassword = newPassword.isNotBlank(),
+        saveSettingsNow(
+            mode,
+            localUrl,
+            cloudUrl,
+            serial,
+            email,
+            newLocalPassword,
+            newCloudPassword,
         )
-        repository.reconnectAfterSettingsChange()
+    }
+
+    fun saveAndTestSettings(
+        mode: ConnectionMode,
+        localUrl: String,
+        cloudUrl: String,
+        serial: String,
+        email: String,
+        newLocalPassword: String,
+        newCloudPassword: String,
+    ) = launchWork(null) {
+        saveSettingsNow(
+            mode,
+            localUrl,
+            cloudUrl,
+            serial,
+            email,
+            newLocalPassword,
+            newCloudPassword,
+        )
+        val catalog = repository.refresh(forceConnection = true).getOrThrow()
+        _notice.value = "Готово: найдено ${catalog.controls.size} элементов"
     }
 
     fun testConnection() = launchWork(null) {
@@ -103,6 +123,31 @@ class MainViewModel : ViewModel() {
 
     fun consumeNotice() {
         _notice.value = null
+    }
+
+    private suspend fun saveSettingsNow(
+        mode: ConnectionMode,
+        localUrl: String,
+        cloudUrl: String,
+        serial: String,
+        email: String,
+        newLocalPassword: String,
+        newCloudPassword: String,
+    ) {
+        settings.saveConfig(
+            config = HubConfig(
+                mode = mode,
+                localUrl = localUrl,
+                cloudUrl = cloudUrl,
+                serial = serial,
+                email = email,
+            ),
+            passwordUpdate = HubPasswordUpdate(
+                localPassword = newLocalPassword.takeIf(String::isNotEmpty),
+                cloudPassword = newCloudPassword.takeIf(String::isNotEmpty),
+            ),
+        )
+        repository.reconnectAfterSettingsChange()
     }
 
     private fun launchWork(successMessage: String?, block: suspend () -> Unit) {

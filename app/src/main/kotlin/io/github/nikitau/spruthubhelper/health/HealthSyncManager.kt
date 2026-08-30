@@ -66,13 +66,23 @@ class HealthSyncManager(
                 runCatching { virtualDevice.recoverExisting() }
                     .onSuccess { binding ->
                         if (binding != null) {
-                            val canRunInBackground = backgroundReadGranted()
-                            settings.setHealthEnabled(canRunInBackground)
-                            runtime.value = runtime.value.copy(
-                                message = "Найдено существующее устройство здоровья",
-                            )
-                            Log.i(LOG_TAG, "Existing health accessory recovered on startup")
-                            syncNow()
+                            runCatching { publishAndPersist(binding) }
+                                .onSuccess {
+                                    val canRunInBackground = backgroundReadGranted()
+                                    settings.setHealthEnabled(canRunInBackground)
+                                    runtime.value = runtime.value.copy(
+                                        syncing = false,
+                                        message = "Найдено и проверено существующее устройство здоровья",
+                                    )
+                                    Log.i(LOG_TAG, "Existing health accessory recovered and verified on startup")
+                                }
+                                .onFailure { error ->
+                                    runtime.value = runtime.value.copy(
+                                        syncing = false,
+                                        message = error.message ?: "Не удалось проверить устройство здоровья",
+                                    )
+                                    Log.e(LOG_TAG, "Recovered health accessory failed verification", error)
+                                }
                         }
                     }
                     .onFailure { error ->
@@ -127,6 +137,7 @@ class HealthSyncManager(
         check(missing.isEmpty()) { "Сначала разрешите все выбранные показатели в Health Connect" }
         runtime.value = runtime.value.copy(syncing = true, message = "Создаю виртуальное устройство…")
         val binding = virtualDevice.createOrRecover(roomId)
+        publishAndPersist(binding)
         val canRunInBackground = backgroundReadGranted()
         settings.setHealthEnabled(canRunInBackground)
         if (canRunInBackground) schedule() else cancel()
@@ -138,7 +149,6 @@ class HealthSyncManager(
                 "Устройство готово; разрешите фоновое чтение для автообновления"
             },
         )
-        syncNow().getOrThrow()
         binding
     }.onFailure {
         runtime.value = runtime.value.copy(syncing = false, message = it.message ?: "Не удалось создать устройство")
@@ -151,11 +161,7 @@ class HealthSyncManager(
                 ?: virtualDevice.recoverExisting()
                 ?: error("Сначала создайте устройство здоровья в SprutHub")
             runtime.value = runtime.value.copy(syncing = true, message = "Читаю Health Connect…")
-            val readings = reader.read(settings.selectedHealthMetrics.first())
-            check(readings.isNotEmpty()) { "Нет разрешённых данных для синхронизации" }
-            // VirtualHealthDeviceManager pins all health traffic to the exact LAN endpoint.
-            virtualDevice.publish(binding, readings)
-            settings.markHealthSynced()
+            publishAndPersist(binding)
             runtime.value = runtime.value.copy(syncing = false, message = "Здоровье синхронизировано локально")
             Log.i(LOG_TAG, "Health sync completed")
             Unit
@@ -200,6 +206,11 @@ class HealthSyncManager(
     private fun schedule() {
         val request = PeriodicWorkRequestBuilder<HealthSyncWorker>(15, TimeUnit.MINUTES)
             .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+            .setBackoffCriteria(
+                androidx.work.BackoffPolicy.EXPONENTIAL,
+                15,
+                TimeUnit.MINUTES,
+            )
             .build()
         WorkManager.getInstance(context).enqueueUniquePeriodicWork(
             WORK_NAME,
@@ -210,6 +221,25 @@ class HealthSyncManager(
 
     private fun cancel() {
         WorkManager.getInstance(context).cancelUniqueWork(WORK_NAME)
+    }
+
+    private suspend fun publishAndPersist(initialBinding: HealthDeviceBinding) {
+        val readings = reader.read(settings.selectedHealthMetrics.first())
+        check(readings.isNotEmpty()) { "Нет разрешённых данных для синхронизации" }
+        // Health traffic is intentionally pinned to the exact LAN endpoint. If IDs changed,
+        // rebuild the binding by the virtual accessory name and retry once.
+        val verifiedBinding = runCatching {
+            virtualDevice.publish(initialBinding, readings)
+        }.recoverCatching { firstError ->
+            val recovered = virtualDevice.recoverExisting() ?: throw firstError
+            runCatching { virtualDevice.publish(recovered, readings) }
+                .getOrElse { secondError ->
+                    secondError.addSuppressed(firstError)
+                    throw secondError
+                }
+        }.getOrThrow()
+        settings.saveHealthBinding(verifiedBinding)
+        settings.markHealthSynced()
     }
 
     private companion object {

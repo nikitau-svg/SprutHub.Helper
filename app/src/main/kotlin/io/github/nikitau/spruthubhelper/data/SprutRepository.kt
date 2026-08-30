@@ -54,7 +54,7 @@ class SprutRepository(
         }
         scope.launch {
             client.events.collect { event ->
-                parser.parseUpdate(event)?.let(::applyUpdate)
+                parser.parseUpdates(event).forEach(::applyUpdate)
             }
         }
     }
@@ -240,10 +240,13 @@ class SprutRepository(
                 val accessoryId = old?.accessoryId
                     ?: oldId.substringBefore(':').takeIf { oldId.count { character -> character == ':' } >= 2 }
                     ?: return@mapNotNull null
-                val replacement = currentControls
+                val scoredReplacement = currentControls
                     .filter { it.accessoryId == accessoryId && it.writable }
-                    .maxByOrNull { candidate -> replacementScore(old, candidate) }
+                    .map { candidate -> candidate to replacementScore(old, candidate) }
+                    .maxByOrNull { (_, score) -> score }
                     ?: return@mapNotNull null
+                val (replacement, score) = scoredReplacement
+                if (score < MIN_REPLACEMENT_SCORE) return@mapNotNull null
                 oldId to replacement.id
             }
             .toMap()
@@ -290,7 +293,11 @@ class SprutRepository(
                 }
                 control.rangeCharacteristicId -> {
                     changed = true
-                    control.copy(value = control.value.copy(numberValue = update.value.numberValue))
+                    control.copy(
+                        value = control.value.copy(
+                            numberValue = update.value.numberValue ?: control.value.numberValue,
+                        ),
+                    )
                 }
                 else -> control
             }
@@ -336,5 +343,6 @@ class SprutRepository(
 
     private companion object {
         const val LOG_TAG = "SprutHubHelper"
+        const val MIN_REPLACEMENT_SCORE = 120
     }
 }

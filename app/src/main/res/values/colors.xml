@@ -1,6 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="sprut_green">#1F7A5B</color>
-    <color name="sprut_navy">#10251E</color>
-    <color name="sprut_cream">#F6F7F1</color>
+    <color name="sprut_green">#72DDB2</color>
+    <color name="sprut_on_green">#003827</color>
+    <color name="sprut_navy">#0B1412</color>
+    <color name="sprut_surface">#111D1A</color>
+    <color name="sprut_surface_elevated">#182824</color>
+    <color name="sprut_text">#F1F7F4</color>
+    <color name="sprut_text_muted">#B6C8C0</color>
+    <color name="sprut_outline">#748A81</color>
+    <color name="sprut_error">#FFB4AB</color>
 </resources>

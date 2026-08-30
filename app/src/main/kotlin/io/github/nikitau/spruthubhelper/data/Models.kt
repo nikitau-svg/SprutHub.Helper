@@ -1,6 +1,7 @@
 package io.github.nikitau.spruthubhelper.data
 
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.Transient
 
 @Serializable
 enum class ConnectionMode {
@@ -16,13 +17,52 @@ data class HubConfig(
     val cloudUrl: String = DEFAULT_CLOUD_URL,
     val serial: String = DEFAULT_SERIAL,
     val email: String = "",
+    @Transient
+    val localPassword: String = "",
+    @Transient
+    val cloudPassword: String = "",
+    /**
+     * Compatibility bridge for the original single-password UI.
+     *
+     * New callers must use [localPassword] and [cloudPassword]. This field is
+     * deliberately transient and is never persisted in DataStore.
+     */
+    @Transient
     val password: String = "",
 ) {
-    companion object {
-        const val DEFAULT_LOCAL_URL = "ws://192.168.1.135/spruthub"
-        const val DEFAULT_CLOUD_URL = "wss://beta.spruthub.com/spruthub"
-        const val DEFAULT_SERIAL = "68C341B253468E4B"
+    val hasLocalPassword: Boolean
+        get() = localPassword.isNotEmpty() || password.isNotEmpty()
+
+    val hasCloudPassword: Boolean
+        get() = cloudPassword.isNotEmpty() || password.isNotEmpty()
+
+    internal fun passwordFor(isLocal: Boolean): String = if (isLocal) {
+        localPassword.ifEmpty { password }
+    } else {
+        cloudPassword.ifEmpty { password }
     }
+
+    override fun toString(): String =
+        "HubConfig(mode=$mode, localUrl=$localUrl, cloudUrl=$cloudUrl, serial=<redacted>, " +
+            "email=<redacted>, localPassword=<redacted>, cloudPassword=<redacted>, password=<redacted>)"
+
+    companion object {
+        const val DEFAULT_LOCAL_URL = ""
+        const val DEFAULT_CLOUD_URL = "wss://web.spruthub.ru/spruthub"
+        const val DEFAULT_SERIAL = ""
+    }
+}
+
+/**
+ * Password update contract. `null` preserves the stored secret, an empty
+ * string clears it, and a non-empty string replaces it.
+ */
+data class HubPasswordUpdate(
+    val localPassword: String? = null,
+    val cloudPassword: String? = null,
+) {
+    override fun toString(): String =
+        "HubPasswordUpdate(localPassword=<redacted>, cloudPassword=<redacted>)"
 }
 
 @Serializable
@@ -48,6 +88,8 @@ enum class DeviceKind {
     GARAGE,
     VALVE,
     SECURITY,
+    VACUUM,
+    TELEVISION,
     SCENE,
     SENSOR,
     OTHER,

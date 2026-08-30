@@ -14,6 +14,8 @@ object TileIconResolver {
         DeviceKind.FAN -> R.drawable.ic_tile_fan
         DeviceKind.CURTAIN, DeviceKind.BLINDS, DeviceKind.SHUTTER -> R.drawable.ic_tile_blinds
         DeviceKind.LOCK, DeviceKind.GARAGE, DeviceKind.SECURITY -> R.drawable.ic_tile_lock
+        DeviceKind.VACUUM -> R.drawable.ic_tile_vacuum
+        DeviceKind.TELEVISION -> R.drawable.ic_tile_tv
         DeviceKind.SCENE -> R.drawable.ic_tile_scene
         DeviceKind.SWITCH, DeviceKind.OUTLET, DeviceKind.VALVE, DeviceKind.SENSOR, DeviceKind.OTHER ->
             R.drawable.ic_tile
