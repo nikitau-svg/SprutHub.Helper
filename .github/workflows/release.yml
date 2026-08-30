@@ -60,6 +60,7 @@ jobs:
           mkdir -p dist
           candidate="dist/SprutHub.Helper-${GITHUB_REF_NAME}-unsigned.apk"
           cp "$source_apk" "$candidate"
+          cp LICENSE NOTICE dist/
           cd dist
           sha256sum "$(basename "$candidate")" > "$(basename "$candidate").sha256"
 

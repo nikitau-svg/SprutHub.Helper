@@ -62,6 +62,7 @@ jobs:
           short_sha="${GITHUB_SHA::7}"
           apk="SprutHub.Helper-beta-${short_sha}.apk"
           cp app/build/outputs/apk/release/app-release.apk "dist/$apk"
+          cp LICENSE NOTICE dist/
           cd dist
           sha256sum "$apk" > "$apk.sha256"
 

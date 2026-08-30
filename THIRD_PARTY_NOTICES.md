@@ -1,5 +1,7 @@
 # Third-party notices
 
+The PolyForm Noncommercial License applies only to original SprutHub.Helper materials. Third-party software, APIs, names, trademarks, documentation, and other materials remain subject to their own licenses and rightsholders.
+
 The Android Device Controls, Quick Settings tile lifecycle, and Health Connect module architecture were informed by the open-source Home Assistant Android application:
 
 - Project: Home Assistant Companion for Android
