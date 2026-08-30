@@ -5,6 +5,17 @@ plugins {
     id("org.jetbrains.kotlin.plugin.serialization")
 }
 
+val signingStoreFilePath = System.getenv("ANDROID_SIGNING_STORE_FILE").orEmpty()
+val signingStorePassword = System.getenv("ANDROID_SIGNING_STORE_PASSWORD").orEmpty()
+val signingKeyAlias = System.getenv("ANDROID_SIGNING_KEY_ALIAS").orEmpty()
+val signingKeyPassword = System.getenv("ANDROID_SIGNING_KEY_PASSWORD").orEmpty()
+val stableSigningAvailable = listOf(
+    signingStoreFilePath,
+    signingStorePassword,
+    signingKeyAlias,
+    signingKeyPassword,
+).all(String::isNotBlank)
+
 android {
     namespace = "io.github.nikitau.spruthubhelper"
     compileSdk = 36
@@ -20,8 +31,24 @@ android {
         vectorDrawables.useSupportLibrary = true
     }
 
+    signingConfigs {
+        if (stableSigningAvailable) {
+            create("stable") {
+                storeFile = file(signingStoreFilePath)
+                storePassword = signingStorePassword
+                keyAlias = signingKeyAlias
+                keyPassword = signingKeyPassword
+                storeType = "PKCS12"
+            }
+        }
+    }
+
     buildTypes {
+        debug {
+            if (stableSigningAvailable) signingConfig = signingConfigs.getByName("stable")
+        }
         release {
+            if (stableSigningAvailable) signingConfig = signingConfigs.getByName("stable")
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(

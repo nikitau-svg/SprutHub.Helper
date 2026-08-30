@@ -5,5 +5,7 @@ local.properties
 *.iml
 *.jks
 *.keystore
+*.p12
+.signing/
 *.apk
 captures/

@@ -1,5 +1,6 @@
 package io.github.nikitau.spruthubhelper.tiles
 
+import android.annotation.SuppressLint
 import android.app.PendingIntent
 import android.content.Intent
 import android.os.Build
@@ -97,6 +98,7 @@ abstract class SprutTileService(private val slot: Int) : TileService() {
         return repository.catalog.value.controls.firstOrNull { it.id == controlId }
     }
 
+    @SuppressLint("StartActivityAndCollapseDeprecated")
     private fun openControl(control: SprutControl) {
         val intent = Intent(this, MainActivity::class.java)
             .putExtra(MainActivity.EXTRA_CONTROL_ID, control.id)
