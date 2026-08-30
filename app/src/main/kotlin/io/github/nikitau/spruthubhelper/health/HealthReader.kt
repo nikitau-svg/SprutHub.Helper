@@ -1,10 +1,6 @@
 package io.github.nikitau.spruthubhelper.health
 
 import android.content.Context
-import android.content.Intent
-import android.content.IntentFilter
-import android.os.BatteryManager
-import android.os.Build
 import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.permission.HealthPermission
 import androidx.health.connect.client.records.ActiveCaloriesBurnedRecord
@@ -24,11 +20,9 @@ import androidx.health.connect.client.request.AggregateRequest
 import androidx.health.connect.client.request.ReadRecordsRequest
 import androidx.health.connect.client.time.TimeRangeFilter
 import io.github.nikitau.spruthubhelper.data.HealthMetric
-import io.github.nikitau.spruthubhelper.sprut.VirtualHealthDeviceManager
 import java.time.Duration
 import java.time.Instant
 import java.time.LocalDate
-import java.time.OffsetDateTime
 import java.time.ZoneId
 import kotlin.reflect.KClass
 
@@ -41,6 +35,10 @@ class HealthReader(private val context: Context) {
         client().permissionController.getGrantedPermissions()
     } else {
         emptySet()
+    }
+
+    suspend fun revokeAllPermissions() {
+        if (isAvailable()) client().permissionController.revokeAllPermissions()
     }
 
     suspend fun read(metrics: Set<HealthMetric>): Map<String, HealthReading> {
@@ -118,7 +116,6 @@ class HealthReader(private val context: Context) {
             latest<HeartRateVariabilityRmssdRecord>(client, recent, now)?.heartRateVariabilityMillis
         }
 
-        readings += phoneReadings()
         return readings
     }
 
@@ -134,29 +131,6 @@ class HealthReader(private val context: Context) {
             pageSize = 1,
         ),
     ).records.firstOrNull()
-
-    private fun phoneReadings(): Map<String, HealthReading> {
-        val battery = context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
-        val level = battery?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
-        val scale = battery?.getIntExtra(BatteryManager.EXTRA_SCALE, 100) ?: 100
-        val status = battery?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) ?: -1
-        val charging = status == BatteryManager.BATTERY_STATUS_CHARGING || status == BatteryManager.BATTERY_STATUS_FULL
-        return buildMap {
-            if (level >= 0 && scale > 0) {
-                put(VirtualHealthDeviceManager.KEY_PHONE_BATTERY, HealthReading(numberValue = level * 100.0 / scale))
-            }
-            put(VirtualHealthDeviceManager.KEY_PHONE_CHARGING, HealthReading(boolValue = charging))
-            put(
-                VirtualHealthDeviceManager.KEY_PHONE_MODEL,
-                HealthReading(stringValue = "${Build.MANUFACTURER.replaceFirstChar(Char::uppercase)} ${Build.MODEL}"),
-            )
-            put(
-                VirtualHealthDeviceManager.KEY_ANDROID_VERSION,
-                HealthReading(stringValue = "Android ${Build.VERSION.RELEASE} · API ${Build.VERSION.SDK_INT}"),
-            )
-            put(VirtualHealthDeviceManager.KEY_LAST_SYNC, HealthReading(stringValue = OffsetDateTime.now().toString()))
-        }
-    }
 
     private fun permissionFor(metric: HealthMetric): String = HealthPermission.getReadPermission(recordType(metric))
 

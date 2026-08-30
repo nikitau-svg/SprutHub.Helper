@@ -14,6 +14,7 @@ import io.github.nikitau.spruthubhelper.data.HealthDeviceBinding
 import io.github.nikitau.spruthubhelper.data.HealthMetric
 import io.github.nikitau.spruthubhelper.data.SettingsRepository
 import io.github.nikitau.spruthubhelper.sprut.VirtualHealthDeviceManager
+import io.github.nikitau.spruthubhelper.sprut.healthVirtualFields
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -52,6 +53,8 @@ class HealthSyncManager(
             selectedMetrics = metrics,
             allSelectedPermissionsGranted = reader.permissions(metrics).all { it in live.grantedPermissions },
             binding = binding,
+            configurationMatches = binding == null ||
+                binding.targets.map { it.key }.toSet() == metrics.map { it.name }.toSet(),
             enabled = enabled,
             lastSyncEpochMs = lastSync,
             syncing = live.syncing,
@@ -63,16 +66,21 @@ class HealthSyncManager(
         scope.launch {
             refreshPermissions()
             if (settings.healthBinding.first() == null) {
-                runCatching { virtualDevice.recoverExisting() }
+                val fields = healthVirtualFields(settings.selectedHealthMetrics.first())
+                runCatching { virtualDevice.recoverExisting(fields) }
                     .onSuccess { binding ->
                         if (binding != null) {
                             runCatching { publishAndPersist(binding) }
-                                .onSuccess {
+                                .onSuccess { published ->
                                     val canRunInBackground = backgroundReadGranted()
                                     settings.setHealthEnabled(canRunInBackground)
                                     runtime.value = runtime.value.copy(
                                         syncing = false,
-                                        message = "Найдено и проверено существующее устройство здоровья",
+                                        message = if (published > 0) {
+                                            "Найдено и проверено существующее устройство здоровья"
+                                        } else {
+                                            "Устройство найдено; в Health Connect пока нет записей"
+                                        },
                                     )
                                     Log.i(LOG_TAG, "Existing health accessory recovered and verified on startup")
                                 }
@@ -136,15 +144,16 @@ class HealthSyncManager(
         val missing = reader.permissions(selected) - reader.grantedPermissions()
         check(missing.isEmpty()) { "Сначала разрешите все выбранные показатели в Health Connect" }
         runtime.value = runtime.value.copy(syncing = true, message = "Создаю виртуальное устройство…")
-        val binding = virtualDevice.createOrRecover(roomId)
-        publishAndPersist(binding)
+        val binding = virtualDevice.createOrRecover(roomId, healthVirtualFields(selected))
+        val published = publishAndPersist(binding)
         val canRunInBackground = backgroundReadGranted()
         settings.setHealthEnabled(canRunInBackground)
         if (canRunInBackground) schedule() else cancel()
         runtime.value = runtime.value.copy(
             syncing = false,
             message = if (canRunInBackground) {
-                "Устройство здоровья готово, фон включён"
+                if (published > 0) "Устройство здоровья готово, фон включён"
+                else "Устройство готово; в Health Connect пока нет записей"
             } else {
                 "Устройство готово; разрешите фоновое чтение для автообновления"
             },
@@ -157,18 +166,53 @@ class HealthSyncManager(
     suspend fun syncNow(fromBackground: Boolean = false): Result<Unit> {
         if (fromBackground && !settings.healthEnabled.first()) return Result.success(Unit)
         return runCatching {
+            val selected = settings.selectedHealthMetrics.first()
             val binding = settings.healthBinding.first()
-                ?: virtualDevice.recoverExisting()
+                ?: virtualDevice.recoverExisting(healthVirtualFields(selected))
                 ?: error("Сначала создайте устройство здоровья в SprutHub")
             runtime.value = runtime.value.copy(syncing = true, message = "Читаю Health Connect…")
-            publishAndPersist(binding)
-            runtime.value = runtime.value.copy(syncing = false, message = "Здоровье синхронизировано локально")
+            val published = publishAndPersist(binding)
+            runtime.value = runtime.value.copy(
+                syncing = false,
+                message = if (published > 0) {
+                    "Здоровье синхронизировано локально"
+                } else {
+                    "В Health Connect пока нет записей; нулевые значения не отправлялись"
+                },
+            )
             Log.i(LOG_TAG, "Health sync completed")
             Unit
         }.onFailure {
             runtime.value = runtime.value.copy(syncing = false, message = it.message ?: "Ошибка синхронизации здоровья")
             Log.e(LOG_TAG, "Health sync failed", it)
         }
+    }
+
+    suspend fun recreateDevice(): Result<HealthDeviceBinding> = runCatching {
+        val current = settings.healthBinding.first()
+            ?: error("Сначала создайте устройство здоровья в SprutHub")
+        val selected = settings.selectedHealthMetrics.first()
+        runtime.value = runtime.value.copy(syncing = true, message = "Пересоздаю устройство здоровья…")
+        val binding = virtualDevice.recreate(
+            binding = current,
+            roomId = current.roomId,
+            fields = healthVirtualFields(selected),
+        )
+        val published = publishAndPersist(binding)
+        runtime.value = runtime.value.copy(
+            syncing = false,
+            message = if (published > 0) {
+                "Состав устройства здоровья обновлён"
+            } else {
+                "Устройство пересоздано; в Health Connect пока нет записей"
+            },
+        )
+        binding
+    }.onFailure { error ->
+        runtime.value = runtime.value.copy(
+            syncing = false,
+            message = error.message ?: "Не удалось пересоздать устройство здоровья",
+        )
     }
 
     suspend fun setEnabled(enabled: Boolean) {
@@ -181,6 +225,16 @@ class HealthSyncManager(
         if (enabled) schedule() else cancel()
         runtime.value = runtime.value.copy(
             message = if (enabled) "Фоновая синхронизация включена" else "Оставлена ручная синхронизация",
+        )
+    }
+
+    suspend fun revokeAllPermissions() {
+        settings.setHealthEnabled(false)
+        cancel()
+        reader.revokeAllPermissions()
+        refreshPermissions()
+        runtime.value = runtime.value.copy(
+            message = "Доступ Health Connect отозван; Android может обновить экран разрешений после перезапуска",
         )
     }
 
@@ -223,16 +277,26 @@ class HealthSyncManager(
         WorkManager.getInstance(context).cancelUniqueWork(WORK_NAME)
     }
 
-    private suspend fun publishAndPersist(initialBinding: HealthDeviceBinding) {
-        val readings = reader.read(settings.selectedHealthMetrics.first())
-        check(readings.isNotEmpty()) { "Нет разрешённых данных для синхронизации" }
+    private suspend fun publishAndPersist(initialBinding: HealthDeviceBinding): Int {
+        val selected = settings.selectedHealthMetrics.first()
+        val readings = reader.read(selected)
+        val boundMetrics = initialBinding.targets
+            .mapNotNull { target -> runCatching { HealthMetric.valueOf(target.key) }.getOrNull() }
+            .toSet()
+            .ifEmpty { selected }
+        val fields = healthVirtualFields(boundMetrics)
+        if (readings.isEmpty()) {
+            settings.saveHealthBinding(initialBinding)
+            settings.markHealthSynced()
+            return 0
+        }
         // Health traffic is intentionally pinned to the exact LAN endpoint. If IDs changed,
         // rebuild the binding by the virtual accessory name and retry once.
         val verifiedBinding = runCatching {
-            virtualDevice.publish(initialBinding, readings)
+            virtualDevice.publish(initialBinding, readings, fields)
         }.recoverCatching { firstError ->
-            val recovered = virtualDevice.recoverExisting() ?: throw firstError
-            runCatching { virtualDevice.publish(recovered, readings) }
+            val recovered = virtualDevice.recoverExisting(fields) ?: throw firstError
+            runCatching { virtualDevice.publish(recovered, readings, fields) }
                 .getOrElse { secondError ->
                     secondError.addSuppressed(firstError)
                     throw secondError
@@ -240,6 +304,7 @@ class HealthSyncManager(
         }.getOrThrow()
         settings.saveHealthBinding(verifiedBinding)
         settings.markHealthSynced()
+        return readings.keys.count { key -> verifiedBinding.targets.any { it.key == key } }
     }
 
     private companion object {
@@ -256,6 +321,7 @@ data class HealthUiState(
     val selectedMetrics: Set<HealthMetric> = SettingsRepository.DEFAULT_HEALTH_METRICS,
     val allSelectedPermissionsGranted: Boolean = false,
     val binding: HealthDeviceBinding? = null,
+    val configurationMatches: Boolean = true,
     val enabled: Boolean = false,
     val lastSyncEpochMs: Long? = null,
     val syncing: Boolean = false,

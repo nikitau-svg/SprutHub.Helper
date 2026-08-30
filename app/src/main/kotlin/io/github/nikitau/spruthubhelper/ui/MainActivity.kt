@@ -1,8 +1,10 @@
 package io.github.nikitau.spruthubhelper.ui
 
+import android.Manifest
 import android.app.StatusBarManager
 import android.content.ComponentName
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -11,6 +13,7 @@ import android.service.controls.ControlsProviderService
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -33,17 +36,20 @@ import androidx.compose.material.icons.rounded.ExpandLess
 import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.Lightbulb
+import androidx.compose.material.icons.rounded.Image
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.PowerSettingsNew
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Settings
+import androidx.compose.material.icons.rounded.Smartphone
 import androidx.compose.material.icons.rounded.Thermostat
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.Visibility
 import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.material3.AssistChip
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -92,6 +98,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.health.connect.client.PermissionController
+import androidx.core.content.ContextCompat
+import io.github.nikitau.spruthubhelper.AppGraph
 import io.github.nikitau.spruthubhelper.R
 import io.github.nikitau.spruthubhelper.controls.ControlFactory
 import io.github.nikitau.spruthubhelper.controls.SprutControlsProviderService
@@ -99,20 +107,36 @@ import io.github.nikitau.spruthubhelper.data.ConnectionMode
 import io.github.nikitau.spruthubhelper.data.ConnectionPhase
 import io.github.nikitau.spruthubhelper.data.DeviceKind
 import io.github.nikitau.spruthubhelper.data.HealthMetric
+import io.github.nikitau.spruthubhelper.data.PhonePollInterval
+import io.github.nikitau.spruthubhelper.data.PhoneSensor
+import io.github.nikitau.spruthubhelper.data.PhoneSensorCategory
+import io.github.nikitau.spruthubhelper.data.PhoneSyncMode
 import io.github.nikitau.spruthubhelper.data.SprutControl
 import io.github.nikitau.spruthubhelper.data.TileAssignment
 import io.github.nikitau.spruthubhelper.tiles.TileComponents
 import io.github.nikitau.spruthubhelper.tiles.TileIconResolver
 import io.github.nikitau.spruthubhelper.health.HealthUiState
+import io.github.nikitau.spruthubhelper.icons.CustomIconManager
+import io.github.nikitau.spruthubhelper.phone.PhoneUiState
+import io.github.nikitau.spruthubhelper.tiles.TileInstallStateStore
 import java.text.DateFormat
 import java.util.Date
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent { SprutHelperTheme { MainScreen() } }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        AppGraph.phone.refreshRuntimeStatus()
+        AppGraph.presence.refreshPermissionState()
     }
 
     companion object {
@@ -200,18 +224,73 @@ private fun sprutTextFieldColors() = OutlinedTextFieldDefaults.colors(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun MainScreen(viewModel: MainViewModel = viewModel()) {
+    val context = LocalContext.current
     val ui by viewModel.uiState.collectAsState()
     val busy by viewModel.busy.collectAsState()
     val notice by viewModel.notice.collectAsState()
     val health by viewModel.healthState.collectAsState()
+    val phone by viewModel.phoneState.collectAsState()
+    val presence by viewModel.presenceState.collectAsState()
+    val installedTileSlots by TileInstallStateStore.installedSlots.collectAsState()
     val snackbar = remember { SnackbarHostState() }
+    val screenScope = rememberCoroutineScope()
+    var iconTargetId by remember { mutableStateOf<String?>(null) }
+    var iconRevision by remember { mutableStateOf(0) }
     val healthPermissionLauncher = rememberLauncherForActivityResult(
         PermissionController.createRequestPermissionResultContract(),
     ) { viewModel.onHealthPermissionsChanged() }
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        viewModel.refreshPhoneStatus()
+        if (granted) viewModel.setPhoneSyncMode(PhoneSyncMode.LIVE)
+        else viewModel.showNotice("Без разрешения на уведомления постоянный режим недоступен")
+    }
+    val locationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) {
+        viewModel.onLocationPermissionsChanged()
+    }
+    val customIconLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent(),
+    ) { uri ->
+        val controlId = iconTargetId
+        iconTargetId = null
+        if (uri != null && controlId != null) {
+            screenScope.launch {
+                val result = withContext(Dispatchers.IO) {
+                    CustomIconManager(context).save(controlId, uri)
+                }
+                result.onSuccess {
+                    iconRevision += 1
+                    TileComponents.syncEnabled(context, viewModel.uiState.value.assignments)
+                    viewModel.showNotice("PNG-иконка сохранена для Android-панели и плитки")
+                }.onFailure { error ->
+                    viewModel.showNotice(error.message ?: "Не удалось прочитать изображение")
+                }
+            }
+        }
+    }
 
     LaunchedEffect(viewModel) {
         viewModel.healthPermissionRequests.collect { permissions ->
             healthPermissionLauncher.launch(permissions)
+        }
+    }
+
+    LaunchedEffect(viewModel) {
+        viewModel.tileAddRequests.collect { request ->
+            val control = viewModel.uiState.value.catalog.controls.firstOrNull { it.id == request.controlId }
+            val activity = context as? ComponentActivity
+            if (control == null || activity == null) {
+                viewModel.showNotice("Плитка настроена, но системное окно не удалось открыть")
+            } else {
+                TileComponents.enableSlot(context, request.slot)
+                // PackageManager enables a previously hidden TileService
+                // asynchronously on some Samsung builds.
+                delay(350)
+                requestSystemTile(activity, request.slot, control, viewModel)
+            }
         }
     }
 
@@ -251,7 +330,57 @@ private fun MainScreen(viewModel: MainViewModel = viewModel()) {
         ) {
             item { ConnectionCard(ui, busy, viewModel) }
             item { HealthCard(health, ui, viewModel) }
-            item { TileSummaryCard(ui.assignments, ui.catalog.controls, viewModel) }
+            item {
+                PhoneCard(
+                    phone = phone,
+                    ui = ui,
+                    viewModel = viewModel,
+                    onRequestLiveMode = {
+                        if (
+                            Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+                            ContextCompat.checkSelfPermission(
+                                context,
+                                Manifest.permission.POST_NOTIFICATIONS,
+                            ) == PackageManager.PERMISSION_GRANTED
+                        ) {
+                            viewModel.setPhoneSyncMode(PhoneSyncMode.LIVE)
+                        } else {
+                            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                        }
+                    },
+                )
+            }
+            item {
+                PresenceCard(
+                    presence = presence,
+                    ui = ui,
+                    viewModel = viewModel,
+                    onRequestForegroundLocation = {
+                        locationPermissionLauncher.launch(
+                            arrayOf(
+                                Manifest.permission.ACCESS_COARSE_LOCATION,
+                                Manifest.permission.ACCESS_FINE_LOCATION,
+                            ),
+                        )
+                    },
+                    onOpenBackgroundLocationSettings = {
+                        context.startActivity(
+                            Intent(
+                                Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                Uri.parse("package:${context.packageName}"),
+                            ),
+                        )
+                    },
+                )
+            }
+            item {
+                TileSummaryCard(
+                    assignments = ui.assignments,
+                    controls = ui.catalog.controls,
+                    installedSlots = installedTileSlots,
+                    viewModel = viewModel,
+                )
+            }
             item {
                 Column(Modifier.padding(horizontal = 16.dp)) {
                     Text("Устройства", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
@@ -281,7 +410,16 @@ private fun MainScreen(viewModel: MainViewModel = viewModel()) {
                 }
             } else {
                 items(filtered, key = SprutControl::id) { control ->
-                    DeviceCard(control, ui.assignments, viewModel)
+                    DeviceCard(
+                        control = control,
+                        assignments = ui.assignments,
+                        viewModel = viewModel,
+                        iconRevision = iconRevision,
+                        onPickIcon = {
+                            iconTargetId = control.id
+                            customIconLauncher.launch("image/*")
+                        },
+                    )
                 }
             }
             item { DiagnosticsCard(ui) }
@@ -295,6 +433,8 @@ private fun HealthCard(health: HealthUiState, ui: MainUiState, viewModel: MainVi
     val context = LocalContext.current
     var expanded by rememberSaveable { mutableStateOf(false) }
     var roomMenu by remember { mutableStateOf(false) }
+    var confirmRecreate by remember { mutableStateOf(false) }
+    var confirmRevoke by remember { mutableStateOf(false) }
     var selectedRoomId by remember(health.binding?.roomId, ui.catalog.rooms) {
         mutableStateOf(health.binding?.roomId ?: ui.catalog.rooms.firstOrNull()?.id.orEmpty())
     }
@@ -332,6 +472,20 @@ private fun HealthCard(health: HealthUiState, ui: MainUiState, viewModel: MainVi
                 style = MaterialTheme.typography.bodySmall,
                 color = SprutGreen,
             )
+            if (health.binding != null && !health.configurationMatches) {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        "Состав изменён. Чтобы снятые показатели исчезли из SprutHub, виртуальный аксессуар нужно пересоздать.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                    OutlinedButton(
+                        onClick = { confirmRecreate = true },
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = !health.syncing,
+                    ) { Text("Применить новый состав в SprutHub") }
+                }
+            }
             when {
                 !health.allSelectedPermissionsGranted -> Text(
                     "Сначала разрешите все отмеченные показатели Health Connect.",
@@ -422,6 +576,28 @@ private fun HealthCard(health: HealthUiState, ui: MainUiState, viewModel: MainVi
                             },
                         )
                     }
+                    OutlinedButton(
+                        onClick = {
+                            val manage = Intent("android.health.connect.action.MANAGE_HEALTH_PERMISSIONS")
+                                .putExtra(Intent.EXTRA_PACKAGE_NAME, context.packageName)
+                            runCatching { context.startActivity(manage) }
+                                .onFailure {
+                                    context.startActivity(
+                                        Intent(
+                                            Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                            Uri.parse("package:com.google.android.apps.healthdata"),
+                                        ),
+                                    )
+                                }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = health.available,
+                    ) { Text("Управлять доступом в Health Connect") }
+                    TextButton(
+                        onClick = { confirmRevoke = true },
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = health.available,
+                    ) { Text("Отключить синхронизацию и отозвать весь доступ") }
                     if (health.binding == null) {
                         Button(
                             onClick = { viewModel.createHealthDevice(selectedRoomId) },
@@ -438,6 +614,13 @@ private fun HealthCard(health: HealthUiState, ui: MainUiState, viewModel: MainVi
                             modifier = Modifier.fillMaxWidth(),
                             enabled = !health.syncing,
                         ) { Text(if (health.syncing) "Синхронизация…" else "Синхронизировать сейчас") }
+                        if (health.configurationMatches) {
+                            TextButton(
+                                onClick = { confirmRecreate = true },
+                                modifier = Modifier.fillMaxWidth(),
+                                enabled = !health.syncing,
+                            ) { Text("Пересоздать и очистить поля старой версии") }
+                        }
                     }
                     TextButton(
                         onClick = {
@@ -450,6 +633,332 @@ private fun HealthCard(health: HealthUiState, ui: MainUiState, viewModel: MainVi
                 }
             }
         }
+    }
+    if (confirmRecreate) {
+        AlertDialog(
+            onDismissRequest = { confirmRecreate = false },
+            title = { Text("Пересоздать устройство здоровья?") },
+            text = {
+                Text(
+                    "SprutHub не умеет удалять отдельные сервисы. Приложение удалит только созданный им виртуальный аксессуар здоровья и создаст новый с отмеченными показателями.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmRecreate = false
+                    viewModel.recreateHealthDevice()
+                }) { Text("Пересоздать") }
+            },
+            dismissButton = { TextButton(onClick = { confirmRecreate = false }) { Text("Отмена") } },
+        )
+    }
+    if (confirmRevoke) {
+        AlertDialog(
+            onDismissRequest = { confirmRevoke = false },
+            title = { Text("Отозвать весь доступ к здоровью?") },
+            text = {
+                Text("Фоновая синхронизация остановится, а все разрешения Health Connect для SprutHub Helper будут отозваны. Созданный аксессуар в SprutHub останется, но обновляться не будет.")
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmRevoke = false
+                    viewModel.revokeAllHealthPermissions()
+                }) { Text("Отозвать") }
+            },
+            dismissButton = { TextButton(onClick = { confirmRevoke = false }) { Text("Отмена") } },
+        )
+    }
+}
+
+@Composable
+private fun PhoneCard(
+    phone: PhoneUiState,
+    ui: MainUiState,
+    viewModel: MainViewModel,
+    onRequestLiveMode: () -> Unit,
+) {
+    val context = LocalContext.current
+    var expanded by rememberSaveable { mutableStateOf(false) }
+    var roomMenu by remember { mutableStateOf(false) }
+    var confirmRecreate by remember { mutableStateOf(false) }
+    var selectedRoomId by remember(phone.binding?.roomId, ui.catalog.rooms) {
+        mutableStateOf(phone.binding?.roomId ?: ui.catalog.rooms.firstOrNull()?.id.orEmpty())
+    }
+    var selectedSensors by remember(phone.selectedSensors) { mutableStateOf(phone.selectedSensors) }
+    val selectedRoom = ui.catalog.rooms.firstOrNull { it.id == selectedRoomId }
+
+    OutlinedCard(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+        shape = RoundedCornerShape(20.dp),
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Surface(shape = CircleShape, color = Color(0xFFDCE9FF)) {
+                    Icon(Icons.Rounded.Smartphone, null, Modifier.padding(9.dp), tint = Color(0xFF315DA8))
+                }
+                Spacer(Modifier.size(10.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("Телефон → SprutHub", fontWeight = FontWeight.Bold)
+                    Text(
+                        if (phone.binding == null) "Не настроено" else phone.message,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                IconButton(onClick = { expanded = !expanded }) {
+                    Icon(if (expanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, null)
+                }
+            }
+
+            Text(
+                "Передаются только отмеченные показатели. В режиме «Авто» вне дома приложение может использовать настроенное облако SprutHub.",
+                style = MaterialTheme.typography.bodySmall,
+                color = SprutGreen,
+            )
+
+            if (phone.binding != null && !phone.configurationMatches) {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        "Выбор изменён. Для полного удаления снятых показателей примените новый состав устройства.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                    OutlinedButton(
+                        onClick = { confirmRecreate = true },
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = !phone.syncing,
+                    ) { Text("Применить новый состав в SprutHub") }
+                }
+            }
+
+            if (phone.binding != null) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Фоновая синхронизация")
+                        Text(
+                            if (phone.syncSettings.mode == PhoneSyncMode.LIVE) {
+                                if (phone.monitorRunning) "Постоянное подключение работает" else "Постоянное подключение остановлено"
+                            } else {
+                                "Контрольный запуск примерно раз в 15 минут"
+                            },
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Switch(
+                        checked = phone.syncSettings.enabled,
+                        onCheckedChange = viewModel::setPhoneEnabled,
+                        enabled = !phone.syncing,
+                    )
+                }
+                phone.lastSyncEpochMs?.let {
+                    Text(
+                        "Последняя синхронизация: ${DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(it))}",
+                        style = MaterialTheme.typography.labelMedium,
+                    )
+                }
+            }
+
+            AnimatedVisibility(expanded) {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("Режим обновления", fontWeight = FontWeight.SemiBold)
+                    PhoneSyncMode.entries.forEach { mode ->
+                        FilterChip(
+                            selected = phone.syncSettings.mode == mode,
+                            onClick = {
+                                if (mode == PhoneSyncMode.LIVE) onRequestLiveMode()
+                                else viewModel.setPhoneSyncMode(mode)
+                            },
+                            label = { Text(mode.title) },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        Text(
+                            mode.description,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+
+                    if (phone.syncSettings.mode == PhoneSyncMode.LIVE) {
+                        Text("Контрольный опрос", fontWeight = FontWeight.SemiBold)
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            PhonePollInterval.entries.forEach { interval ->
+                                FilterChip(
+                                    selected = phone.syncSettings.pollInterval == interval,
+                                    onClick = { viewModel.setPhonePollInterval(interval) },
+                                    label = { Text(interval.title) },
+                                )
+                            }
+                        }
+                        Text(
+                            "Зарядка, экран, энергосбережение и смена сети отправляются по событию; интервал нужен как страховочный опрос.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+
+                    HorizontalDivider()
+                    Text("Что передавать", fontWeight = FontWeight.SemiBold)
+                    PhoneSensorCategory.entries.forEach { category ->
+                        Text(category.title, color = SprutGreen, fontWeight = FontWeight.SemiBold)
+                        PhoneSensor.entries.filter { it.category == category }.forEach { sensor ->
+                            Row(verticalAlignment = Alignment.Top) {
+                                Checkbox(
+                                    checked = sensor in selectedSensors,
+                                    onCheckedChange = { checked ->
+                                        val next = if (checked) selectedSensors + sensor else selectedSensors - sensor
+                                        if (next.isNotEmpty()) {
+                                            selectedSensors = next
+                                            viewModel.savePhoneSensors(next)
+                                        }
+                                    },
+                                    enabled = !phone.syncing,
+                                )
+                                Column(Modifier.weight(1f).padding(top = 9.dp)) {
+                                    Text(sensor.title)
+                                    Text(
+                                        buildString {
+                                            append(sensor.description)
+                                            if (sensor.unit.isNotBlank()) append(" · ").append(sensor.unit)
+                                            append(" · ").append(sensor.updateKind.title)
+                                        },
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    HorizontalDivider()
+                    Text("Разрешения и надёжность", fontWeight = FontWeight.SemiBold)
+                    Text(
+                        "Текущий набор показателей не требует геолокации, доступа к звонкам, Bluetooth или файлам. Такие датчики будут добавляться отдельными выключенными группами.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    ReliabilityRow(
+                        title = "Уведомления",
+                        ready = phone.notificationPermissionGranted,
+                        readyText = "разрешены",
+                        missingText = "нужны для постоянного режима",
+                    )
+                    ReliabilityRow(
+                        title = "Оптимизация батареи",
+                        ready = phone.batteryOptimizationIgnored,
+                        readyText = "без ограничений",
+                        missingText = "Android может откладывать фон",
+                    )
+                    OutlinedButton(
+                        onClick = {
+                            context.startActivity(
+                                Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                                    .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName),
+                            )
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("Настроить уведомления") }
+                    OutlinedButton(
+                        onClick = {
+                            context.startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("Проверить оптимизацию батареи") }
+                    if (Build.MANUFACTURER.equals("samsung", ignoreCase = true)) {
+                        OutlinedButton(
+                            onClick = {
+                                val samsungSettings = Intent("com.samsung.android.sm.ACTION_OPEN_CHECKABLE_LISTACTIVITY")
+                                    .setPackage("com.samsung.android.lool")
+                                    .putExtra("activity_type", 2)
+                                runCatching { context.startActivity(samsungSettings) }
+                                    .onFailure {
+                                        context.startActivity(
+                                            Intent(
+                                                Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                                Uri.parse("package:${context.packageName}"),
+                                            ),
+                                        )
+                                    }
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) { Text("Samsung · добавить в «Не переводить в спящий режим»") }
+                    }
+
+                    HorizontalDivider()
+                    Box {
+                        OutlinedButton(
+                            onClick = { roomMenu = true },
+                            modifier = Modifier.fillMaxWidth(),
+                            enabled = phone.binding == null && ui.catalog.rooms.isNotEmpty(),
+                        ) {
+                            Text(selectedRoom?.name ?: "Сначала загрузите комнаты SprutHub")
+                        }
+                        DropdownMenu(expanded = roomMenu, onDismissRequest = { roomMenu = false }) {
+                            ui.catalog.rooms.forEach { room ->
+                                DropdownMenuItem(
+                                    text = { Text(room.name) },
+                                    onClick = {
+                                        selectedRoomId = room.id
+                                        roomMenu = false
+                                    },
+                                )
+                            }
+                        }
+                    }
+                    if (phone.binding == null) {
+                        Button(
+                            onClick = { viewModel.createPhoneDevice(selectedRoomId) },
+                            modifier = Modifier.fillMaxWidth(),
+                            enabled = selectedRoomId.isNotBlank() && !phone.syncing,
+                        ) {
+                            if (phone.syncing) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                            else Text("Создать устройство телефона в SprutHub")
+                        }
+                    } else {
+                        Button(
+                            onClick = viewModel::syncPhone,
+                            modifier = Modifier.fillMaxWidth(),
+                            enabled = !phone.syncing,
+                        ) { Text(if (phone.syncing) "Синхронизация…" else "Синхронизировать сейчас") }
+                    }
+                }
+            }
+        }
+    }
+    if (confirmRecreate) {
+        AlertDialog(
+            onDismissRequest = { confirmRecreate = false },
+            title = { Text("Пересоздать устройство телефона?") },
+            text = {
+                Text(
+                    "Приложение удалит только созданный им виртуальный аксессуар телефона и создаст новый с отмеченными показателями. Обычные устройства SprutHub не затрагиваются.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmRecreate = false
+                    viewModel.recreatePhoneDevice()
+                }) { Text("Пересоздать") }
+            },
+            dismissButton = { TextButton(onClick = { confirmRecreate = false }) { Text("Отмена") } },
+        )
+    }
+}
+
+@Composable
+private fun ReliabilityRow(
+    title: String,
+    ready: Boolean,
+    readyText: String,
+    missingText: String,
+) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(title, modifier = Modifier.weight(1f))
+        Text(
+            if (ready) "✓ $readyText" else "• $missingText",
+            style = MaterialTheme.typography.labelMedium,
+            color = if (ready) SprutGreen else MaterialTheme.colorScheme.error,
+        )
     }
 }
 
@@ -652,7 +1161,14 @@ private fun StatusDot(phase: ConnectionPhase) {
 }
 
 @Composable
-private fun TileSummaryCard(assignments: List<TileAssignment>, controls: List<SprutControl>, viewModel: MainViewModel) {
+private fun TileSummaryCard(
+    assignments: List<TileAssignment>,
+    controls: List<SprutControl>,
+    installedSlots: Set<Int>,
+    viewModel: MainViewModel,
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val names = controls.associateBy(SprutControl::id)
     OutlinedCard(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
@@ -666,31 +1182,72 @@ private fun TileSummaryCard(assignments: List<TileAssignment>, controls: List<Sp
                 Text("${assignments.size}/12", style = MaterialTheme.typography.labelLarge)
             }
             if (assignments.isEmpty()) {
-                Text("Пока не назначены. Выберите «Плитка» у нужного устройства.", style = MaterialTheme.typography.bodySmall)
+                Text("Пока не назначены. Нажмите «Добавить плитку» у нужного устройства.", style = MaterialTheme.typography.bodySmall)
             } else {
                 assignments.forEach { assignment ->
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("${assignment.slot}", fontWeight = FontWeight.Bold, color = SprutGreen)
-                        Spacer(Modifier.size(10.dp))
-                        Text(
-                            names[assignment.controlId]?.title ?: "Недоступное устройство",
-                            modifier = Modifier.weight(1f),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        TextButton(onClick = { viewModel.clearTile(assignment.slot) }) { Text("Убрать") }
+                    val control = names[assignment.controlId]
+                    Column {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("${assignment.slot}", fontWeight = FontWeight.Bold, color = SprutGreen)
+                            Spacer(Modifier.size(10.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    control?.title ?: "Недоступное устройство",
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                Text(
+                                    if (assignment.slot in installedSlots) "✓ Добавлена в системную шторку"
+                                    else "Только назначена внутри приложения",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = if (assignment.slot in installedSlots) SprutGreen
+                                    else MaterialTheme.colorScheme.error,
+                                )
+                            }
+                            if (assignment.slot !in installedSlots && control != null) {
+                                TextButton(onClick = {
+                                    scope.launch {
+                                        TileComponents.enableSlot(context, assignment.slot)
+                                        delay(350)
+                                        requestSystemTile(
+                                            context as ComponentActivity,
+                                            assignment.slot,
+                                            control,
+                                            viewModel,
+                                        )
+                                    }
+                                }) { Text("Добавить") }
+                            }
+                            TextButton(onClick = { viewModel.clearTile(assignment.slot) }) { Text("Освободить") }
+                        }
                     }
                 }
             }
+            Text(
+                "Назначение и добавление в Android — два отдельных шага. После системного подтверждения статус станет зелёным.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }
 
 @Composable
-private fun DeviceCard(control: SprutControl, assignments: List<TileAssignment>, viewModel: MainViewModel) {
+private fun DeviceCard(
+    control: SprutControl,
+    assignments: List<TileAssignment>,
+    viewModel: MainViewModel,
+    iconRevision: Int,
+    onPickIcon: () -> Unit,
+) {
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
     var menuExpanded by remember { mutableStateOf(false) }
+    val iconManager = remember { CustomIconManager(context) }
+    var hasCustomIcon by remember(control.id, iconRevision) {
+        mutableStateOf(iconManager.hasIcon(control.id))
+    }
+    val assignedSlot = assignments.firstOrNull { it.controlId == control.id }?.slot
+    val firstFreeSlot = (1..12).firstOrNull { slot -> assignments.none { it.slot == slot } }
     OutlinedCard(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
         shape = RoundedCornerShape(18.dp),
@@ -722,27 +1279,75 @@ private fun DeviceCard(control: SprutControl, assignments: List<TileAssignment>,
                     modifier = Modifier.weight(1f),
                 ) { Text("В панель") }
                 Box(Modifier.weight(1f)) {
-                    Button(onClick = { menuExpanded = true }, modifier = Modifier.fillMaxWidth()) { Text("Плитка") }
+                    Button(onClick = { menuExpanded = true }, modifier = Modifier.fillMaxWidth()) {
+                        Text(assignedSlot?.let { "Плитка $it" } ?: "Добавить плитку")
+                    }
                     DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
-                        (1..12).forEach { slot ->
-                            val currentId = assignments.firstOrNull { it.slot == slot }?.controlId
+                        if (assignedSlot == null && firstFreeSlot != null) {
                             DropdownMenuItem(
-                                text = {
-                                    Text(if (currentId == null) "Плитка $slot · свободна" else "Плитка $slot · занята")
-                                },
+                                text = { Text("Добавить новой · слот $firstFreeSlot") },
                                 onClick = {
                                     menuExpanded = false
-                                    viewModel.assignTile(slot, control.id)
-                                    val next = assignments.filterNot { it.slot == slot || it.controlId == control.id } +
-                                        TileAssignment(slot, control.id)
-                                    TileComponents.syncEnabled(context, next)
-                                    scope.launch { requestSystemTile(context as ComponentActivity, slot, control, viewModel) }
+                                    viewModel.assignTile(firstFreeSlot, control.id)
                                 },
                             )
+                            HorizontalDivider()
+                        } else if (assignedSlot != null) {
+                            DropdownMenuItem(
+                                text = { Text("Повторно открыть добавление плитки $assignedSlot") },
+                                onClick = {
+                                    menuExpanded = false
+                                    viewModel.assignTile(assignedSlot, control.id)
+                                },
+                            )
+                            HorizontalDivider()
+                        }
+                        (1..12).forEach { slot ->
+                            val currentId = assignments.firstOrNull { it.slot == slot }?.controlId
+                            if (slot != firstFreeSlot || assignedSlot != null) {
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            when {
+                                                currentId == control.id -> "Плитка $slot · уже назначена"
+                                                currentId == null -> "Выбрать слот $slot · свободен"
+                                                else -> "Заменить занятую плитку $slot"
+                                            },
+                                        )
+                                    },
+                                    onClick = {
+                                        menuExpanded = false
+                                        viewModel.assignTile(slot, control.id)
+                                    },
+                                )
+                            }
                         }
                     }
                 }
             }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = onPickIcon, modifier = Modifier.weight(1f)) {
+                    Icon(Icons.Rounded.Image, null)
+                    Spacer(Modifier.size(6.dp))
+                    Text(if (hasCustomIcon) "Заменить PNG" else "Своя иконка")
+                }
+                if (hasCustomIcon) {
+                    TextButton(
+                        onClick = {
+                            if (iconManager.remove(control.id)) {
+                                hasCustomIcon = false
+                                TileComponents.syncEnabled(context, assignments)
+                                viewModel.showNotice("Пользовательская иконка удалена")
+                            }
+                        },
+                    ) { Text("Сбросить") }
+                }
+            }
+            Text(
+                "Лучше квадратный PNG с прозрачным фоном. Иконка применяется в Android; веб-интерфейс SprutHub не публикует поле для своей картинки.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }
@@ -756,13 +1361,23 @@ private fun requestSystemTile(activity: ComponentActivity, slot: Int, control: S
     manager.requestAddTileService(
         TileComponents.component(activity, slot),
         control.title,
-        TileIconResolver.icon(activity, control.kind),
+        CustomIconManager(activity).loadIcon(control.id) ?: TileIconResolver.icon(activity, control.kind),
         activity.mainExecutor,
     ) { result ->
-        if (result != StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_ADDED &&
-            result != StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_ALREADY_ADDED
-        ) {
-            viewModel.showNotice("Плитка настроена; при необходимости добавьте её через редактирование шторки.")
+        when (result) {
+            StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_ADDED -> {
+                TileInstallStateStore.markAdded(activity, slot)
+                viewModel.showNotice("Плитка $slot добавлена в системную шторку")
+            }
+            StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_ALREADY_ADDED -> {
+                TileInstallStateStore.markAdded(activity, slot)
+                viewModel.showNotice("Плитка $slot уже была в шторке; назначение обновлено")
+            }
+            else -> {
+                viewModel.showNotice(
+                    "Плитка $slot назначена, но Android не добавил её (код $result). Нажмите «Добавить» в разделе плиток ещё раз.",
+                )
+            }
         }
     }
 }

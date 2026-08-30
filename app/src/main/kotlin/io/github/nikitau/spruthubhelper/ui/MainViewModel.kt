@@ -9,8 +9,12 @@ import io.github.nikitau.spruthubhelper.data.DiagnosticEvent
 import io.github.nikitau.spruthubhelper.data.HubConfig
 import io.github.nikitau.spruthubhelper.data.HubPasswordUpdate
 import io.github.nikitau.spruthubhelper.data.HealthMetric
+import io.github.nikitau.spruthubhelper.data.PhonePollInterval
+import io.github.nikitau.spruthubhelper.data.PhoneSensor
+import io.github.nikitau.spruthubhelper.data.PhoneSyncMode
 import io.github.nikitau.spruthubhelper.data.SprutCatalog
 import io.github.nikitau.spruthubhelper.data.TileAssignment
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -23,12 +27,20 @@ class MainViewModel : ViewModel() {
     private val settings = AppGraph.settings
     private val repository = AppGraph.repository
     private val health = AppGraph.health
+    private val phone = AppGraph.phone
+    private val presence = AppGraph.presence
     private val _busy = MutableStateFlow(false)
     private val _notice = MutableStateFlow<String?>(null)
+    private val _tileAddRequests = MutableSharedFlow<TileAddRequest>(extraBufferCapacity = 1)
+    private val _coordinateResults = MutableSharedFlow<Pair<Double, Double>>(extraBufferCapacity = 1)
 
     val busy: StateFlow<Boolean> = _busy.asStateFlow()
     val notice: StateFlow<String?> = _notice.asStateFlow()
     val healthState = health.state
+    val phoneState = phone.state
+    val presenceState = presence.state
+    val tileAddRequests = _tileAddRequests
+    val coordinateResults = _coordinateResults
     val healthPermissionRequests = health.permissionRequests
     val uiState: StateFlow<MainUiState> = combine(
         settings.config,
@@ -41,6 +53,7 @@ class MainViewModel : ViewModel() {
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), MainUiState())
 
     init {
+        phone.ensureLiveMonitor()
         viewModelScope.launch {
             val config = settings.currentConfig()
             val hasEndpoint = when (config.mode) {
@@ -101,8 +114,9 @@ class MainViewModel : ViewModel() {
         _notice.value = "Готово: найдено ${catalog.controls.size} элементов"
     }
 
-    fun assignTile(slot: Int, controlId: String) = launchWork("Плитка $slot настроена") {
+    fun assignTile(slot: Int, controlId: String) = launchWork(null) {
         repository.assignTile(slot, controlId).getOrThrow()
+        _tileAddRequests.emit(TileAddRequest(slot, controlId))
     }
 
     fun clearTile(slot: Int) = launchWork("Плитка $slot освобождена") {
@@ -127,9 +141,79 @@ class MainViewModel : ViewModel() {
         health.syncNow().getOrThrow()
     }
 
+    fun recreateHealthDevice() = launchWork("Состав устройства здоровья обновлён") {
+        health.recreateDevice().getOrThrow()
+    }
+
+    fun revokeAllHealthPermissions() = launchWork("Доступ Health Connect отозван") {
+        health.revokeAllPermissions()
+    }
+
     fun setHealthEnabled(enabled: Boolean) = launchWork(if (enabled) "Фоновая синхронизация включена" else "Фоновая синхронизация выключена") {
         health.setEnabled(enabled)
     }
+
+    fun savePhoneSensors(sensors: Set<PhoneSensor>) = launchWork("Показатели телефона сохранены") {
+        phone.saveSelectedSensors(sensors)
+    }
+
+    fun createPhoneDevice(roomId: String) = launchWork("Виртуальное устройство телефона готово") {
+        phone.createDevice(roomId).getOrThrow()
+    }
+
+    fun syncPhone() = launchWork("Данные телефона отправлены в SprutHub") {
+        phone.syncNow().getOrThrow()
+    }
+
+    fun recreatePhoneDevice() = launchWork("Состав устройства телефона обновлён") {
+        phone.recreateDevice().getOrThrow()
+    }
+
+    fun setPhoneEnabled(enabled: Boolean) = launchWork(
+        if (enabled) "Фоновая синхронизация телефона включена" else "Фоновая синхронизация телефона выключена",
+    ) {
+        phone.setEnabled(enabled)
+    }
+
+    fun setPhoneSyncMode(mode: PhoneSyncMode) = launchWork(null) {
+        phone.setSyncMode(mode)
+    }
+
+    fun setPhonePollInterval(interval: PhonePollInterval) = launchWork(null) {
+        phone.setPollInterval(interval)
+    }
+
+    fun refreshPhoneStatus() = phone.refreshRuntimeStatus()
+
+    fun requestCurrentCoordinates() = launchWork(null) {
+        _coordinateResults.emit(presence.currentCoordinates().getOrThrow())
+        _notice.value = "Текущая точка определена"
+    }
+
+    fun addPresenceZone(
+        name: String,
+        latitude: Double,
+        longitude: Double,
+        radiusMeters: Double,
+        roomId: String,
+        publishDistance: Boolean,
+    ) = launchWork("Зона присутствия создана") {
+        presence.addZone(name, latitude, longitude, radiusMeters, roomId, publishDistance).getOrThrow()
+    }
+
+    fun setPresenceZoneEnabled(id: String, enabled: Boolean) = launchWork(null) {
+        presence.setEnabled(id, enabled).getOrThrow()
+    }
+
+    fun removePresenceZone(id: String) = launchWork("Зона удалена") {
+        presence.removeZone(id).getOrThrow()
+    }
+
+    fun syncPresenceZones() = launchWork("Зоны синхронизированы") {
+        presence.syncNow().getOrThrow()
+    }
+
+    fun onLocationPermissionsChanged() = presence.refreshPermissionState()
 
     fun showNotice(message: String) {
         _notice.value = message
@@ -174,6 +258,8 @@ class MainViewModel : ViewModel() {
         }
     }
 }
+
+data class TileAddRequest(val slot: Int, val controlId: String)
 
 data class MainUiState(
     val config: HubConfig = HubConfig(),

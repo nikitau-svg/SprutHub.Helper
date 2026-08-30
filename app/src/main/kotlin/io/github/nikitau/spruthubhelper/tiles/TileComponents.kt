@@ -3,6 +3,7 @@ package io.github.nikitau.spruthubhelper.tiles
 import android.content.ComponentName
 import android.content.Context
 import android.content.pm.PackageManager
+import android.service.quicksettings.TileService
 import io.github.nikitau.spruthubhelper.data.SettingsRepository
 import io.github.nikitau.spruthubhelper.data.TileAssignment
 
@@ -27,6 +28,14 @@ object TileComponents {
         classes.getOrElse(slot - 1) { error("Плитка $slot не существует") },
     )
 
+    fun enableSlot(context: Context, slot: Int) {
+        context.packageManager.setComponentEnabledSetting(
+            component(context, slot),
+            PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
+            PackageManager.DONT_KILL_APP,
+        )
+    }
+
     fun syncEnabled(context: Context, assignments: List<TileAssignment>) {
         val highestAssigned = assignments.maxOfOrNull(TileAssignment::slot) ?: 0
         val visibleSlots = maxOf(4, highestAssigned + 4).coerceAtMost(SettingsRepository.MAX_TILE_SLOTS)
@@ -38,6 +47,11 @@ object TileComponents {
                 else PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
                 PackageManager.DONT_KILL_APP,
             )
+        }
+        assignments.forEach { assignment ->
+            runCatching {
+                TileService.requestListeningState(context, component(context, assignment.slot))
+            }
         }
     }
 }

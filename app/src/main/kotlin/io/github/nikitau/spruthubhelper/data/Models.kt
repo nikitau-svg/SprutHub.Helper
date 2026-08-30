@@ -209,6 +209,241 @@ enum class HealthMetric(val title: String, val unit: String, val valueKind: Heal
 enum class HealthValueKind { INT, DOUBLE, STRING, BOOL }
 
 @Serializable
+enum class PhoneSensorCategory(val title: String) {
+    BATTERY("Аккумулятор"),
+    NETWORK("Сеть"),
+    SYSTEM("Система"),
+    DIAGNOSTICS("Диагностика"),
+}
+
+@Serializable
+enum class PhoneUpdateKind(val title: String) {
+    EVENT("Событие"),
+    POLL("По опросу"),
+    EVENT_AND_POLL("Событие + опрос"),
+    STATIC("При изменении конфигурации"),
+}
+
+/**
+ * Phone information that can be exposed as a separate virtual SprutHub device.
+ *
+ * The first set intentionally uses Android APIs that do not need dangerous
+ * runtime permissions. More sensitive sensors (location, SIM, Bluetooth and
+ * Wi-Fi identity) can then be added without weakening the permission model.
+ */
+@Serializable
+enum class PhoneSensor(
+    val title: String,
+    val description: String,
+    val unit: String,
+    val valueKind: HealthValueKind,
+    val category: PhoneSensorCategory,
+    val updateKind: PhoneUpdateKind,
+) {
+    BATTERY_LEVEL(
+        "Заряд аккумулятора",
+        "Текущий уровень заряда",
+        "%",
+        HealthValueKind.INT,
+        PhoneSensorCategory.BATTERY,
+        PhoneUpdateKind.EVENT_AND_POLL,
+    ),
+    IS_CHARGING(
+        "Подключена зарядка",
+        "Меняется сразу при подключении и отключении питания",
+        "да/нет",
+        HealthValueKind.BOOL,
+        PhoneSensorCategory.BATTERY,
+        PhoneUpdateKind.EVENT,
+    ),
+    CHARGER_TYPE(
+        "Тип зарядки",
+        "USB, сеть, беспроводная зарядка или док-станция",
+        "",
+        HealthValueKind.STRING,
+        PhoneSensorCategory.BATTERY,
+        PhoneUpdateKind.EVENT,
+    ),
+    BATTERY_TEMPERATURE(
+        "Температура аккумулятора",
+        "Температура, которую сообщает контроллер батареи",
+        "°C",
+        HealthValueKind.DOUBLE,
+        PhoneSensorCategory.BATTERY,
+        PhoneUpdateKind.EVENT_AND_POLL,
+    ),
+    BATTERY_HEALTH(
+        "Состояние аккумулятора",
+        "Оценка Android: хорошее, перегрев, холод и другие состояния",
+        "",
+        HealthValueKind.STRING,
+        PhoneSensorCategory.BATTERY,
+        PhoneUpdateKind.EVENT_AND_POLL,
+    ),
+    BATTERY_VOLTAGE(
+        "Напряжение аккумулятора",
+        "Напряжение по данным системного контроллера",
+        "мВ",
+        HealthValueKind.INT,
+        PhoneSensorCategory.BATTERY,
+        PhoneUpdateKind.EVENT_AND_POLL,
+    ),
+    POWER_SAVE_MODE(
+        "Энергосбережение",
+        "Включён ли системный режим экономии энергии",
+        "да/нет",
+        HealthValueKind.BOOL,
+        PhoneSensorCategory.BATTERY,
+        PhoneUpdateKind.EVENT,
+    ),
+    CONNECTION_TYPE(
+        "Тип подключения",
+        "Wi‑Fi, мобильная сеть, Ethernet, VPN или нет сети",
+        "",
+        HealthValueKind.STRING,
+        PhoneSensorCategory.NETWORK,
+        PhoneUpdateKind.EVENT,
+    ),
+    NETWORK_METERED(
+        "Лимитная сеть",
+        "Считает ли Android текущее подключение тарифицируемым",
+        "да/нет",
+        HealthValueKind.BOOL,
+        PhoneSensorCategory.NETWORK,
+        PhoneUpdateKind.EVENT,
+    ),
+    NETWORK_VALIDATED(
+        "Интернет доступен",
+        "Подтвердил ли Android выход в интернет",
+        "да/нет",
+        HealthValueKind.BOOL,
+        PhoneSensorCategory.NETWORK,
+        PhoneUpdateKind.EVENT,
+    ),
+    LOCAL_IP(
+        "Локальный IP",
+        "Адрес телефона в текущей сети без обращения к внешним сервисам",
+        "",
+        HealthValueKind.STRING,
+        PhoneSensorCategory.NETWORK,
+        PhoneUpdateKind.EVENT,
+    ),
+    DEVICE_MODEL(
+        "Модель телефона",
+        "Производитель и модель Android-устройства",
+        "",
+        HealthValueKind.STRING,
+        PhoneSensorCategory.SYSTEM,
+        PhoneUpdateKind.STATIC,
+    ),
+    ANDROID_VERSION(
+        "Версия Android",
+        "Версия системы и уровень Android API",
+        "",
+        HealthValueKind.STRING,
+        PhoneSensorCategory.SYSTEM,
+        PhoneUpdateKind.STATIC,
+    ),
+    SECURITY_PATCH(
+        "Патч безопасности",
+        "Дата установленного патча безопасности Android",
+        "",
+        HealthValueKind.STRING,
+        PhoneSensorCategory.SYSTEM,
+        PhoneUpdateKind.STATIC,
+    ),
+    APP_VERSION(
+        "Версия SprutHub Helper",
+        "Установленная версия приложения",
+        "",
+        HealthValueKind.STRING,
+        PhoneSensorCategory.SYSTEM,
+        PhoneUpdateKind.STATIC,
+    ),
+    SCREEN_INTERACTIVE(
+        "Экран активен",
+        "Включён ли экран и может ли пользователь взаимодействовать с телефоном",
+        "да/нет",
+        HealthValueKind.BOOL,
+        PhoneSensorCategory.SYSTEM,
+        PhoneUpdateKind.EVENT,
+    ),
+    DEVICE_IDLE(
+        "Режим Doze",
+        "Перевёл ли Android телефон в глубокий режим ожидания",
+        "да/нет",
+        HealthValueKind.BOOL,
+        PhoneSensorCategory.SYSTEM,
+        PhoneUpdateKind.EVENT,
+    ),
+    TIME_ZONE(
+        "Часовой пояс",
+        "Текущий системный часовой пояс",
+        "",
+        HealthValueKind.STRING,
+        PhoneSensorCategory.SYSTEM,
+        PhoneUpdateKind.EVENT,
+    ),
+    UPTIME_HOURS(
+        "Время работы",
+        "Сколько часов прошло с последней загрузки телефона",
+        "ч",
+        HealthValueKind.DOUBLE,
+        PhoneSensorCategory.DIAGNOSTICS,
+        PhoneUpdateKind.POLL,
+    ),
+    FREE_STORAGE_GB(
+        "Свободное хранилище",
+        "Доступное место во внутреннем хранилище",
+        "ГБ",
+        HealthValueKind.DOUBLE,
+        PhoneSensorCategory.DIAGNOSTICS,
+        PhoneUpdateKind.POLL,
+    ),
+    TOTAL_STORAGE_GB(
+        "Объём хранилища",
+        "Полный объём раздела данных",
+        "ГБ",
+        HealthValueKind.DOUBLE,
+        PhoneSensorCategory.DIAGNOSTICS,
+        PhoneUpdateKind.POLL,
+    ),
+    LAST_SYNC(
+        "Последняя синхронизация",
+        "Время последней отправки данных в SprutHub",
+        "",
+        HealthValueKind.STRING,
+        PhoneSensorCategory.DIAGNOSTICS,
+        PhoneUpdateKind.EVENT_AND_POLL,
+    ),
+}
+
+@Serializable
+enum class PhoneSyncMode(val title: String, val description: String) {
+    BALANCED(
+        "Сбалансированный",
+        "Системная синхронизация примерно раз в 15 минут; Android может отложить запуск",
+    ),
+    LIVE(
+        "Постоянное подключение",
+        "События отправляются сразу, пока видно постоянное уведомление",
+    ),
+}
+
+@Serializable
+enum class PhonePollInterval(val minutes: Int, val title: String) {
+    ONE_MINUTE(1, "1 мин"),
+    FIVE_MINUTES(5, "5 мин"),
+    FIFTEEN_MINUTES(15, "15 мин"),
+}
+
+data class PhoneSyncSettings(
+    val enabled: Boolean = false,
+    val mode: PhoneSyncMode = PhoneSyncMode.BALANCED,
+    val pollInterval: PhonePollInterval = PhonePollInterval.FIVE_MINUTES,
+)
+
+@Serializable
 data class HealthTarget(
     val key: String,
     val serviceId: String,

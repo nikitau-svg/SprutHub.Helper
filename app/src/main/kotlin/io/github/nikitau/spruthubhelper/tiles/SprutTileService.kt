@@ -11,6 +11,7 @@ import io.github.nikitau.spruthubhelper.AppGraph
 import io.github.nikitau.spruthubhelper.data.ControlBehavior
 import io.github.nikitau.spruthubhelper.data.DeviceKind
 import io.github.nikitau.spruthubhelper.data.SprutControl
+import io.github.nikitau.spruthubhelper.icons.CustomIconManager
 import io.github.nikitau.spruthubhelper.ui.MainActivity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -22,8 +23,21 @@ abstract class SprutTileService(private val slot: Int) : TileService() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val repository get() = AppGraph.repository
 
+    override fun onTileAdded() {
+        super.onTileAdded()
+        TileInstallStateStore.markAdded(this, slot)
+    }
+
+    override fun onTileRemoved() {
+        TileInstallStateStore.markRemoved(this, slot)
+        super.onTileRemoved()
+    }
+
     override fun onStartListening() {
         super.onStartListening()
+        // Also migrates tiles that were already present before install-state
+        // tracking was introduced.
+        TileInstallStateStore.markAdded(this, slot)
         scope.launch {
             val refreshed = repository.refreshIfStale()
             val error = refreshed.exceptionOrNull()?.message.takeIf { assignedControl() == null }
@@ -77,7 +91,8 @@ abstract class SprutTileService(private val slot: Int) : TileService() {
         } else {
             tile.label = control.title
             tile.subtitle = error?.take(30) ?: control.room
-            tile.icon = TileIconResolver.icon(this, control.kind)
+            tile.icon = CustomIconManager(this).loadIcon(control.id)
+                ?: TileIconResolver.icon(this, control.kind)
             tile.state = if (error != null) {
                 Tile.STATE_UNAVAILABLE
             } else {

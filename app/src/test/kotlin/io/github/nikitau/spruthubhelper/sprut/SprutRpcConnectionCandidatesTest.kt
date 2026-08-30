@@ -22,6 +22,14 @@ class SprutRpcConnectionCandidatesTest {
     }
 
     @Test
+    fun autoUsesCloudFirstWhenCurrentNetworkIsCellular() {
+        val candidates = connectionCandidates(config(ConnectionMode.AUTO), preferCloud = true)
+
+        assertEquals(listOf(false, true), candidates.map { it.isLocal })
+        assertEquals(listOf("cloud-password", "local-password"), candidates.map { it.password })
+    }
+
+    @Test
     fun explicitModesOnlyExposeTheirMatchingCredential() {
         val local = connectionCandidates(config(ConnectionMode.LOCAL)).single()
         val cloud = connectionCandidates(config(ConnectionMode.CLOUD)).single()

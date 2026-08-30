@@ -7,10 +7,16 @@ import io.github.nikitau.spruthubhelper.data.SettingsRepository
 import io.github.nikitau.spruthubhelper.data.SprutRepository
 import io.github.nikitau.spruthubhelper.health.HealthReader
 import io.github.nikitau.spruthubhelper.health.HealthSyncManager
+import io.github.nikitau.spruthubhelper.phone.PhoneReader
+import io.github.nikitau.spruthubhelper.phone.PhoneSyncManager
+import io.github.nikitau.spruthubhelper.presence.PresenceManager
 import io.github.nikitau.spruthubhelper.sprut.SprutCatalogParser
 import io.github.nikitau.spruthubhelper.sprut.SprutRpcClient
 import io.github.nikitau.spruthubhelper.sprut.VirtualHealthDeviceManager
+import io.github.nikitau.spruthubhelper.sprut.VirtualDeviceProfile
+import io.github.nikitau.spruthubhelper.sprut.VirtualPresenceDeviceManager
 import io.github.nikitau.spruthubhelper.tiles.TileComponents
+import io.github.nikitau.spruthubhelper.tiles.TileInstallStateStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -33,6 +39,10 @@ object AppGraph {
         private set
     lateinit var health: HealthSyncManager
         private set
+    lateinit var phone: PhoneSyncManager
+        private set
+    lateinit var presence: PresenceManager
+        private set
     lateinit var applicationScope: CoroutineScope
         private set
 
@@ -42,8 +52,10 @@ object AppGraph {
         val appContext = context.applicationContext
         applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         settings = SettingsRepository(appContext)
-        val repositoryClient = SprutRpcClient()
-        val healthClient = SprutRpcClient()
+        val repositoryClient = SprutRpcClient(appContext)
+        val healthClient = SprutRpcClient(appContext)
+        val phoneClient = SprutRpcClient(appContext)
+        val presenceClient = SprutRpcClient(appContext)
         repository = SprutRepository(
             settings = settings,
             client = repositoryClient,
@@ -58,6 +70,24 @@ object AppGraph {
             virtualDevice = VirtualHealthDeviceManager(settings, healthClient),
             scope = applicationScope,
         )
+        phone = PhoneSyncManager(
+            context = appContext,
+            settings = settings,
+            reader = PhoneReader(appContext),
+            virtualDevice = VirtualHealthDeviceManager(
+                settings = settings,
+                client = phoneClient,
+                profile = VirtualDeviceProfile.PHONE,
+            ),
+            scope = applicationScope,
+        )
+        presence = PresenceManager(
+            context = appContext,
+            settings = settings,
+            virtualDevice = VirtualPresenceDeviceManager(settings, presenceClient),
+            scope = applicationScope,
+        )
+        TileInstallStateStore.initialize(appContext)
         applicationScope.launch {
             repository.tileAssignments.collect { assignments ->
                 TileComponents.syncEnabled(appContext, assignments)

@@ -8,6 +8,7 @@ import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import java.net.URI
+import io.github.nikitau.spruthubhelper.presence.PresenceZone
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -47,6 +48,41 @@ class SettingsRepository(private val context: Context) {
 
     val healthEnabled: Flow<Boolean> = context.settingsDataStore.data.map { it[Keys.HEALTH_ENABLED] ?: false }
     val lastHealthSync: Flow<Long?> = context.settingsDataStore.data.map { it[Keys.LAST_HEALTH_SYNC] }
+
+    val selectedPhoneSensors: Flow<Set<PhoneSensor>> = context.settingsDataStore.data.map { preferences ->
+        preferences[Keys.PHONE_SENSORS]
+            ?.split(',')
+            ?.mapNotNull { runCatching { PhoneSensor.valueOf(it) }.getOrNull() }
+            ?.toSet()
+            ?.takeIf { it.isNotEmpty() }
+            ?: DEFAULT_PHONE_SENSORS
+    }
+
+    val phoneBinding: Flow<HealthDeviceBinding?> = context.settingsDataStore.data.map { preferences ->
+        preferences[Keys.PHONE_BINDING]
+            ?.let { runCatching { json.decodeFromString<HealthDeviceBinding>(it) }.getOrNull() }
+    }
+
+    val phoneSyncSettings: Flow<PhoneSyncSettings> = context.settingsDataStore.data.map { preferences ->
+        PhoneSyncSettings(
+            enabled = preferences[Keys.PHONE_ENABLED] ?: false,
+            mode = preferences[Keys.PHONE_SYNC_MODE]
+                ?.let { runCatching { PhoneSyncMode.valueOf(it) }.getOrNull() }
+                ?: PhoneSyncMode.BALANCED,
+            pollInterval = preferences[Keys.PHONE_POLL_INTERVAL]
+                ?.let { runCatching { PhonePollInterval.valueOf(it) }.getOrNull() }
+                ?: PhonePollInterval.FIVE_MINUTES,
+        )
+    }
+
+    val lastPhoneSync: Flow<Long?> = context.settingsDataStore.data.map { it[Keys.LAST_PHONE_SYNC] }
+
+    val presenceZones: Flow<List<PresenceZone>> = context.settingsDataStore.data.map { preferences ->
+        preferences[Keys.PRESENCE_ZONES]
+            ?.let { encoded -> runCatching { json.decodeFromString<List<PresenceZone>>(encoded) }.getOrNull() }
+            .orEmpty()
+            .distinctBy(PresenceZone::id)
+    }
 
     suspend fun currentConfig(): HubConfig = config.first()
 
@@ -144,6 +180,68 @@ class SettingsRepository(private val context: Context) {
         context.settingsDataStore.edit { it[Keys.LAST_HEALTH_SYNC] = epochMs }
     }
 
+    suspend fun savePhoneSensors(sensors: Set<PhoneSensor>) {
+        require(sensors.isNotEmpty()) { "Выберите хотя бы один показатель телефона" }
+        context.settingsDataStore.edit { preferences ->
+            preferences[Keys.PHONE_SENSORS] = sensors.joinToString(",", transform = PhoneSensor::name)
+        }
+    }
+
+    suspend fun savePhoneBinding(binding: HealthDeviceBinding) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[Keys.PHONE_BINDING] = json.encodeToString(binding)
+        }
+    }
+
+    suspend fun clearPhoneBinding() {
+        context.settingsDataStore.edit { preferences ->
+            preferences.remove(Keys.PHONE_BINDING)
+            preferences[Keys.PHONE_ENABLED] = false
+        }
+    }
+
+    suspend fun setPhoneEnabled(enabled: Boolean) {
+        context.settingsDataStore.edit { it[Keys.PHONE_ENABLED] = enabled }
+    }
+
+    suspend fun setPhoneSyncMode(mode: PhoneSyncMode) {
+        context.settingsDataStore.edit { it[Keys.PHONE_SYNC_MODE] = mode.name }
+    }
+
+    suspend fun setPhonePollInterval(interval: PhonePollInterval) {
+        context.settingsDataStore.edit { it[Keys.PHONE_POLL_INTERVAL] = interval.name }
+    }
+
+    suspend fun markPhoneSynced(epochMs: Long = System.currentTimeMillis()) {
+        context.settingsDataStore.edit { it[Keys.LAST_PHONE_SYNC] = epochMs }
+    }
+
+    suspend fun savePresenceZones(zones: List<PresenceZone>) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[Keys.PRESENCE_ZONES] = json.encodeToString(zones.distinctBy(PresenceZone::id))
+        }
+    }
+
+    suspend fun upsertPresenceZone(zone: PresenceZone) {
+        context.settingsDataStore.edit { preferences ->
+            val current = preferences[Keys.PRESENCE_ZONES]
+                ?.let { encoded -> runCatching { json.decodeFromString<List<PresenceZone>>(encoded) }.getOrNull() }
+                .orEmpty()
+            preferences[Keys.PRESENCE_ZONES] = json.encodeToString(
+                (current.filterNot { it.id == zone.id } + zone).distinctBy(PresenceZone::id),
+            )
+        }
+    }
+
+    suspend fun removePresenceZone(id: String) {
+        context.settingsDataStore.edit { preferences ->
+            val current = preferences[Keys.PRESENCE_ZONES]
+                ?.let { encoded -> runCatching { json.decodeFromString<List<PresenceZone>>(encoded) }.getOrNull() }
+                .orEmpty()
+            preferences[Keys.PRESENCE_ZONES] = json.encodeToString(current.filterNot { it.id == id })
+        }
+    }
+
     private fun preferencesToConfig(preferences: Preferences): HubConfig {
         val passwords = secretStore.readPasswords()
         return HubConfig(
@@ -200,6 +298,13 @@ class SettingsRepository(private val context: Context) {
         val HEALTH_BINDING = stringPreferencesKey("health_binding")
         val HEALTH_ENABLED = booleanPreferencesKey("health_enabled")
         val LAST_HEALTH_SYNC = longPreferencesKey("last_health_sync")
+        val PHONE_SENSORS = stringPreferencesKey("phone_sensors")
+        val PHONE_BINDING = stringPreferencesKey("phone_binding")
+        val PHONE_ENABLED = booleanPreferencesKey("phone_enabled")
+        val PHONE_SYNC_MODE = stringPreferencesKey("phone_sync_mode")
+        val PHONE_POLL_INTERVAL = stringPreferencesKey("phone_poll_interval")
+        val LAST_PHONE_SYNC = longPreferencesKey("last_phone_sync")
+        val PRESENCE_ZONES = stringPreferencesKey("presence_zones")
     }
 
     companion object {
@@ -211,6 +316,19 @@ class SettingsRepository(private val context: Context) {
             HealthMetric.WEIGHT,
             HealthMetric.OXYGEN_SATURATION,
             HealthMetric.ACTIVE_CALORIES,
+        )
+        val DEFAULT_PHONE_SENSORS = setOf(
+            PhoneSensor.BATTERY_LEVEL,
+            PhoneSensor.IS_CHARGING,
+            PhoneSensor.CHARGER_TYPE,
+            PhoneSensor.BATTERY_TEMPERATURE,
+            PhoneSensor.POWER_SAVE_MODE,
+            PhoneSensor.CONNECTION_TYPE,
+            PhoneSensor.NETWORK_VALIDATED,
+            PhoneSensor.DEVICE_MODEL,
+            PhoneSensor.ANDROID_VERSION,
+            PhoneSensor.SCREEN_INTERACTIVE,
+            PhoneSensor.LAST_SYNC,
         )
     }
 }

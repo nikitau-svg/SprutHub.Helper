@@ -1,5 +1,8 @@
 package io.github.nikitau.spruthubhelper.sprut
 
+import android.content.Context
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.util.Log
 import io.github.nikitau.spruthubhelper.data.ConnectionMode
 import io.github.nikitau.spruthubhelper.data.HubConfig
@@ -39,7 +42,10 @@ internal class SprutEndpointCandidate(
         "SprutEndpointCandidate(url=$url, isLocal=$isLocal, password=<redacted>)"
 }
 
-internal fun connectionCandidates(config: HubConfig): List<SprutEndpointCandidate> {
+internal fun connectionCandidates(
+    config: HubConfig,
+    preferCloud: Boolean = false,
+): List<SprutEndpointCandidate> {
     fun candidate(url: String, isLocal: Boolean) = SprutEndpointCandidate(
         url = url.trim(),
         isLocal = isLocal,
@@ -47,13 +53,17 @@ internal fun connectionCandidates(config: HubConfig): List<SprutEndpointCandidat
     )
 
     return when (config.mode) {
-        ConnectionMode.AUTO -> listOf(candidate(config.localUrl, true), candidate(config.cloudUrl, false))
+        ConnectionMode.AUTO -> if (preferCloud) {
+            listOf(candidate(config.cloudUrl, false), candidate(config.localUrl, true))
+        } else {
+            listOf(candidate(config.localUrl, true), candidate(config.cloudUrl, false))
+        }
         ConnectionMode.LOCAL -> listOf(candidate(config.localUrl, true))
         ConnectionMode.CLOUD -> listOf(candidate(config.cloudUrl, false))
     }.filter { it.url.isNotBlank() }
 }
 
-class SprutRpcClient {
+class SprutRpcClient(private val context: Context? = null) {
     private val json = Json { ignoreUnknownKeys = true }
     private val httpClient = OkHttpClient.Builder()
         .connectTimeout(5, TimeUnit.SECONDS)
@@ -72,7 +82,7 @@ class SprutRpcClient {
     val events: SharedFlow<JsonElement> = _events
 
     suspend fun connect(config: HubConfig, force: Boolean = false): ConnectedEndpoint = connectionMutex.withLock {
-        val candidates = connectionCandidates(config)
+        val candidates = connectionCandidates(config, preferCloud = shouldPreferCloud())
         val key = sessionIdentity(config, candidates)
         session?.takeIf { !force && sessionKey == key && it.isOpen }?.let {
             return ConnectedEndpoint(it.endpoint, it.isLocal)
@@ -122,6 +132,17 @@ class SprutRpcClient {
         session?.close()
         session = null
         sessionKey = ""
+    }
+
+    private fun shouldPreferCloud(): Boolean {
+        val connectivity = context?.getSystemService(ConnectivityManager::class.java) ?: return false
+        val capabilities = connectivity.activeNetwork
+            ?.let(connectivity::getNetworkCapabilities)
+            ?: return false
+        return capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) &&
+            !capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) &&
+            !capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) &&
+            !capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
     }
 
     private suspend fun authenticate(

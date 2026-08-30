@@ -14,33 +14,34 @@ import android.service.controls.templates.ToggleTemplate
 import io.github.nikitau.spruthubhelper.data.ControlBehavior
 import io.github.nikitau.spruthubhelper.data.DeviceKind
 import io.github.nikitau.spruthubhelper.data.SprutControl
+import io.github.nikitau.spruthubhelper.icons.CustomIconManager
 import io.github.nikitau.spruthubhelper.ui.MainActivity
 
 object ControlFactory {
-    fun stateless(context: Context, item: SprutControl): Control = Control.StatelessBuilder(
-        item.id,
-        appIntent(context, item),
-    )
-        .setTitle(item.title)
-        .setSubtitle(item.subtitle)
-        .setStructure("SprutHub")
-        .setZone(item.room)
-        .setDeviceType(item.deviceType())
-        .build()
+    fun stateless(context: Context, item: SprutControl): Control {
+        val builder = Control.StatelessBuilder(item.id, appIntent(context, item))
+            .setTitle(item.title)
+            .setSubtitle(item.subtitle)
+            .setStructure("SprutHub")
+            .setZone(item.room)
+            .setDeviceType(item.deviceType())
+        CustomIconManager(context).loadIcon(item.id)?.let(builder::setCustomIcon)
+        return builder.build()
+    }
 
-    fun stateful(context: Context, item: SprutControl): Control = Control.StatefulBuilder(
-        item.id,
-        appIntent(context, item),
-    )
-        .setTitle(item.title)
-        .setSubtitle(item.subtitle)
-        .setStructure("SprutHub")
-        .setZone(item.room)
-        .setDeviceType(item.deviceType())
-        .setStatus(Control.STATUS_OK)
-        .setStatusText(item.displayValue)
-        .setControlTemplate(item.template())
-        .build()
+    fun stateful(context: Context, item: SprutControl): Control {
+        val builder = Control.StatefulBuilder(item.id, appIntent(context, item))
+            .setTitle(item.title)
+            .setSubtitle(item.subtitle)
+            .setStructure("SprutHub")
+            .setZone(item.room)
+            .setDeviceType(item.deviceType())
+            .setStatus(Control.STATUS_OK)
+            .setStatusText(item.displayValue)
+            .setControlTemplate(item.template())
+        CustomIconManager(context).loadIcon(item.id)?.let(builder::setCustomIcon)
+        return builder.build()
+    }
 
     private fun SprutControl.template(): ControlTemplate = when (behavior) {
         ControlBehavior.TOGGLE -> ToggleTemplate(
