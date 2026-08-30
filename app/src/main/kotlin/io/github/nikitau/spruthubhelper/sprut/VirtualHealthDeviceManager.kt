@@ -478,6 +478,15 @@ class VirtualHealthDeviceManager(
         else -> null
     }
 
+    private fun findBoolean(element: JsonElement, key: String): Boolean? = when (element) {
+        is JsonObject -> element.entries.firstOrNull { it.key.equals(key, ignoreCase = true) }
+            ?.value
+            ?.let { (it as? JsonPrimitive)?.booleanOrNull }
+            ?: element.values.firstNotNullOfOrNull { findBoolean(it, key) }
+        is JsonArray -> element.firstNotNullOfOrNull { findBoolean(it, key) }
+        else -> null
+    }
+
     private fun defaultValueField(kind: HealthValueKind): String = when (kind) {
         HealthValueKind.INT -> "intValue"
         HealthValueKind.DOUBLE -> "doubleValue"
