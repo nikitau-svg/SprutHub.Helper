@@ -46,4 +46,17 @@ class SprutEndpointTest {
             "example.net",
         ).forEach { assertFalse(it, isPrivateLanHost(it)) }
     }
+
+    @Test
+    fun repairsOnlyDuplicatedHexHubSerialsFromEarlyBuilds() {
+        assertEquals(
+            "ABCDEF0123456789",
+            normalizeHubSerial("ABCDEF0123456789abcdef0123456789"),
+        )
+        assertEquals("ABCDEF0123456789", normalizeHubSerial("  ABCDEF0123456789  "))
+        assertEquals(
+            "not-a-serial-123not-a-serial-123",
+            normalizeHubSerial("not-a-serial-123not-a-serial-123"),
+        )
+    }
 }

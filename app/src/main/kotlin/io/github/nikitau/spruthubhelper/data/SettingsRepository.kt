@@ -54,6 +54,7 @@ class SettingsRepository(private val context: Context) {
         val normalized = config.copy(
             localUrl = normalizeSprutEndpoint(config.localUrl, secureByDefault = false),
             cloudUrl = normalizeSprutEndpoint(config.cloudUrl, secureByDefault = true),
+            serial = normalizeHubSerial(config.serial),
         )
         validate(normalized)
         context.settingsDataStore.edit { preferences ->
@@ -151,7 +152,7 @@ class SettingsRepository(private val context: Context) {
                 ?: ConnectionMode.AUTO,
             localUrl = preferences[Keys.LOCAL_URL] ?: HubConfig.DEFAULT_LOCAL_URL,
             cloudUrl = preferences[Keys.CLOUD_URL] ?: HubConfig.DEFAULT_CLOUD_URL,
-            serial = preferences[Keys.SERIAL] ?: HubConfig.DEFAULT_SERIAL,
+            serial = normalizeHubSerial(preferences[Keys.SERIAL] ?: HubConfig.DEFAULT_SERIAL),
             email = preferences[Keys.EMAIL].orEmpty(),
             localPassword = passwords.localPassword,
             cloudPassword = passwords.cloudPassword,
@@ -229,6 +230,23 @@ internal fun normalizeSprutEndpoint(raw: String, secureByDefault: Boolean): Stri
         URI(uri.scheme?.lowercase(), uri.rawUserInfo, uri.host, uri.port, path, uri.rawQuery, uri.rawFragment)
             .toASCIIString()
     }.getOrDefault(withScheme)
+}
+
+/** Repairs the accidental "serial + serial" value produced by early builds. */
+internal fun normalizeHubSerial(raw: String): String {
+    val trimmed = raw.trim()
+    if (trimmed.length != 32) return trimmed
+
+    val first = trimmed.substring(0, 16)
+    val second = trimmed.substring(16)
+    return if (
+        first.matches(Regex("[0-9a-fA-F]{16}")) &&
+        first.equals(second, ignoreCase = true)
+    ) {
+        first
+    } else {
+        trimmed
+    }
 }
 
 internal fun isPrivateLanHost(rawHost: String): Boolean {
