@@ -8,7 +8,7 @@ import org.junit.Test
 
 class HubConfigSecurityTest {
     @Test
-    fun serializationAndToStringNeverExposePasswords() {
+    fun serializationNeverExposesPasswordsAndToStringRedactsCredentials() {
         val config = HubConfig(
             serial = "private-serial-needle",
             email = "private-email-needle@example.test",
@@ -20,9 +20,10 @@ class HubConfigSecurityTest {
         val encoded = Json.encodeToString(config)
         val description = config.toString()
 
+        listOf("private-serial-needle", "private-email-needle@example.test").forEach { personalValue ->
+            assertFalse(description.contains(personalValue))
+        }
         listOf(
-            "private-serial-needle",
-            "private-email-needle@example.test",
             "local-secret-needle",
             "cloud-secret-needle",
             "legacy-secret-needle",
