@@ -295,7 +295,8 @@ class VirtualHealthDeviceManager(
         fields: List<VirtualFieldSpec>,
         existing: Boolean,
     ) {
-        val missing = fields.map(VirtualFieldSpec::key).toSet() - binding.targets.map(HealthTarget::key).toSet()
+        val missing = fields.filter(VirtualFieldSpec::required).map(VirtualFieldSpec::key).toSet() -
+            binding.targets.map(HealthTarget::key).toSet()
         check(missing.isEmpty()) {
             val prefix = if (existing) "Существующее" else "Созданное"
             "$prefix устройство здоровья несовместимо: не распознано полей ${missing.size}. " +
@@ -373,10 +374,12 @@ class VirtualHealthDeviceManager(
     }
 
     private fun missingFields(binding: HealthDeviceBinding): Set<String> =
-        virtualFields().map(VirtualFieldSpec::key).toSet() - binding.targets.map(HealthTarget::key).toSet()
+        virtualFields().filter(VirtualFieldSpec::required).map(VirtualFieldSpec::key).toSet() -
+            binding.targets.map(HealthTarget::key).toSet()
 
     private fun selectCharacteristicType(types: List<JsonObject>, kind: HealthValueKind): String? {
         val selected = types.firstOrNull { type ->
+            if (type.isNameCharacteristic()) return@firstOrNull false
             val descriptor = listOf(
                 type.scalar("type"),
                 type.scalar("id"),
@@ -428,9 +431,12 @@ class VirtualHealthDeviceManager(
         HealthMetric.entries.forEach { metric -> add(VirtualFieldSpec(metric.name, metric.title, metric.valueKind)) }
         add(VirtualFieldSpec(KEY_PHONE_BATTERY, "Телефон · Заряд", HealthValueKind.INT))
         add(VirtualFieldSpec(KEY_PHONE_CHARGING, "Телефон · Заряжается", HealthValueKind.BOOL))
-        add(VirtualFieldSpec(KEY_PHONE_MODEL, "Телефон · Модель", HealthValueKind.STRING))
-        add(VirtualFieldSpec(KEY_ANDROID_VERSION, "Телефон · Android", HealthValueKind.STRING))
-        add(VirtualFieldSpec(KEY_LAST_SYNC, "Телефон · Синхронизация", HealthValueKind.STRING))
+        // These fields are informational. Early app builds accidentally used
+        // C_Name as their String characteristic, leaving legacy accessories
+        // without a data characteristic. They must not block health metrics.
+        add(VirtualFieldSpec(KEY_PHONE_MODEL, "Телефон · Модель", HealthValueKind.STRING, required = false))
+        add(VirtualFieldSpec(KEY_ANDROID_VERSION, "Телефон · Android", HealthValueKind.STRING, required = false))
+        add(VirtualFieldSpec(KEY_LAST_SYNC, "Телефон · Синхронизация", HealthValueKind.STRING, required = false))
     }
 
     private fun deviceName(): String = "Здоровье · ${Build.MANUFACTURER.replaceFirstChar(Char::uppercase)} ${Build.MODEL}"
@@ -597,7 +603,12 @@ class VirtualHealthDeviceManager(
         healthTypeDescriptorMatches(descriptor, kind)
     }
 
-    private data class VirtualFieldSpec(val key: String, val title: String, val kind: HealthValueKind)
+    private data class VirtualFieldSpec(
+        val key: String,
+        val title: String,
+        val kind: HealthValueKind,
+        val required: Boolean = true,
+    )
 
     companion object {
         const val KEY_PHONE_BATTERY = "PHONE_BATTERY"
