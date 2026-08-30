@@ -60,7 +60,9 @@ class VirtualHealthDeviceManager(
                     add(buildJsonObject {
                         put("type", OPTION_SERVICE_TYPE)
                         put("name", field.title)
-                        put("optional", buildJsonArray { add(selectedTypes.getValue(field.kind)) })
+                        put("optional", buildJsonArray {
+                            add(JsonPrimitive(selectedTypes.getValue(field.kind)))
+                        })
                     })
                 }
             })
