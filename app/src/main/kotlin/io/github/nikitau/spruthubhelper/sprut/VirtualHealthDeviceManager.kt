@@ -1,11 +1,12 @@
 package io.github.nikitau.spruthubhelper.sprut
 
 import android.os.Build
+import io.github.nikitau.spruthubhelper.data.ConnectionMode
 import io.github.nikitau.spruthubhelper.data.HealthDeviceBinding
 import io.github.nikitau.spruthubhelper.data.HealthMetric
 import io.github.nikitau.spruthubhelper.data.HealthTarget
 import io.github.nikitau.spruthubhelper.data.HealthValueKind
-import io.github.nikitau.spruthubhelper.data.ConnectionMode
+import io.github.nikitau.spruthubhelper.data.HubConfig
 import io.github.nikitau.spruthubhelper.data.SettingsRepository
 import io.github.nikitau.spruthubhelper.health.HealthReading
 import kotlinx.serialization.json.JsonArray
@@ -23,22 +24,22 @@ class VirtualHealthDeviceManager(
     private val client: SprutRpcClient,
 ) {
     suspend fun createOrRecover(roomId: String): HealthDeviceBinding {
-        // Health information is deliberately LAN-only and never uses the cloud fallback.
-        val config = settings.currentConfig().copy(mode = ConnectionMode.LOCAL)
+        val config = healthConfig()
         client.connect(config)
         val deviceName = deviceName()
+        val fields = virtualFields()
         val list = client.call(
             config,
             request("accessory", "list", buildJsonObject { put("expand", "services+characteristics") }),
         )
-        findArray(list, "accessories")
-            ?.mapNotNull { it as? JsonObject }
-            ?.firstOrNull { it.scalar("name") == deviceName && it.boolean("virtual") != false }
+        findAccessories(list)
+            .firstOrNull { it.scalar("name") == deviceName && it.boolean("virtual") != false }
             ?.let { existing ->
-                bindingFromAccessory(existing, roomId, deviceName)?.let { binding ->
-                    settings.saveHealthBinding(binding)
-                    return binding
-                }
+                val binding = bindingFromAccessory(existing, roomId, deviceName)
+                    ?: error("Найдено устройство здоровья, но его характеристики не распознаны")
+                validateBinding(binding, fields, existing = true)
+                settings.saveHealthBinding(binding)
+                return binding
             }
 
         val serviceTypes = client.call(config, request("service", "types"))
@@ -56,7 +57,7 @@ class VirtualHealthDeviceManager(
             put("roomId", idValue(roomId))
             put("expand", "services+characteristics")
             put("services", buildJsonArray {
-                virtualFields().forEach { field ->
+                fields.forEach { field ->
                     add(buildJsonObject {
                         put("type", OPTION_SERVICE_TYPE)
                         put("name", field.title)
@@ -67,31 +68,28 @@ class VirtualHealthDeviceManager(
                 }
             })
         }
-        var accessory = client.call(config, request("accessory", "create", createBody))
-        var accessoryObject = findAccessory(accessory)
-        val accessoryId = accessoryObject?.scalar("id", "aId").orEmpty()
-        if (accessoryObject?.array("services").isNullOrEmpty() && accessoryId.isNotBlank()) {
-            accessory = client.call(
+        val createResponse = client.call(config, request("accessory", "create", createBody))
+        var accessoryObject = findAccessory(createResponse)
+        if (accessoryObject?.array("services").isNullOrEmpty()) {
+            val createdId = findAccessoryId(createResponse).orEmpty()
+            val refreshed = client.call(
                 config,
-                request("accessory", "get", buildJsonObject {
-                    put("id", idValue(accessoryId))
-                    put("expand", "services+characteristics")
-                }),
+                request("accessory", "list", buildJsonObject { put("expand", "services+characteristics") }),
             )
-            accessoryObject = findAccessory(accessory)
+            accessoryObject = findAccessories(refreshed).firstOrNull { candidate ->
+                (createdId.isNotBlank() && candidate.scalar("id", "aId") == createdId) ||
+                    candidate.scalar("name") == deviceName
+            }
         }
-        val binding = accessoryObject?.let { bindingFromAccessory(it, roomId, deviceName) }
+        val binding = accessoryObject?.let { bindingFromAccessory(it, roomId, deviceName, selectedTypes) }
             ?: error("SprutHub создал аксессуар, но не вернул его характеристики")
-        check(binding.targets.size >= virtualFields().size - 1) {
-            "SprutHub создал не все характеристики (${binding.targets.size}/${virtualFields().size})"
-        }
+        validateBinding(binding, fields, existing = false)
         settings.saveHealthBinding(binding)
         return binding
     }
 
     suspend fun publish(binding: HealthDeviceBinding, readings: Map<String, HealthReading>) {
-        // Health information is deliberately LAN-only and never uses the cloud fallback.
-        val config = settings.currentConfig().copy(mode = ConnectionMode.LOCAL)
+        val config = healthConfig()
         client.connect(config)
         binding.targets.forEach { target ->
             val reading = readings[target.key] ?: return@forEach
@@ -117,6 +115,7 @@ class VirtualHealthDeviceManager(
         accessory: JsonObject,
         roomId: String,
         name: String,
+        expectedTypes: Map<HealthValueKind, String>? = null,
     ): HealthDeviceBinding? {
         val accessoryId = accessory.scalar("id", "aId")
         if (accessoryId.isBlank()) return null
@@ -125,19 +124,18 @@ class VirtualHealthDeviceManager(
         val targets = services.mapNotNull { service ->
             val field = fieldsByTitle[service.scalar("name")] ?: return@mapNotNull null
             val serviceId = service.scalar("sId", "id")
-            val characteristic = service.array("characteristics")
+            val characteristics = service.array("characteristics")
                 .orEmpty()
                 .mapNotNull { it as? JsonObject }
-                .firstOrNull { candidate ->
-                    val descriptor = candidate.toString().lowercase()
-                    !descriptor.contains("\"name\"") && when (field.kind) {
-                        HealthValueKind.INT -> descriptor.contains("integer") || descriptor.contains("intvalue")
-                        HealthValueKind.DOUBLE -> descriptor.contains("float") || descriptor.contains("double")
-                        HealthValueKind.STRING -> descriptor.contains("string")
-                        HealthValueKind.BOOL -> descriptor.contains("bool")
-                    }
+            val expectedType = expectedTypes?.get(field.kind)?.lowercase()
+            val characteristic = characteristics.firstOrNull { candidate ->
+                val descriptor = candidate.toString().lowercase()
+                !candidate.isNameCharacteristic() && (
+                    (expectedType != null && descriptor.contains(expectedType)) ||
+                        descriptor.matches(field.kind)
+                    )
                 }
-                ?: service.array("characteristics").orEmpty().mapNotNull { it as? JsonObject }.lastOrNull()
+                ?: characteristics.lastOrNull { !it.isNameCharacteristic() }
                 ?: return@mapNotNull null
             val characteristicId = characteristic.scalar("cId", "id")
             if (serviceId.isBlank() || characteristicId.isBlank()) return@mapNotNull null
@@ -160,6 +158,19 @@ class VirtualHealthDeviceManager(
             roomId = roomId,
             targets = targets,
         )
+    }
+
+    private fun validateBinding(
+        binding: HealthDeviceBinding,
+        fields: List<VirtualFieldSpec>,
+        existing: Boolean,
+    ) {
+        val missing = fields.map(VirtualFieldSpec::key).toSet() - binding.targets.map(HealthTarget::key).toSet()
+        check(missing.isEmpty()) {
+            val prefix = if (existing) "Существующее" else "Созданное"
+            "$prefix устройство здоровья несовместимо: не распознано полей ${missing.size}. " +
+                "Удалите аксессуар «${binding.name}» в SprutHub и повторите создание"
+        }
     }
 
     private fun selectCharacteristicType(types: List<JsonObject>, kind: HealthValueKind): String? {
@@ -192,15 +203,38 @@ class VirtualHealthDeviceManager(
 
     private fun deviceName(): String = "Здоровье · ${Build.MANUFACTURER.replaceFirstChar(Char::uppercase)} ${Build.MODEL}"
 
+    private suspend fun healthConfig(): HubConfig = settings.currentConfig().copy(
+        mode = ConnectionMode.LOCAL,
+        localUrl = HubConfig.DEFAULT_LOCAL_URL,
+        cloudUrl = "",
+    )
+
     private fun request(section: String, operation: String, body: JsonObject = buildJsonObject {}): JsonObject =
         buildJsonObject { put(section, buildJsonObject { put(operation, body) }) }
 
     private fun idValue(value: String): JsonPrimitive = value.toLongOrNull()?.let { JsonPrimitive(it) } ?: JsonPrimitive(value)
 
-    private fun findAccessory(element: JsonElement): JsonObject? = when (element) {
-        is JsonObject -> if (element.scalar("id", "aId").isNotBlank() && element.array("services") != null) element
-        else element.values.firstNotNullOfOrNull(::findAccessory)
-        is JsonArray -> element.firstNotNullOfOrNull(::findAccessory)
+    private fun findAccessory(element: JsonElement): JsonObject? = findAccessories(element).firstOrNull()
+
+    private fun findAccessories(element: JsonElement): List<JsonObject> {
+        val named = findArray(element, "accessories")
+            ?.mapNotNull { it as? JsonObject }
+            .orEmpty()
+        if (named.isNotEmpty()) return named
+        return when (element) {
+            is JsonObject -> buildList {
+                if (element.scalar("id", "aId").isNotBlank() && element.array("services") != null) add(element)
+                element.values.forEach { addAll(findAccessories(it)) }
+            }.distinctBy { it.scalar("id", "aId") }
+            is JsonArray -> element.flatMap(::findAccessories).distinctBy { it.scalar("id", "aId") }
+            else -> emptyList()
+        }
+    }
+
+    private fun findAccessoryId(element: JsonElement): String? = when (element) {
+        is JsonObject -> element.scalar("aId", "accessoryId", "id").takeIf(String::isNotBlank)
+            ?: element.values.firstNotNullOfOrNull(::findAccessoryId)
+        is JsonArray -> element.firstNotNullOfOrNull(::findAccessoryId)
         else -> null
     }
 
@@ -220,6 +254,20 @@ class VirtualHealthDeviceManager(
 
     private fun JsonObject.array(key: String): JsonArray? =
         entries.firstOrNull { it.key.equals(key, true) }?.value as? JsonArray
+
+    private fun JsonObject.isNameCharacteristic(): Boolean = listOf(
+        scalar("type"),
+        scalar("id"),
+        scalar("shortId"),
+        scalar("name"),
+    ).map { it.lowercase() }.any { it == "name" || it == "c_name" || it.endsWith(".name") }
+
+    private fun String.matches(kind: HealthValueKind): Boolean = when (kind) {
+        HealthValueKind.INT -> contains("integer") || contains("intvalue") || contains("c_int")
+        HealthValueKind.DOUBLE -> contains("float") || contains("double")
+        HealthValueKind.STRING -> contains("string")
+        HealthValueKind.BOOL -> contains("bool")
+    }
 
     private data class VirtualFieldSpec(val key: String, val title: String, val kind: HealthValueKind)
 

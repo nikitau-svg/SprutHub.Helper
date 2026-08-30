@@ -45,8 +45,11 @@ class HealthSyncManager(
         HealthUiState(
             available = live.available,
             backgroundReadAvailable = live.backgroundReadAvailable,
+            backgroundReadGranted = live.backgroundReadAvailable &&
+                HealthPermission.PERMISSION_READ_HEALTH_DATA_IN_BACKGROUND in live.grantedPermissions,
             grantedPermissions = live.grantedPermissions,
             selectedMetrics = metrics,
+            allSelectedPermissionsGranted = reader.permissions(metrics).all { it in live.grantedPermissions },
             binding = binding,
             enabled = enabled,
             lastSyncEpochMs = lastSync,
@@ -80,8 +83,16 @@ class HealthSyncManager(
     suspend fun onPermissionsChanged() {
         refreshPermissions()
         if (settings.healthEnabled.first()) {
-            schedule()
-            syncNow()
+            if (backgroundReadGranted()) {
+                schedule()
+                syncNow()
+            } else {
+                settings.setHealthEnabled(false)
+                cancel()
+                runtime.value = runtime.value.copy(
+                    message = "Фоновый доступ Health Connect отозван — оставлена ручная синхронизация",
+                )
+            }
         }
     }
 
@@ -92,34 +103,56 @@ class HealthSyncManager(
 
     suspend fun createDevice(roomId: String): Result<HealthDeviceBinding> = runCatching {
         check(roomId.isNotBlank()) { "Выберите комнату SprutHub" }
+        check(reader.isAvailable()) { "Health Connect недоступен" }
+        val selected = settings.selectedHealthMetrics.first()
+        val missing = reader.permissions(selected) - reader.grantedPermissions()
+        check(missing.isEmpty()) { "Сначала разрешите все выбранные показатели в Health Connect" }
         runtime.value = runtime.value.copy(syncing = true, message = "Создаю виртуальное устройство…")
         val binding = virtualDevice.createOrRecover(roomId)
-        settings.setHealthEnabled(true)
-        schedule()
-        runtime.value = runtime.value.copy(syncing = false, message = "Устройство здоровья готово")
-        syncNow()
+        val canRunInBackground = backgroundReadGranted()
+        settings.setHealthEnabled(canRunInBackground)
+        if (canRunInBackground) schedule() else cancel()
+        runtime.value = runtime.value.copy(
+            syncing = false,
+            message = if (canRunInBackground) {
+                "Устройство здоровья готово, фон включён"
+            } else {
+                "Устройство готово; разрешите фоновое чтение для автообновления"
+            },
+        )
+        syncNow().getOrThrow()
         binding
     }.onFailure {
         runtime.value = runtime.value.copy(syncing = false, message = it.message ?: "Не удалось создать устройство")
     }
 
-    suspend fun syncNow(): Result<Unit> = runCatching {
-        val binding = settings.healthBinding.first() ?: error("Сначала создайте устройство здоровья в SprutHub")
-        check(settings.healthEnabled.first()) { "Фоновая синхронизация выключена" }
-        runtime.value = runtime.value.copy(syncing = true, message = "Читаю Health Connect…")
-        val readings = reader.read(settings.selectedHealthMetrics.first())
-        check(readings.isNotEmpty()) { "Нет разрешённых данных для синхронизации" }
-        // VirtualHealthDeviceManager enforces ConnectionMode.LOCAL for all medical data.
-        virtualDevice.publish(binding, readings)
-        settings.markHealthSynced()
-        runtime.value = runtime.value.copy(syncing = false, message = "Здоровье синхронизировано локально")
-    }.onFailure {
-        runtime.value = runtime.value.copy(syncing = false, message = it.message ?: "Ошибка синхронизации здоровья")
+    suspend fun syncNow(fromBackground: Boolean = false): Result<Unit> {
+        if (fromBackground && !settings.healthEnabled.first()) return Result.success(Unit)
+        return runCatching {
+            val binding = settings.healthBinding.first() ?: error("Сначала создайте устройство здоровья в SprutHub")
+            runtime.value = runtime.value.copy(syncing = true, message = "Читаю Health Connect…")
+            val readings = reader.read(settings.selectedHealthMetrics.first())
+            check(readings.isNotEmpty()) { "Нет разрешённых данных для синхронизации" }
+            // VirtualHealthDeviceManager pins all health traffic to the exact LAN endpoint.
+            virtualDevice.publish(binding, readings)
+            settings.markHealthSynced()
+            runtime.value = runtime.value.copy(syncing = false, message = "Здоровье синхронизировано локально")
+        }.onFailure {
+            runtime.value = runtime.value.copy(syncing = false, message = it.message ?: "Ошибка синхронизации здоровья")
+        }
     }
 
     suspend fun setEnabled(enabled: Boolean) {
+        if (enabled) {
+            check(settings.healthBinding.first() != null) { "Сначала создайте устройство здоровья в SprutHub" }
+            check(backgroundReadAvailable()) { "Эта версия Health Connect не поддерживает фоновое чтение" }
+            check(backgroundReadGranted()) { "Разрешите фоновое чтение в Health Connect" }
+        }
         settings.setHealthEnabled(enabled)
         if (enabled) schedule() else cancel()
+        runtime.value = runtime.value.copy(
+            message = if (enabled) "Фоновая синхронизация включена" else "Оставлена ручная синхронизация",
+        )
     }
 
     suspend fun refreshPermissions() {
@@ -137,6 +170,9 @@ class HealthSyncManager(
             HealthConnectFeatures.FEATURE_READ_HEALTH_DATA_IN_BACKGROUND,
         ) == HealthConnectFeatures.FEATURE_STATUS_AVAILABLE
     }
+
+    private suspend fun backgroundReadGranted(): Boolean = backgroundReadAvailable() &&
+        HealthPermission.PERMISSION_READ_HEALTH_DATA_IN_BACKGROUND in reader.grantedPermissions()
 
     private fun schedule() {
         val request = PeriodicWorkRequestBuilder<HealthSyncWorker>(15, TimeUnit.MINUTES)
@@ -161,8 +197,10 @@ class HealthSyncManager(
 data class HealthUiState(
     val available: Boolean = false,
     val backgroundReadAvailable: Boolean = false,
+    val backgroundReadGranted: Boolean = false,
     val grantedPermissions: Set<String> = emptySet(),
     val selectedMetrics: Set<HealthMetric> = SettingsRepository.DEFAULT_HEALTH_METRICS,
+    val allSelectedPermissionsGranted: Boolean = false,
     val binding: HealthDeviceBinding? = null,
     val enabled: Boolean = false,
     val lastSyncEpochMs: Long? = null,

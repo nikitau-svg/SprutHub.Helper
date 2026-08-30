@@ -265,10 +265,31 @@ private fun HealthCard(health: HealthUiState, ui: MainUiState, viewModel: MainVi
                 style = MaterialTheme.typography.bodySmall,
                 color = SprutGreen,
             )
+            when {
+                !health.allSelectedPermissionsGranted -> Text(
+                    "Сначала разрешите все отмеченные показатели Health Connect.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+                health.backgroundReadAvailable && !health.backgroundReadGranted -> Text(
+                    "Для автообновления отдельно разрешите фоновое чтение Health Connect.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+                !health.backgroundReadAvailable -> Text(
+                    "Эта версия Health Connect поддерживает только ручную синхронизацию.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             if (health.binding != null) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("Фоновое обновление каждые ~15 минут", modifier = Modifier.weight(1f))
-                    Switch(checked = health.enabled, onCheckedChange = viewModel::setHealthEnabled)
+                    Switch(
+                        checked = health.enabled,
+                        onCheckedChange = viewModel::setHealthEnabled,
+                        enabled = health.backgroundReadAvailable && health.backgroundReadGranted && !health.syncing,
+                    )
                 }
                 health.lastSyncEpochMs?.let {
                     Text(
@@ -324,13 +345,22 @@ private fun HealthCard(health: HealthUiState, ui: MainUiState, viewModel: MainVi
                         modifier = Modifier.fillMaxWidth(),
                         enabled = health.available && !health.syncing,
                     ) {
-                        Text("Разрешить выбранные данные Health Connect")
+                        Text(
+                            if (health.allSelectedPermissionsGranted &&
+                                (!health.backgroundReadAvailable || health.backgroundReadGranted)
+                            ) {
+                                "Изменить разрешения Health Connect"
+                            } else {
+                                "Разрешить выбранные данные Health Connect"
+                            },
+                        )
                     }
                     if (health.binding == null) {
                         Button(
                             onClick = { viewModel.createHealthDevice(selectedRoomId) },
                             modifier = Modifier.fillMaxWidth(),
-                            enabled = selectedRoomId.isNotBlank() && health.available && !health.syncing,
+                            enabled = selectedRoomId.isNotBlank() && health.available &&
+                                health.allSelectedPermissionsGranted && !health.syncing,
                         ) {
                             if (health.syncing) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
                             else Text("Создать устройство здоровья в SprutHub")

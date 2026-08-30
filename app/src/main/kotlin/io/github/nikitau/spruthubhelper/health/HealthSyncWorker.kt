@@ -10,11 +10,9 @@ class HealthSyncWorker(
     params: WorkerParameters,
 ) : CoroutineWorker(appContext, params) {
     override suspend fun doWork(): Result {
-        val result = AppGraph.health.syncNow()
-        return when {
-            result.isSuccess -> Result.success()
-            runAttemptCount < 5 -> Result.retry()
-            else -> Result.failure()
-        }
+        // Being away from the home LAN is expected, not a terminal failure. Finishing this
+        // occurrence successfully keeps the periodic work scheduled for the next interval.
+        AppGraph.health.syncNow(fromBackground = true)
+        return Result.success()
     }
 }

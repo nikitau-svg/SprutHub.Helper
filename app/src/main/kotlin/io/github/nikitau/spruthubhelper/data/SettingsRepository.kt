@@ -89,7 +89,6 @@ class SettingsRepository(private val context: Context) {
     suspend fun saveHealthBinding(binding: HealthDeviceBinding) {
         context.settingsDataStore.edit { preferences ->
             preferences[Keys.HEALTH_BINDING] = json.encodeToString(binding)
-            preferences[Keys.HEALTH_ENABLED] = true
         }
     }
 
