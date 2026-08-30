@@ -1,0 +1,93 @@
+name: Release candidate
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  build-release-candidate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout tagged source
+        uses: actions/checkout@v5
+
+      - name: Validate stable tag
+        shell: bash
+        run: |
+          if [[ ! "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Stable tags must use vX.Y.Z" >&2
+            exit 1
+          fi
+          app_version="$(sed -n 's/^[[:space:]]*versionName = "\([^"]*\)"/\1/p' app/build.gradle.kts)"
+          if [[ "$GITHUB_REF_NAME" != "v$app_version" ]]; then
+            echo "Tag $GITHUB_REF_NAME does not match app version $app_version" >&2
+            exit 1
+          fi
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v5
+        with:
+          gradle-version: "8.11.1"
+
+      - name: Lint, test and build unsigned release APK
+        run: gradle --no-daemon :app:lintRelease :app:testDebugUnitTest :app:assembleRelease
+
+      - name: Prepare candidate and checksum
+        shell: bash
+        run: |
+          source_apk="app/build/outputs/apk/release/app-release-unsigned.apk"
+          test -f "$source_apk"
+          mkdir -p dist
+          candidate="dist/SprutHub.Helper-${GITHUB_REF_NAME}-unsigned.apk"
+          cp "$source_apk" "$candidate"
+          cd dist
+          sha256sum "$(basename "$candidate")" > "$(basename "$candidate").sha256"
+
+      - name: Upload unsigned candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: SprutHub.Helper-${{ github.ref_name }}-unsigned
+          path: dist/
+          if-no-files-found: error
+          retention-days: 14
+
+  create-draft-release:
+    needs: build-release-candidate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Download unsigned candidate
+        uses: actions/download-artifact@v4
+        with:
+          name: SprutHub.Helper-${{ github.ref_name }}-unsigned
+          path: dist
+
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "Release already exists; refusing to overwrite it" >&2
+            exit 1
+          fi
+          gh release create "$GITHUB_REF_NAME" \
+            --verify-tag \
+            --draft \
+            --generate-notes \
+            --title "SprutHub Helper $GITHUB_REF_NAME" \
+            --notes "ВНИМАНИЕ: приложенный APK не подписан и не предназначен для установки. Перед публикацией сопровождающий должен заменить его локально подписанным APK и проверить SHA-256." \
+            dist/*

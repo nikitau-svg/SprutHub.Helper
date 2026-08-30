@@ -1,6 +1,6 @@
 # Third-party notices
 
-The Android Device Controls, Quick Settings tile lifecycle, and future Health Connect module architecture were informed by the open-source Home Assistant Android application:
+The Android Device Controls, Quick Settings tile lifecycle, and Health Connect module architecture were informed by the open-source Home Assistant Android application:
 
 - Project: Home Assistant Companion for Android
 - Source: https://github.com/home-assistant/android
