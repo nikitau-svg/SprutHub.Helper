@@ -1,4 +1,8 @@
 .gradle/
+.android/
+/analytics.settings
+__pycache__/
+*.py[cod]
 .kotlin/
 .idea/
 .DS_Store

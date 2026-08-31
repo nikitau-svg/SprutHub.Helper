@@ -38,7 +38,7 @@ ci: build beta artifact
 2. Запустите проверки:
 
    ```bash
-   gradle --no-daemon :app:lintDebug :app:testDebugUnitTest :app:assembleDebug
+   ./scripts/android-build.sh :app:lintDebug :app:testDebugUnitTest :app:assembleDebug
    ```
 
 3. Опишите, что изменилось, как это проверено и какие ограничения остались.
