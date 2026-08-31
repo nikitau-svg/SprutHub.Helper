@@ -133,13 +133,14 @@ class SprutCatalogParser {
             ?: JsonArray(emptyList())
         val parsed = characteristics.mapNotNull { it as? JsonObject }
             .mapIndexed { index, characteristic -> parseCharacteristic(characteristic, index) }
+        val thermostatMode = parsed.thermostatMode()
 
         val toggle = parsed
             .filter { it.role == CharacteristicRole.TOGGLE && it.writable }
             .maxByOrNull { it.togglePriority() }
         val range = parsed
             .filter { it.role == CharacteristicRole.RANGE && it.writable }
-            .maxByOrNull { it.rangePriority(kind) }
+            .maxByOrNull { it.rangePriority(kind, thermostatMode) }
         val button = parsed.firstOrNull { it.role == CharacteristicRole.BUTTON && it.writable }
         val title = accessoryName
         val subtitle = serviceName.takeIf { it.isNotBlank() && it != accessoryName }.orEmpty()
@@ -312,7 +313,13 @@ class SprutCatalogParser {
         val id = characteristic.scalar("id", "cId", "index").ifBlank { index.toString() }
         val descriptor = collectDescriptors(characteristic).lowercase()
         val displayName = characteristic.scalar("name", "title", "displayName", "description")
-        val typeName = characteristic.scalar("type", "characteristicType", "typeName", "shortId")
+            .ifBlank { findString(characteristic, "displayName", "name", "title", "description").orEmpty() }
+        val discoveredType = characteristic.scalar("type", "characteristicType", "typeName", "shortId")
+            .ifBlank { findString(characteristic, "characteristicType", "typeName", "shortId", "type").orEmpty() }
+        val typeName = discoveredType
+            .takeUnless { it.lowercase() in GENERIC_VALUE_TYPES }
+            .orEmpty()
+            .ifBlank { inferCharacteristicType(descriptor) }
         val value = extractValue(characteristic)
         val hasValue = findValueObject(characteristic) != null
         val field = extractValueField(characteristic)
@@ -524,6 +531,11 @@ class SprutCatalogParser {
         return normalized.replaceFirstChar { it.uppercase() }
     }
 
+    private fun inferCharacteristicType(descriptor: String): String {
+        val normalized = descriptor.lowercase().filter(Char::isLetterOrDigit)
+        return INFERRED_CHARACTERISTIC_TYPES.firstOrNull(normalized::contains).orEmpty()
+    }
+
     private fun isNameType(identifier: String): Boolean {
         val normalized = identifier.lowercase().filter(Char::isLetterOrDigit)
         return normalized in setOf("name", "cname", "characteristicname")
@@ -537,14 +549,63 @@ class SprutCatalogParser {
         else -> 50
     }
 
-    private fun ParsedCharacteristic.rangePriority(kind: DeviceKind): Int = when {
-        kind == DeviceKind.THERMOSTAT && descriptor.containsMarker(THERMOSTAT_RANGE_MARKERS) -> 400
+    private fun ParsedCharacteristic.rangePriority(kind: DeviceKind, thermostatMode: ThermostatMode?): Int = when {
+        kind == DeviceKind.THERMOSTAT && descriptor.containsMarker(listOf("targettemperature")) -> 600
+        kind == DeviceKind.THERMOSTAT && thermostatMode == ThermostatMode.COOL &&
+            descriptor.containsMarker(listOf("coolingthresholdtemperature")) -> 580
+        kind == DeviceKind.THERMOSTAT && thermostatMode == ThermostatMode.HEAT &&
+            descriptor.containsMarker(listOf("heatingthresholdtemperature")) -> 580
+        kind == DeviceKind.THERMOSTAT && descriptor.containsMarker(THERMOSTAT_RANGE_MARKERS) -> 500
         kind == DeviceKind.LIGHT && descriptor.containsMarker(listOf("brightness")) -> 400
         kind == DeviceKind.FAN && descriptor.containsMarker(listOf("rotation", "speed")) -> 400
         kind in setOf(DeviceKind.CURTAIN, DeviceKind.BLINDS, DeviceKind.SHUTTER) &&
             descriptor.containsMarker(listOf("targetposition", "position")) -> 400
         descriptor.containsMarker(RANGE_MARKERS) -> 200
         else -> 50
+    }
+
+    private fun List<ParsedCharacteristic>.thermostatMode(): ThermostatMode? {
+        val target = firstOrNull { characteristic ->
+            characteristic.descriptor.containsMarker(
+                listOf("targetheatercoolerstate", "targetheatingcoolingstate"),
+            )
+        }
+        val targetValue = target?.value?.numberValue?.toInt()
+        if (target != null && targetValue != null) {
+            return when {
+                target.descriptor.containsMarker(listOf("targetheatercoolerstate")) -> when (targetValue) {
+                    1 -> ThermostatMode.HEAT
+                    2 -> ThermostatMode.COOL
+                    0 -> ThermostatMode.AUTO
+                    else -> null
+                }
+                else -> when (targetValue) {
+                    1 -> ThermostatMode.HEAT
+                    2 -> ThermostatMode.COOL
+                    3 -> ThermostatMode.AUTO
+                    else -> null
+                }
+            }
+        }
+
+        val current = firstOrNull { characteristic ->
+            characteristic.descriptor.containsMarker(
+                listOf("currentheatercoolerstate", "currentheatingcoolingstate"),
+            )
+        } ?: return null
+        val currentValue = current.value.numberValue?.toInt() ?: return null
+        return when {
+            current.descriptor.containsMarker(listOf("currentheatercoolerstate")) -> when (currentValue) {
+                2 -> ThermostatMode.HEAT
+                3 -> ThermostatMode.COOL
+                else -> null
+            }
+            else -> when (currentValue) {
+                1 -> ThermostatMode.HEAT
+                2 -> ThermostatMode.COOL
+                else -> null
+            }
+        }
     }
 
     private data class ParsedCharacteristic(
@@ -565,6 +626,8 @@ class SprutCatalogParser {
     )
 
     private enum class CharacteristicRole { TOGGLE, RANGE, BUTTON, SENSOR }
+
+    private enum class ThermostatMode { HEAT, COOL, AUTO }
 
     private companion object {
         val NUMBER_FIELDS = listOf("intValue", "longValue", "floatValue", "doubleValue", "uintValue")
@@ -603,6 +666,54 @@ class SprutCatalogParser {
             "volume",
         )
         val BUTTON_MARKERS = listOf("button", "execute", "run", "programmable", "stateless")
+        val INFERRED_CHARACTERISTIC_TYPES = listOf(
+            "coolingthresholdtemperature",
+            "heatingthresholdtemperature",
+            "currentheatercoolerstate",
+            "targetheatercoolerstate",
+            "currentheatingcoolingstate",
+            "targetheatingcoolingstate",
+            "currentoperationalstate",
+            "targetoperationalstate",
+            "currentrelativehumidity",
+            "targetrelativehumidity",
+            "currenttemperature",
+            "targettemperature",
+            "currentposition",
+            "targetposition",
+            "positionstate",
+            "currentfanstate",
+            "targetfanstate",
+            "rotationspeed",
+            "fanspeed",
+            "outletinuse",
+            "statuslowbattery",
+            "batterylevel",
+            "statusfault",
+            "statusjammed",
+            "airquality",
+            "brightness",
+            "saturation",
+            "active",
+            "online",
+            "inuse",
+            "volume",
+        )
+        val GENERIC_VALUE_TYPES = setOf(
+            "array",
+            "bool",
+            "boolean",
+            "double",
+            "enum",
+            "float",
+            "int",
+            "integer",
+            "long",
+            "number",
+            "object",
+            "string",
+            "uint",
+        )
     }
 }
 

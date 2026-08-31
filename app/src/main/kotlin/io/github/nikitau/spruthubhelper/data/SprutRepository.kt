@@ -23,6 +23,38 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.put
 
+internal fun mergeControlUpdate(
+    control: SprutControl,
+    characteristicId: String,
+    update: SprutValue,
+): SprutControl? = when (characteristicId) {
+    control.characteristicId -> {
+        val toggleUpdate = control.behavior == ControlBehavior.TOGGLE ||
+            control.behavior == ControlBehavior.TOGGLE_RANGE
+        val keepsIndependentRange = control.behavior == ControlBehavior.TOGGLE_RANGE &&
+            control.rangeCharacteristicId != null
+        control.copy(
+            value = SprutValue(
+                boolValue = update.boolValue
+                    ?: if (toggleUpdate) update.numberValue?.let { it > 0.0 } else null
+                    ?: control.value.boolValue,
+                numberValue = if (keepsIndependentRange) {
+                    control.value.numberValue
+                } else {
+                    update.numberValue ?: control.value.numberValue
+                },
+                stringValue = update.stringValue ?: control.value.stringValue,
+            ),
+        )
+    }
+    control.rangeCharacteristicId -> control.copy(
+        value = control.value.copy(
+            numberValue = update.numberValue ?: control.value.numberValue,
+        ),
+    )
+    else -> null
+}
+
 class SprutRepository(
     private val settings: SettingsRepository,
     private val client: SprutRpcClient,
@@ -361,30 +393,7 @@ class SprutRepository(
         var changed = false
         val controls = current.controls.map { control ->
             if (control.accessoryId != update.accessoryId || control.serviceId != update.serviceId) return@map control
-            when (update.characteristicId) {
-                control.characteristicId -> {
-                    changed = true
-                    val toggleUpdate = control.behavior == ControlBehavior.TOGGLE ||
-                        control.behavior == ControlBehavior.TOGGLE_RANGE
-                    val merged = SprutValue(
-                        boolValue = update.value.boolValue
-                            ?: if (toggleUpdate) update.value.numberValue?.let { it > 0.0 } else null
-                            ?: control.value.boolValue,
-                        numberValue = update.value.numberValue ?: control.value.numberValue,
-                        stringValue = update.value.stringValue ?: control.value.stringValue,
-                    )
-                    control.copy(value = merged)
-                }
-                control.rangeCharacteristicId -> {
-                    changed = true
-                    control.copy(
-                        value = control.value.copy(
-                            numberValue = update.value.numberValue ?: control.value.numberValue,
-                        ),
-                    )
-                }
-                else -> control
-            }
+            mergeControlUpdate(control, update.characteristicId, update.value)?.also { changed = true } ?: control
         }
         if (changed) _catalog.value = current.copy(controls = controls, refreshedAtEpochMs = System.currentTimeMillis())
     }

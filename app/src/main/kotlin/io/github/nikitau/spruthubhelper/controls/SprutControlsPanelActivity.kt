@@ -10,11 +10,10 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -39,22 +38,27 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.Launch
 import androidx.compose.material.icons.rounded.CheckCircle
+import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.Lock
+import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.PowerSettingsNew
 import androidx.compose.material.icons.rounded.Refresh
-import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -145,6 +149,12 @@ internal object DevicePanelSupport {
     fun hasEmbeddedPanel(context: Context): Boolean =
         Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE && hasSystemControls(context)
 }
+
+private val PanelText = Color(0xFFF1F7F4)
+private val PanelMutedText = Color(0xFFB6C8C0)
+private val PanelAccent = Color(0xFF86E8C2)
+private val PanelAccentDark = Color(0xFF173E32)
+private val PanelSurface = Color(0xFF13231F)
 
 @Composable
 private fun SprutDevicePanel(
@@ -313,6 +323,7 @@ private fun SprutDevicePanel(
     rangeCard?.let { card ->
         val control = card.primaryControl
         RangeDialog(
+            card = card,
             control = control,
             onDismiss = { rangeCard = null },
             onConfirm = { value ->
@@ -325,36 +336,38 @@ private fun SprutDevicePanel(
 
 @Composable
 private fun GlassBackground(content: @Composable BoxScope.() -> Unit) {
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(
-                Brush.linearGradient(
-                    colors = listOf(Color(0xFF071411), Color(0xFF10231E), Color(0xFF081714)),
+    CompositionLocalProvider(LocalContentColor provides PanelText) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(
+                    Brush.linearGradient(
+                        colors = listOf(Color(0xFF071411), Color(0xFF10231E), Color(0xFF081714)),
+                    ),
                 ),
-            ),
-    ) {
-        Canvas(Modifier.fillMaxSize()) {
-            drawCircle(
-                brush = Brush.radialGradient(
-                    listOf(Color(0x4D72DDB2), Color.Transparent),
-                    center = Offset(size.width * 0.14f, size.height * 0.18f),
+        ) {
+            Canvas(Modifier.fillMaxSize()) {
+                drawCircle(
+                    brush = Brush.radialGradient(
+                        listOf(Color(0x4072DDB2), Color.Transparent),
+                        center = Offset(size.width * 0.14f, size.height * 0.18f),
+                        radius = size.minDimension * 0.55f,
+                    ),
                     radius = size.minDimension * 0.55f,
-                ),
-                radius = size.minDimension * 0.55f,
-                center = Offset(size.width * 0.14f, size.height * 0.18f),
-            )
-            drawCircle(
-                brush = Brush.radialGradient(
-                    listOf(Color(0x3D5FA889), Color.Transparent),
-                    center = Offset(size.width * 0.88f, size.height * 0.72f),
+                    center = Offset(size.width * 0.14f, size.height * 0.18f),
+                )
+                drawCircle(
+                    brush = Brush.radialGradient(
+                        listOf(Color(0x305FA889), Color.Transparent),
+                        center = Offset(size.width * 0.88f, size.height * 0.72f),
+                        radius = size.minDimension * 0.62f,
+                    ),
                     radius = size.minDimension * 0.62f,
-                ),
-                radius = size.minDimension * 0.62f,
-                center = Offset(size.width * 0.88f, size.height * 0.72f),
-            )
+                    center = Offset(size.width * 0.88f, size.height * 0.72f),
+                )
+            }
+            content()
         }
-        content()
     }
 }
 
@@ -371,13 +384,18 @@ private fun PanelHeader(
             IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Назад") }
         }
         Column(Modifier.weight(1f)) {
-            Text("Панель устройств", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+            Text(
+                "Панель устройств",
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.Bold,
+                color = PanelText,
+            )
             Text(
                 connectionText,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = PanelMutedText,
             )
         }
         if (refreshing) {
@@ -388,7 +406,6 @@ private fun PanelHeader(
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ServiceGlassCard(
     item: PanelItem,
@@ -406,36 +423,40 @@ private fun ServiceGlassCard(
         val icons = CustomIconManager(context)
         icons.loadBitmap(card.id) ?: icons.loadBitmap(control.id)
     }
-    val shape = RoundedCornerShape(if (item.size == PanelItemSize.LARGE) 30.dp else 26.dp)
+    val shape = RoundedCornerShape(if (item.size == PanelItemSize.LARGE) 20.dp else 18.dp)
     val subtitle = listOf(card.serviceName, card.room)
         .filter(String::isNotBlank)
         .distinctBy { it.lowercase() }
         .joinToString(" · ")
+    val actionDescription = when (control.behavior) {
+        ControlBehavior.TOGGLE, ControlBehavior.TOGGLE_RANGE -> if (active) {
+            "Выключить ${card.title}"
+        } else {
+            "Включить ${card.title}"
+        }
+        ControlBehavior.BUTTON -> "Запустить ${card.title}"
+        else -> null
+    }
 
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(if (item.size == PanelItemSize.LARGE) 156.dp else 148.dp)
+            .height(164.dp)
             .clip(shape)
             .background(
                 Brush.linearGradient(
                     colors = if (active) {
-                        listOf(Color(0x73346756), Color(0x4D284B40), Color(0x383C4B46))
+                        listOf(Color(0x55346756), Color(0x33284B40), Color(0x242A3834))
                     } else {
                         listOf(Color(0x24FFFFFF), Color(0x14FFFFFF), Color(0x2424332F))
                     },
                 ),
             )
             .border(
-                BorderStroke(1.dp, Color.White.copy(alpha = if (active) 0.34f else 0.16f)),
+                BorderStroke(1.dp, Color.White.copy(alpha = if (active) 0.26f else 0.16f)),
                 shape,
             )
-            .combinedClickable(
-                enabled = !busy,
-                onClick = onClick,
-                onLongClick = if (card.supportsRange) onAdjust else null,
-            )
-            .padding(14.dp),
+            .padding(12.dp),
     ) {
         Column(Modifier.fillMaxSize()) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -446,9 +467,7 @@ private fun ServiceGlassCard(
                         .background(Color.White.copy(alpha = if (active) 0.14f else 0.08f)),
                     contentAlignment = Alignment.Center,
                 ) {
-                    if (busy) {
-                        CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
-                    } else if (customBitmap != null) {
+                    if (customBitmap != null) {
                         Image(
                             bitmap = customBitmap.asImageBitmap(),
                             contentDescription = null,
@@ -460,7 +479,7 @@ private fun ServiceGlassCard(
                             painter = painterResource(TileIconResolver.resource(control.kind)),
                             contentDescription = null,
                             modifier = Modifier.size(27.dp),
-                            tint = if (active) Color(0xFF9BF2CF) else Color.White,
+                            tint = if (active) PanelAccent else PanelText,
                         )
                     }
                 }
@@ -472,6 +491,7 @@ private fun ServiceGlassCard(
                         overflow = TextOverflow.Ellipsis,
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.SemiBold,
+                        color = PanelText,
                     )
                     if (subtitle.isNotBlank()) {
                         Text(
@@ -479,7 +499,7 @@ private fun ServiceGlassCard(
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                             style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            color = PanelMutedText,
                         )
                     }
                 }
@@ -488,15 +508,7 @@ private fun ServiceGlassCard(
                         Icons.Rounded.CheckCircle,
                         "Команда отправлена",
                         modifier = Modifier.size(19.dp),
-                        tint = Color(0xFF9BF2CF),
-                    )
-                }
-                if (card.supportsRange) {
-                    Icon(
-                        Icons.Rounded.Tune,
-                        "Удерживайте для регулировки",
-                        modifier = Modifier.padding(start = 5.dp).size(18.dp),
-                        tint = Color.White.copy(alpha = 0.68f),
+                        tint = PanelAccent,
                     )
                 }
                 if (control.requiresAuthentication()) {
@@ -507,18 +519,89 @@ private fun ServiceGlassCard(
                         tint = Color.White.copy(alpha = 0.62f),
                     )
                 }
+                if (actionDescription != null) {
+                    Spacer(Modifier.size(7.dp))
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(
+                                if (active) PanelAccent.copy(alpha = 0.20f)
+                                else Color.White.copy(alpha = 0.075f),
+                            ),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        IconButton(onClick = onClick, enabled = !busy) {
+                            if (busy) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(20.dp),
+                                    strokeWidth = 2.dp,
+                                    color = PanelAccent,
+                                )
+                            } else {
+                                Icon(
+                                    imageVector = if (control.behavior == ControlBehavior.BUTTON) {
+                                        Icons.Rounded.PlayArrow
+                                    } else {
+                                        Icons.Rounded.PowerSettingsNew
+                                    },
+                                    contentDescription = actionDescription,
+                                    tint = if (active) PanelAccent else PanelText,
+                                )
+                            }
+                        }
+                    }
+                }
             }
-            Spacer(Modifier.height(6.dp))
-            Text(
-                if (busy) "Отправляем…" else card.headlineValue(),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-                color = if (active) Color(0xFFB8F6DC) else Color.White,
-            )
+            Spacer(Modifier.height(7.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    if (busy) "Отправляем…" else card.headlineValue(),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = if (active) PanelAccent else PanelText,
+                    modifier = Modifier.weight(1f),
+                )
+                if (card.supportsRange) {
+                    Surface(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(12.dp))
+                            .clickable(enabled = !busy, onClick = onAdjust),
+                        shape = RoundedCornerShape(12.dp),
+                        color = Color.White.copy(alpha = 0.085f),
+                        contentColor = PanelText,
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(start = 10.dp, end = 5.dp, top = 4.dp, bottom = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column {
+                                Text(
+                                    card.rangeLabel(),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = PanelMutedText,
+                                )
+                                Text(
+                                    card.rangeValue(),
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = PanelText,
+                                )
+                            }
+                            Icon(
+                                Icons.Rounded.ChevronRight,
+                                "Изменить ${card.rangeLabel().lowercase()}",
+                                modifier = Modifier.size(18.dp),
+                                tint = PanelMutedText,
+                            )
+                        }
+                    }
+                }
+            }
             if (attributes.isNotEmpty()) {
-                Spacer(Modifier.height(5.dp))
+                Spacer(Modifier.height(6.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     attributes.forEach { attribute ->
                         AttributePill(
@@ -546,7 +629,7 @@ private fun AttributePill(label: String, value: String, modifier: Modifier = Mod
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            color = PanelMutedText,
         )
         Text(
             value,
@@ -554,6 +637,7 @@ private fun AttributePill(label: String, value: String, modifier: Modifier = Mod
             overflow = TextOverflow.Ellipsis,
             style = MaterialTheme.typography.bodySmall,
             fontWeight = FontWeight.Medium,
+            color = PanelText,
         )
     }
 }
@@ -585,6 +669,7 @@ private fun EmptyPanel(modifier: Modifier, onOpenApp: () -> Unit) {
 
 @Composable
 private fun RangeDialog(
+    card: ServiceControlCard,
     control: SprutControl,
     onDismiss: () -> Unit,
     onConfirm: (Float) -> Unit,
@@ -596,14 +681,27 @@ private fun RangeDialog(
     }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(control.title) },
+        containerColor = PanelSurface,
+        titleContentColor = PanelText,
+        textContentColor = PanelText,
+        title = { Text(card.title) },
         text = {
             Column {
-                Text("${value.toInt()}${control.unit.takeIf(String::isNotBlank)?.let { " $it" }.orEmpty()}")
-                Slider(value = value, onValueChange = { value = it }, valueRange = minimum..maximum)
+                Text(card.rangeLabel(), color = PanelMutedText)
+                Text(
+                    card.rangeValue(value.toDouble()),
+                    style = MaterialTheme.typography.headlineMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = PanelText,
+                )
+                Slider(
+                    value = value,
+                    onValueChange = { value = it },
+                    valueRange = minimum..maximum,
+                )
             }
         },
-        confirmButton = { TextButton(onClick = { onConfirm(value) }) { Text("Применить") } },
+        confirmButton = { TextButton(onClick = { onConfirm(value) }) { Text("Установить") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Отмена") } },
     )
 }

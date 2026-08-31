@@ -65,7 +65,9 @@ class AccessoryControlGroupTest {
         assertEquals("service:11:13", card.id)
         assertEquals("11:13:main", card.primaryControl.id)
         assertEquals(listOf("11:13:20", "11:13:21"), card.defaultAttributes().map(SprutControl::id))
-        assertEquals("Включено · 22 °C", card.headlineValue())
+        assertEquals("Включено", card.headlineValue())
+        assertEquals("Задано", card.rangeLabel())
+        assertEquals("22 °C", card.rangeValue())
         assertEquals("Сейчас", card.attributeLabel(currentTemperature))
         assertEquals("Охлаждение", card.attributeValue(mode))
     }

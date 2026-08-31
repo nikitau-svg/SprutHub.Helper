@@ -81,9 +81,12 @@ class SprutCatalogParserTest {
                     "name": "Кондиционер",
                     "characteristics": [
                       {"id": 18, "type": "C_ACTIVE", "control": {"write": true, "value": {"intValue": 1}}},
-                      {"id": 20, "type": "C_CURRENT_TEMPERATURE", "control": {"write": false, "value": {"doubleValue": 23.5}}},
+                      {"id": 20, "meta": {"typeName": "C_CURRENT_TEMPERATURE", "displayName": "Температура"},
+                       "control": {"write": false, "value": {"doubleValue": 23.5}}},
                       {"id": 21, "type": "C_TARGET_HEATER_COOLER_STATE", "name": "Режим",
                        "control": {"write": true, "value": {"intValue": 2}}},
+                      {"id": 22, "type": "C_HEATING_THRESHOLD_TEMPERATURE", "minValue": 17, "maxValue": 30,
+                       "control": {"write": true, "value": {"doubleValue": 25.0}}},
                       {"id": 19, "type": "C_COOLING_THRESHOLD_TEMPERATURE", "minValue": 17, "maxValue": 30,
                        "control": {"write": true, "value": {"doubleValue": 22.0}}}
                     ]

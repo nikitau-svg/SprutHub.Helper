@@ -38,15 +38,11 @@ data class ServiceControlCard(
             null -> "Нет данных"
         }
         ControlBehavior.TOGGLE_RANGE -> {
-            val state = when (primaryControl.value.asBooleanOrNull()) {
+            when (primaryControl.value.asBooleanOrNull()) {
                 true -> "Включено"
                 false -> "Выключено"
                 null -> "Нет данных"
             }
-            val target = primaryControl.value.numberValue?.let {
-                formatNumber(it, primaryControl.unit)
-            }
-            listOfNotNull(state, target).joinToString(" · ")
         }
         ControlBehavior.RANGE, ControlBehavior.SENSOR -> formattedValue(primaryControl)
         ControlBehavior.BUTTON -> "Готово к запуску"
@@ -78,6 +74,23 @@ data class ServiceControlCard(
     fun attributeLabel(control: SprutControl): String = characteristicLabel(control)
 
     fun attributeValue(control: SprutControl): String = formattedValue(control)
+
+    fun rangeLabel(): String {
+        val type = normalizeType(
+            primaryControl.rangeCharacteristicType.ifBlank { primaryControl.characteristicType },
+        )
+        return when (type) {
+            "targettemperature", "coolingthresholdtemperature", "heatingthresholdtemperature" -> "Задано"
+            "brightness" -> "Яркость"
+            "targetposition", "currentposition" -> "Положение"
+            "rotationspeed", "fanspeed", "speed" -> "Скорость"
+            "volume" -> "Громкость"
+            else -> "Настроить"
+        }
+    }
+
+    fun rangeValue(value: Double? = primaryControl.value.numberValue): String =
+        value?.let { formatNumber(it, primaryControl.unit) } ?: "—"
 
     companion object {
         const val DEFAULT_ATTRIBUTE_COUNT = 2
@@ -218,8 +231,9 @@ private fun characteristicLabel(control: SprutControl): String = when (normalize
     "statuslowbattery" -> "Низкий заряд"
     else -> control.characteristicName
         .takeIf(String::isNotBlank)
-        ?: control.subtitle.substringAfterLast(" · ").takeIf(String::isNotBlank)
         ?: readableType(control.characteristicType)
+        ?: control.subtitle.substringAfterLast(" · ")
+            .takeIf { it.isNotBlank() && !it.equals(control.serviceName, ignoreCase = true) }
         ?: "Параметр"
 }
 
