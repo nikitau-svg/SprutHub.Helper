@@ -813,6 +813,92 @@ private fun SettingsSection.icon(): ImageVector = when (this) {
 }
 
 @Composable
+internal fun NextActionCard(
+    guidance: SectionGuidance,
+    actionEnabled: Boolean = true,
+    darkSurface: Boolean = false,
+    onAction: (GuidanceAction) -> Unit,
+) {
+    val accent = when (guidance.tone) {
+        SetupTone.READY -> SprutGreen
+        SetupTone.ATTENTION -> Color(0xFFFFC857)
+        SetupTone.OPTIONAL -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = accent.copy(alpha = if (darkSurface) 0.14f else 0.09f),
+            contentColor = if (darkSurface) Color.White else MaterialTheme.colorScheme.onSurface,
+        ),
+        shape = RoundedCornerShape(16.dp),
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(
+                guidance.progress,
+                style = MaterialTheme.typography.labelLarge,
+                color = accent,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text(guidance.title, fontWeight = FontWeight.Bold)
+            Text(
+                guidance.detail,
+                style = MaterialTheme.typography.bodySmall,
+                color = if (darkSurface) Color.White.copy(alpha = 0.72f)
+                else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            val action = guidance.action
+            val label = guidance.actionLabel
+            if (action != null && label != null) {
+                Spacer(Modifier.height(2.dp))
+                if (guidance.tone == SetupTone.READY) {
+                    OutlinedButton(
+                        onClick = { onAction(action) },
+                        enabled = actionEnabled,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text(label) }
+                } else {
+                    Button(
+                        onClick = { onAction(action) },
+                        enabled = actionEnabled,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text(label) }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun MaintenanceSection(
+    expanded: Boolean,
+    onExpandedChange: (Boolean) -> Unit,
+    description: String,
+    content: @Composable () -> Unit,
+) {
+    HorizontalDivider()
+    Row(
+        modifier = Modifier.fillMaxWidth().clickable { onExpandedChange(!expanded) }.padding(vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text("Обслуживание и сброс", fontWeight = FontWeight.SemiBold)
+            Text(
+                description,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Icon(
+            if (expanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
+            contentDescription = if (expanded) "Скрыть обслуживание" else "Открыть обслуживание",
+        )
+    }
+    AnimatedVisibility(expanded) {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) { content() }
+    }
+}
+
+@Composable
 private fun HealthCard(
     health: HealthUiState,
     ui: MainUiState,
@@ -823,6 +909,7 @@ private fun HealthCard(
     var expanded by rememberSaveable(expandedByDefault) { mutableStateOf(expandedByDefault) }
     var roomMenu by remember { mutableStateOf(false) }
     var confirmRecreate by remember { mutableStateOf(false) }
+    var maintenanceExpanded by rememberSaveable { mutableStateOf(false) }
     var confirmRevoke by remember { mutableStateOf(false) }
     var selectedRoomId by remember(health.binding?.roomId, ui.catalog.rooms) {
         mutableStateOf(health.binding?.roomId ?: ui.catalog.rooms.firstOrNull()?.id.orEmpty())
@@ -831,6 +918,21 @@ private fun HealthCard(
     val selectedRoom = ui.catalog.rooms.firstOrNull { it.id == selectedRoomId }
     val selectionMatchesDevice = health.binding == null ||
         health.binding.targets.map { it.key }.toSet() == selectedMetrics.map(HealthMetric::name).toSet()
+    val guidance = healthGuidance(health, selectionMatchesDevice)
+    val openHealthConnectSettings: () -> Unit = {
+        val manage = Intent("android.health.connect.action.MANAGE_HEALTH_PERMISSIONS")
+            .putExtra(Intent.EXTRA_PACKAGE_NAME, context.packageName)
+        runCatching { context.startActivity(manage) }
+            .onFailure {
+                context.startActivity(
+                    Intent(
+                        Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                        Uri.parse("package:com.google.android.apps.healthdata"),
+                    ),
+                )
+            }
+        Unit
+    }
 
     OutlinedCard(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
@@ -863,37 +965,24 @@ private fun HealthCard(
                 style = MaterialTheme.typography.bodySmall,
                 color = SprutGreen,
             )
-            if (health.binding != null && !selectionMatchesDevice) {
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(
-                        "Состав изменён. Чтобы снятые показатели исчезли из SprutHub, виртуальный аксессуар нужно пересоздать.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error,
-                    )
-                    OutlinedButton(
-                        onClick = { confirmRecreate = true },
-                        modifier = Modifier.fillMaxWidth(),
-                        enabled = !health.syncing,
-                    ) { Text("Применить новый состав в SprutHub") }
-                }
-            }
-            when {
-                !health.allSelectedPermissionsGranted -> Text(
-                    "Сначала разрешите все отмеченные показатели Health Connect.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error,
-                )
-                health.backgroundReadAvailable && !health.backgroundReadGranted -> Text(
-                    "Для автообновления отдельно разрешите фоновое чтение Health Connect.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error,
-                )
-                !health.backgroundReadAvailable -> Text(
-                    "Эта версия Health Connect поддерживает только ручную синхронизацию.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
+            NextActionCard(
+                guidance = guidance,
+                actionEnabled = !health.syncing && when (guidance.action) {
+                    GuidanceAction.CREATE_HEALTH_DEVICE -> selectedRoomId.isNotBlank()
+                    else -> true
+                },
+                onAction = { action ->
+                    when (action) {
+                        GuidanceAction.OPEN_HEALTH_CONNECT -> openHealthConnectSettings()
+                        GuidanceAction.REQUEST_HEALTH_PERMISSIONS -> viewModel.requestHealthPermissions()
+                        GuidanceAction.CREATE_HEALTH_DEVICE -> viewModel.createHealthDevice(selectedRoomId)
+                        GuidanceAction.RECREATE_HEALTH_DEVICE -> confirmRecreate = true
+                        GuidanceAction.ENABLE_HEALTH_BACKGROUND -> viewModel.setHealthEnabled(true)
+                        GuidanceAction.SYNC_HEALTH -> viewModel.syncHealth()
+                        else -> Unit
+                    }
+                },
+            )
             if (health.binding != null) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("Фоновое обновление каждые ~15 минут", modifier = Modifier.weight(1f))
@@ -952,78 +1041,6 @@ private fun HealthCard(
                             }
                         }
                     }
-                    OutlinedButton(
-                        onClick = viewModel::requestHealthPermissions,
-                        modifier = Modifier.fillMaxWidth(),
-                        enabled = health.available && !health.syncing,
-                    ) {
-                        Text(
-                            if (health.allSelectedPermissionsGranted &&
-                                (!health.backgroundReadAvailable || health.backgroundReadGranted)
-                            ) {
-                                "Изменить разрешения Health Connect"
-                            } else {
-                                "Разрешить выбранные данные Health Connect"
-                            },
-                        )
-                    }
-                    OutlinedButton(
-                        onClick = {
-                            val manage = Intent("android.health.connect.action.MANAGE_HEALTH_PERMISSIONS")
-                                .putExtra(Intent.EXTRA_PACKAGE_NAME, context.packageName)
-                            runCatching { context.startActivity(manage) }
-                                .onFailure {
-                                    context.startActivity(
-                                        Intent(
-                                            Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                                            Uri.parse("package:com.google.android.apps.healthdata"),
-                                        ),
-                                    )
-                                }
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                        enabled = health.available,
-                    ) { Text("Управлять доступом в Health Connect") }
-                    TextButton(
-                        onClick = { confirmRevoke = true },
-                        modifier = Modifier.fillMaxWidth(),
-                        enabled = health.available,
-                    ) { Text("Отключить синхронизацию и отозвать весь доступ") }
-                    if (health.binding == null) {
-                        Button(
-                            onClick = { viewModel.createHealthDevice(selectedRoomId) },
-                            modifier = Modifier.fillMaxWidth(),
-                            enabled = selectedRoomId.isNotBlank() && health.available &&
-                                health.allSelectedPermissionsGranted && !health.syncing,
-                        ) {
-                            if (health.syncing) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                            else Text("Создать устройство здоровья в SprutHub")
-                        }
-                    } else {
-                        Button(
-                            onClick = {
-                                if (selectionMatchesDevice) viewModel.syncHealth()
-                                else confirmRecreate = true
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                            enabled = !health.syncing,
-                        ) {
-                            Text(
-                                when {
-                                    health.syncing -> "Синхронизация…"
-                                    !selectionMatchesDevice -> "Применить состав и синхронизировать"
-                                    else -> "Синхронизировать сейчас"
-                                },
-                            )
-                        }
-                        if (selectionMatchesDevice) {
-                            TextButton(
-                                onClick = { confirmRecreate = true },
-                                modifier = Modifier.fillMaxWidth(),
-                                enabled = !health.syncing,
-                            ) { Text("Пересоздать и очистить поля старой версии") }
-                        }
-                    }
                     TextButton(
                         onClick = {
                             context.startActivity(
@@ -1032,6 +1049,34 @@ private fun HealthCard(
                         },
                         modifier = Modifier.fillMaxWidth(),
                     ) { Text("Открыть настройки батареи · выбрать «Без ограничений»") }
+                    MaintenanceSection(
+                        expanded = maintenanceExpanded,
+                        onExpandedChange = { maintenanceExpanded = it },
+                        description = "Ручное управление доступом и восстановление виртуального устройства",
+                    ) {
+                        OutlinedButton(
+                            onClick = openHealthConnectSettings,
+                            modifier = Modifier.fillMaxWidth(),
+                            enabled = health.available,
+                        ) { Text("Управлять доступом в Health Connect") }
+                        if (health.binding != null) {
+                            OutlinedButton(
+                                onClick = { confirmRecreate = true },
+                                modifier = Modifier.fillMaxWidth(),
+                                enabled = !health.syncing,
+                            ) { Text("Пересоздать устройство и очистить старые поля") }
+                        }
+                        TextButton(
+                            onClick = { confirmRevoke = true },
+                            modifier = Modifier.fillMaxWidth(),
+                            enabled = health.available,
+                        ) {
+                            Text(
+                                "Отключить синхронизацию и отозвать весь доступ",
+                                color = MaterialTheme.colorScheme.error,
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -1085,6 +1130,7 @@ private fun PhoneCard(
     var expanded by rememberSaveable(expandedByDefault) { mutableStateOf(expandedByDefault) }
     var roomMenu by remember { mutableStateOf(false) }
     var confirmRecreate by remember { mutableStateOf(false) }
+    var maintenanceExpanded by rememberSaveable { mutableStateOf(false) }
     var selectedRoomId by remember(phone.binding?.roomId, ui.catalog.rooms) {
         mutableStateOf(phone.binding?.roomId ?: ui.catalog.rooms.firstOrNull()?.id.orEmpty())
     }
@@ -1092,6 +1138,7 @@ private fun PhoneCard(
     val selectedRoom = ui.catalog.rooms.firstOrNull { it.id == selectedRoomId }
     val selectionMatchesDevice = phone.binding == null ||
         phone.binding.targets.map { it.key }.toSet() == selectedSensors.map(PhoneSensor::name).toSet()
+    val guidance = phoneGuidance(phone, selectionMatchesDevice)
 
     OutlinedCard(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
@@ -1121,21 +1168,27 @@ private fun PhoneCard(
                 style = MaterialTheme.typography.bodySmall,
                 color = SprutGreen,
             )
-
-            if (phone.binding != null && !selectionMatchesDevice) {
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(
-                        "Выбор изменён. Для полного удаления снятых показателей примените новый состав устройства.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error,
-                    )
-                    OutlinedButton(
-                        onClick = { confirmRecreate = true },
-                        modifier = Modifier.fillMaxWidth(),
-                        enabled = !phone.syncing,
-                    ) { Text("Применить новый состав в SprutHub") }
-                }
-            }
+            NextActionCard(
+                guidance = guidance,
+                actionEnabled = !phone.syncing && when (guidance.action) {
+                    GuidanceAction.CREATE_PHONE_DEVICE -> selectedRoomId.isNotBlank()
+                    else -> true
+                },
+                onAction = { action ->
+                    when (action) {
+                        GuidanceAction.CREATE_PHONE_DEVICE -> viewModel.createPhoneDevice(selectedRoomId)
+                        GuidanceAction.RECREATE_PHONE_DEVICE -> confirmRecreate = true
+                        GuidanceAction.ENABLE_PHONE_BACKGROUND -> viewModel.setPhoneEnabled(true)
+                        GuidanceAction.REQUEST_PHONE_LIVE_MODE -> onRequestLiveMode()
+                        GuidanceAction.REQUEST_PHONE_WATCHDOG -> onRequestWatchdog()
+                        GuidanceAction.OPEN_BATTERY_SETTINGS -> {
+                            context.startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+                        }
+                        GuidanceAction.SYNC_PHONE -> viewModel.syncPhone()
+                        else -> Unit
+                    }
+                },
+            )
 
             if (phone.binding != null) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1334,31 +1387,17 @@ private fun PhoneCard(
                             }
                         }
                     }
-                    if (phone.binding == null) {
-                        Button(
-                            onClick = { viewModel.createPhoneDevice(selectedRoomId) },
-                            modifier = Modifier.fillMaxWidth(),
-                            enabled = selectedRoomId.isNotBlank() && !phone.syncing,
+                    if (phone.binding != null) {
+                        MaintenanceSection(
+                            expanded = maintenanceExpanded,
+                            onExpandedChange = { maintenanceExpanded = it },
+                            description = "Восстановление виртуального устройства после изменений или ручного удаления",
                         ) {
-                            if (phone.syncing) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                            else Text("Создать устройство телефона в SprutHub")
-                        }
-                    } else {
-                        Button(
-                            onClick = {
-                                if (selectionMatchesDevice) viewModel.syncPhone()
-                                else confirmRecreate = true
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                            enabled = !phone.syncing,
-                        ) {
-                            Text(
-                                when {
-                                    phone.syncing -> "Синхронизация…"
-                                    !selectionMatchesDevice -> "Применить состав и синхронизировать"
-                                    else -> "Синхронизировать сейчас"
-                                },
-                            )
+                            OutlinedButton(
+                                onClick = { confirmRecreate = true },
+                                modifier = Modifier.fillMaxWidth(),
+                                enabled = !phone.syncing,
+                            ) { Text("Пересоздать устройство телефона") }
                         }
                     }
                 }
@@ -1419,6 +1458,14 @@ private fun ConnectionCard(
     var cloudPassword by rememberSaveable { mutableStateOf("") }
     var showLocalPassword by rememberSaveable { mutableStateOf(false) }
     var showCloudPassword by rememberSaveable { mutableStateOf(false) }
+    val connectionFormChanged = mode != ui.config.mode ||
+        localUrl != ui.config.localUrl ||
+        cloudUrl != ui.config.cloudUrl ||
+        serial != ui.config.serial ||
+        email != ui.config.email ||
+        localPassword.isNotEmpty() ||
+        cloudPassword.isNotEmpty()
+    val guidance = connectionGuidance(ui, connectionFormChanged)
 
     Card(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
@@ -1441,6 +1488,28 @@ private fun ConnectionCard(
                     Icon(if (expanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, null, tint = Color.White)
                 }
             }
+            NextActionCard(
+                guidance = guidance,
+                actionEnabled = !busy,
+                darkSurface = true,
+                onAction = { action ->
+                    when (action) {
+                        GuidanceAction.SAVE_AND_TEST_CONNECTION -> {
+                            viewModel.saveAndTestSettings(
+                                mode,
+                                localUrl,
+                                cloudUrl,
+                                serial,
+                                email,
+                                localPassword,
+                                cloudPassword,
+                            )
+                        }
+                        GuidanceAction.REFRESH_CATALOG -> viewModel.testConnection()
+                        else -> Unit
+                    }
+                },
+            )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 ConnectionMode.entries.forEach { item ->
                     FilterChip(
@@ -1568,26 +1637,6 @@ private fun ConnectionCard(
                         Text("Сохранить настройки")
                     }
                 }
-            }
-            Button(
-                onClick = {
-                    viewModel.saveAndTestSettings(
-                        mode,
-                        localUrl,
-                        cloudUrl,
-                        serial,
-                        email,
-                        localPassword,
-                        cloudPassword,
-                    )
-                },
-                modifier = Modifier.fillMaxWidth(),
-                enabled = !busy,
-            ) {
-                if (busy) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = Color.White)
-                else Icon(Icons.Rounded.Refresh, null)
-                Spacer(Modifier.size(8.dp))
-                Text("Сохранить, проверить и загрузить")
             }
         }
     }

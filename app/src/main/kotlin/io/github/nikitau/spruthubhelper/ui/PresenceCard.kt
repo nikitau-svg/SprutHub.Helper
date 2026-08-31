@@ -75,6 +75,7 @@ internal fun PresenceCard(
     }
     var deletingZone by remember { mutableStateOf<PresenceZone?>(null) }
     val selectedRoom = ui.catalog.rooms.firstOrNull { it.id == selectedRoomId }
+    val guidance = presenceGuidance(presence)
 
     LaunchedEffect(viewModel) {
         viewModel.coordinateResults.collect { (lat, lon) ->
@@ -119,6 +120,22 @@ internal fun PresenceCard(
                     color = MaterialTheme.colorScheme.primary,
                 )
             }
+            NextActionCard(
+                guidance = guidance,
+                actionEnabled = !presence.busy,
+                onAction = { action ->
+                    when (action) {
+                        GuidanceAction.REQUEST_FOREGROUND_LOCATION -> onRequestForegroundLocation()
+                        GuidanceAction.OPEN_BACKGROUND_LOCATION_SETTINGS -> onOpenBackgroundLocationSettings()
+                        GuidanceAction.FILL_CURRENT_LOCATION -> {
+                            expanded = true
+                            viewModel.requestCurrentCoordinates()
+                        }
+                        GuidanceAction.SYNC_PRESENCE -> viewModel.syncPresenceZones()
+                        else -> Unit
+                    }
+                },
+            )
 
             AnimatedVisibility(expanded) {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -135,14 +152,7 @@ internal fun PresenceCard(
                         "разрешена всегда",
                         "иначе вход и выход могут не прийти в фоне",
                     )
-                    if (!presence.permissions.preciseGranted) {
-                        Button(onClick = onRequestForegroundLocation, modifier = Modifier.fillMaxWidth()) {
-                            Text("Разрешить точную геопозицию")
-                        }
-                    } else if (!presence.permissions.backgroundGranted) {
-                        Button(onClick = onOpenBackgroundLocationSettings, modifier = Modifier.fillMaxWidth()) {
-                            Text("Разрешить геопозицию «Всегда»")
-                        }
+                    if (presence.permissions.preciseGranted && !presence.permissions.backgroundGranted) {
                         Text(
                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                                 "Android выдаёт доступ «Всегда» только на странице разрешений приложения."
@@ -166,11 +176,6 @@ internal fun PresenceCard(
                         presence.zones.forEach { zone ->
                             ZoneRow(zone, presence.busy, viewModel, onDelete = { deletingZone = zone })
                         }
-                        OutlinedButton(
-                            onClick = viewModel::syncPresenceZones,
-                            modifier = Modifier.fillMaxWidth(),
-                            enabled = !presence.busy && presence.permissions.preciseGranted,
-                        ) { Text("Обновить все зоны сейчас") }
                     }
 
                     HorizontalDivider()
