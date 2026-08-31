@@ -24,8 +24,8 @@ android {
         applicationId = "io.github.nikitau.spruthubhelper"
         minSdk = 30
         targetSdk = 35
-        versionCode = 10
-        versionName = "0.3.0-beta.8"
+        versionCode = 11
+        versionName = "0.3.0-beta.9"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
@@ -76,6 +76,7 @@ android {
         resources.excludes += setOf(
             "/META-INF/{AL2.0,LGPL2.1}",
             "/META-INF/DEPENDENCIES",
+            "/META-INF/versions/9/OSGI-INF/MANIFEST.MF",
         )
     }
 }
@@ -106,6 +107,7 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.9.0")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("org.bouncycastle:bcprov-jdk18on:1.85.2")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")

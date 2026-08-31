@@ -23,6 +23,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -100,6 +101,7 @@ class SprutRpcClient(private val context: Context? = null) {
                     email = config.email,
                     password = endpoint.password,
                     isLocal = endpoint.isLocal,
+                    hubSerial = config.serial,
                 )
                 candidate
             }
@@ -150,25 +152,79 @@ class SprutRpcClient(private val context: Context? = null) {
         email: String,
         password: String,
         isLocal: Boolean,
+        hubSerial: String,
     ) {
         var response = socket.request(accountRequest("auth"))
-        repeat(4) {
+        repeat(MAX_AUTH_STEPS) { step ->
             findStringByKey(response, "token")?.takeIf(String::isNotBlank)?.let {
                 socket.token = it
                 return
             }
-            val marker = response.toString().uppercase()
+
+            val status = findStringByKey(response, "status").orEmpty().uppercase()
+            when (status) {
+                "ACCOUNT_RESPONSE_FAILED" -> {
+                    val endpointLabel = if (isLocal) "локальные" else "облачные"
+                    throw SprutAuthenticationException(
+                        "SprutHub отклонил $endpointLabel данные входа. Проверьте e-mail и пароль.",
+                    )
+                }
+                "ACCOUNT_RESPONSE_TOO_FAST" -> throw SprutAuthenticationException(
+                    "SprutHub временно ограничил попытки входа. Повторите проверку через минуту.",
+                )
+            }
+
+            val question = findElementByKey(response, "question") as? JsonObject
+            val questionType = question?.get("type")
+                ?.let { runCatching { it.jsonPrimitive.content }.getOrNull() }
+                .orEmpty()
+                .uppercase()
+            val questionData = question?.get("data")
+                ?.let { runCatching { it.jsonPrimitive.content }.getOrNull() }
+                .orEmpty()
+            Log.d(
+                LOG_TAG,
+                "Auth step=${step + 1} endpoint=${if (isLocal) "local" else "cloud"} " +
+                    "status=${status.ifBlank { "none" }} question=${questionType.ifBlank { "none" }}",
+            )
             response = when {
-                marker.contains("QUESTION_TYPE_EMAIL") || marker.contains("\"EMAIL\"") -> {
+                questionType == "QUESTION_TYPE_EMAIL" || questionType == "EMAIL" -> {
                     require(email.isNotBlank()) { "SprutHub запросил e-mail" }
                     socket.request(answerRequest(email))
                 }
-                marker.contains("QUESTION_TYPE_PASSWORD") || marker.contains("\"PASSWORD\"") -> {
+                questionType == "QUESTION_TYPE_PASSWORD" || questionType == "PASSWORD" -> {
                     val endpointLabel = if (isLocal) "локальный" else "облачный"
                     require(password.isNotBlank()) { "SprutHub запросил $endpointLabel пароль" }
                     socket.request(answerRequest(password))
                 }
-                else -> return
+                questionType == "QUESTION_TYPE_CHALLENGE" || questionType == "CHALLENGE" -> {
+                    socket.request(answerRequest(SprutCloudAuth.answerChallenge(password, questionData)))
+                }
+                questionType == "QUESTION_TYPE_ENROLL" || questionType == "ENROLL" -> {
+                    socket.request(answerRequest(SprutCloudAuth.answerEnrollment(password, questionData)))
+                }
+                questionType == "QUESTION_TYPE_SELECT_HUB" || questionType == "SELECT_HUB" -> {
+                    require(hubSerial.isNotBlank()) { "SprutHub запросил выбор хаба, но серийный номер не указан" }
+                    socket.request(answerRequest(hubSerial))
+                }
+                questionType == "QUESTION_TYPE_CAPTCHA" ||
+                    questionType == "QUESTION_TYPE_PIN_EMAIL" ||
+                    questionType == "QUESTION_TYPE_PIN_SMS" -> throw SprutAuthenticationException(
+                    "SprutHub запросил дополнительную проверку. Сначала войдите через веб-интерфейс, затем повторите.",
+                )
+                questionType == "QUESTION_TYPE_REDIRECT" -> throw SprutAuthenticationException(
+                    "Облачный сервер SprutHub запросил перенаправление. Проверьте выбранный облачный адрес.",
+                )
+                questionType == "QUESTION_TYPE_ADD_HUB" -> throw SprutAuthenticationException(
+                    "Этот аккаунт не привязан к указанному SprutHub.",
+                )
+                questionType == "QUESTION_TYPE_UNSUPPORTED_DEVICE" -> throw SprutAuthenticationException(
+                    "Этот SprutHub пока не поддерживает облачное подключение приложения.",
+                )
+                step == 0 && email.isNotBlank() -> socket.request(legacyLoginRequest(email))
+                else -> throw SprutAuthenticationException(
+                    "SprutHub не завершил авторизацию${questionType.takeIf(String::isNotBlank)?.let { ": $it" }.orEmpty()}.",
+                )
             }
         }
 
@@ -176,26 +232,21 @@ class SprutRpcClient(private val context: Context? = null) {
             socket.token = it
             return
         }
-
-        if (email.isNotBlank()) {
-            var legacy = socket.request(
-                buildJsonObject {
-                    put("account", buildJsonObject {
-                        put("login", buildJsonObject { put("login", email) })
-                    })
-                },
-            )
-            if (legacy.toString().uppercase().contains("PASSWORD") && password.isNotBlank()) {
-                legacy = socket.request(answerRequest(password))
-            }
-            findStringByKey(legacy, "token")?.takeIf(String::isNotBlank)?.let {
-                socket.token = it
-            }
-        }
+        throw SprutAuthenticationException("SprutHub не выдал токен после авторизации.")
     }
 
     private fun accountRequest(operation: String): JsonObject = buildJsonObject {
-        put("account", buildJsonObject { put(operation, buildJsonObject {}) })
+        put("account", buildJsonObject {
+            put(operation, buildJsonObject {
+                if (operation == "auth") put("params", buildJsonArray {})
+            })
+        })
+    }
+
+    private fun legacyLoginRequest(email: String): JsonObject = buildJsonObject {
+        put("account", buildJsonObject {
+            put("login", buildJsonObject { put("login", email) })
+        })
     }
 
     private fun answerRequest(value: String): JsonObject = buildJsonObject {
@@ -212,6 +263,13 @@ class SprutRpcClient(private val context: Context? = null) {
                 ?: element.values.firstNotNullOfOrNull { findStringByKey(it, wanted) }
         }
         is kotlinx.serialization.json.JsonArray -> element.firstNotNullOfOrNull { findStringByKey(it, wanted) }
+        else -> null
+    }
+
+    private fun findElementByKey(element: JsonElement, wanted: String): JsonElement? = when (element) {
+        is JsonObject -> element.entries.firstOrNull { it.key.equals(wanted, ignoreCase = true) }?.value
+            ?: element.values.firstNotNullOfOrNull { findElementByKey(it, wanted) }
+        is kotlinx.serialization.json.JsonArray -> element.firstNotNullOfOrNull { findElementByKey(it, wanted) }
         else -> null
     }
 
@@ -344,5 +402,7 @@ data class ConnectedEndpoint(
 
 class SprutConnectionException(message: String) : IOException(message)
 class SprutProtocolException(message: String) : IOException(message)
+class SprutAuthenticationException(message: String) : IOException(message)
 
 private const val LOG_TAG = "SprutHubRpc"
+private const val MAX_AUTH_STEPS = 10
