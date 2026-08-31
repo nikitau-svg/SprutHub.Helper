@@ -117,7 +117,7 @@ Health Connect -> только локальный SprutHub
 ./scripts/android-build.sh :app:lintDebug :app:testDebugUnitTest :app:assembleDebug
 ```
 
-Согласованный порядок развития зафиксирован в [ROADMAP.md](ROADMAP.md). Правила веток, коммитов и pull request описаны в [CONTRIBUTING.md](CONTRIBUTING.md), история изменений — в [CHANGELOG.md](CHANGELOG.md), выпуск и локальная подпись — в [docs/RELEASE_PROCESS.md](docs/RELEASE_PROCESS.md), сообщения об уязвимостях — в [SECURITY.md](SECURITY.md).
+Согласованный порядок развития зафиксирован в [ROADMAP.md](ROADMAP.md), а фактическое поведение обновлений и фоновой работы — в [FAQ](docs/FAQ.md). Правила веток, коммитов и pull request описаны в [CONTRIBUTING.md](CONTRIBUTING.md), история изменений — в [CHANGELOG.md](CHANGELOG.md), выпуск и локальная подпись — в [docs/RELEASE_PROCESS.md](docs/RELEASE_PROCESS.md), сообщения об уязвимостях — в [SECURITY.md](SECURITY.md).
 
 ## Лицензия и права
 
