@@ -31,7 +31,6 @@ jobs:
           api="repos/$GITHUB_REPOSITORY"
 
           test "$(gh api "$api/releases/$RELEASE_ID" --jq .tag_name)" = "$RELEASE_TAG"
-          test "$(gh api "$api/releases/$RELEASE_ID" --jq .draft)" = "true"
 
           if gh api "$api/releases/assets/$BAD_ASSET_ID" >/dev/null 2>&1; then
             gh api --method DELETE "$api/releases/assets/$BAD_ASSET_ID"
@@ -55,16 +54,18 @@ jobs:
           gh api -H "Accept: application/octet-stream" "$api/releases/assets/$checksum_id" > checksum.txt
           grep -Fq "$EXPECTED_APK_SHA256" checksum.txt
 
-      - name: Publish prerelease
+      - name: Publish prerelease if still draft
         shell: bash
         run: |
           set -euo pipefail
           api="repos/$GITHUB_REPOSITORY"
-          gh api --method PATCH "$api/releases/$RELEASE_ID" \
-            -F draft=false \
-            -F prerelease=true \
-            -f tag_name="$RELEASE_TAG" \
-            -f name="SprutHub Helper 0.3.0 Beta 8" >/dev/null
+          if [[ "$(gh api "$api/releases/$RELEASE_ID" --jq .draft)" == "true" ]]; then
+            gh api --method PATCH "$api/releases/$RELEASE_ID" \
+              -F draft=false \
+              -F prerelease=true \
+              -f tag_name="$RELEASE_TAG" \
+              -f name="SprutHub Helper 0.3.0 Beta 8" >/dev/null
+          fi
           test "$(gh api "$api/releases/$RELEASE_ID" --jq .draft)" = "false"
           test "$(gh api "$api/releases/$RELEASE_ID" --jq .prerelease)" = "true"
 
@@ -72,6 +73,7 @@ jobs:
         shell: bash
         run: |
           gh workflow run telegram-beta-release.yml \
+            --repo "$GITHUB_REPOSITORY" \
             --ref main \
             -f tag="$RELEASE_TAG" \
             -f dry_run=false
