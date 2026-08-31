@@ -143,6 +143,9 @@ import io.github.nikitau.spruthubhelper.phone.PhoneUiState
 import io.github.nikitau.spruthubhelper.phone.phoneReadingLabel
 import io.github.nikitau.spruthubhelper.presence.PresenceUiState
 import io.github.nikitau.spruthubhelper.sprut.HeartbeatProtectionStatus
+import io.github.nikitau.spruthubhelper.sprut.bindingMatchesFields
+import io.github.nikitau.spruthubhelper.sprut.healthVirtualFields
+import io.github.nikitau.spruthubhelper.sprut.phoneVirtualFields
 import io.github.nikitau.spruthubhelper.tiles.TileInstallStateStore
 import io.github.nikitau.spruthubhelper.widget.SprutAppWidgetProvider
 import java.text.DateFormat
@@ -921,7 +924,7 @@ private fun HealthCard(
     var selectedMetrics by remember(health.selectedMetrics) { mutableStateOf(health.selectedMetrics) }
     val selectedRoom = ui.catalog.rooms.firstOrNull { it.id == selectedRoomId }
     val selectionMatchesDevice = health.binding == null ||
-        health.binding.targets.map { it.key }.toSet() == selectedMetrics.map(HealthMetric::name).toSet()
+        bindingMatchesFields(health.binding, healthVirtualFields(selectedMetrics))
     val guidance = healthGuidance(health, selectionMatchesDevice)
     val openHealthConnectSettings: () -> Unit = {
         val manage = Intent("android.health.connect.action.MANAGE_HEALTH_PERMISSIONS")
@@ -987,6 +990,21 @@ private fun HealthCard(
                     }
                 },
             )
+
+            health.deviceInspection?.takeIf { it.duplicateCount > 0 }?.let { inspection ->
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = MaterialTheme.colorScheme.errorContainer,
+                ) {
+                    Text(
+                        "Найдены похожие устройства здоровья: ${inspection.matchingAccessoryIds.joinToString()}. " +
+                            "Helper не выберет случайный дубль и не удалит его автоматически.",
+                        modifier = Modifier.padding(12.dp),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                    )
+                }
+            }
 
             if (health.binding != null) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1142,7 +1160,7 @@ private fun PhoneCard(
     var selectedSensors by remember(phone.selectedSensors) { mutableStateOf(phone.selectedSensors) }
     val selectedRoom = ui.catalog.rooms.firstOrNull { it.id == selectedRoomId }
     val selectionMatchesDevice = phone.binding == null ||
-        phone.binding.targets.map { it.key }.toSet() == selectedSensors.map(PhoneSensor::name).toSet()
+        bindingMatchesFields(phone.binding, phoneVirtualFields(selectedSensors))
     val guidance = phoneGuidance(phone, selectionMatchesDevice)
 
     OutlinedCard(
@@ -1320,7 +1338,10 @@ private fun PhoneCard(
                                             }
                                         }
                                     },
-                                    enabled = !phone.syncing && !required && supported,
+                                    // A selection restored from a newer
+                                    // Android version must remain removable
+                                    // even when this phone cannot read it.
+                                    enabled = !phone.syncing && !required && (supported || sensor in selectedSensors),
                                 )
                                 Column(Modifier.weight(1f).padding(top = 9.dp)) {
                                     Text(if (required) "${sensor.title} · всегда включён" else sensor.title)

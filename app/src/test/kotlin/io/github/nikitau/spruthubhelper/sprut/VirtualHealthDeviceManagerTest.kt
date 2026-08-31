@@ -3,7 +3,10 @@ package io.github.nikitau.spruthubhelper.sprut
 import io.github.nikitau.spruthubhelper.data.HealthDeviceBinding
 import io.github.nikitau.spruthubhelper.data.HealthTarget
 import io.github.nikitau.spruthubhelper.data.HealthValueKind
+import io.github.nikitau.spruthubhelper.data.HelperDeviceIdentity
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -60,6 +63,80 @@ class VirtualHealthDeviceManagerTest {
                 binding,
                 listOf(VirtualFieldSpec("BATTERY", "Заряд", HealthValueKind.DOUBLE)),
             ),
+        )
+    }
+
+    @Test
+    fun detectsChangedVirtualDeviceValueType() {
+        val binding = HealthDeviceBinding(
+            accessoryId = "10",
+            name = "Телефон",
+            roomId = "1",
+            targets = listOf(HealthTarget("BATTERY", "1", "1", "stringValue")),
+        )
+
+        assertFalse(
+            bindingMatchesFields(
+                binding,
+                listOf(VirtualFieldSpec("BATTERY", "Заряд", HealthValueKind.DOUBLE)),
+            ),
+        )
+    }
+
+    @Test
+    fun selectsOneExactSchemaInsteadOfAnOldSuperset() {
+        val selected = selectVirtualAccessoryId(
+            candidates = listOf(
+                VirtualAccessoryCandidate("old", setOf("battery", "model", "legacy")),
+                VirtualAccessoryCandidate("current", setOf("battery", "model")),
+            ),
+            expectedFieldTitles = setOf("battery", "model"),
+        )
+
+        assertEquals("current", selected)
+    }
+
+    @Test
+    fun refusesToGuessBetweenDuplicateExactSchemas() {
+        val error = assertThrows(VirtualDeviceConflictException::class.java) {
+            selectVirtualAccessoryId(
+                candidates = listOf(
+                    VirtualAccessoryCandidate("11", setOf("battery", "model")),
+                    VirtualAccessoryCandidate("19", setOf("battery", "model")),
+                ),
+                expectedFieldTitles = setOf("battery", "model"),
+            )
+        }
+
+        assertTrue(error.message.orEmpty().contains("11"))
+        assertTrue(error.message.orEmpty().contains("19"))
+    }
+
+    @Test
+    fun newInstallDoesNotRecoverAnotherPhonesLegacyName() {
+        val names = virtualDeviceNames(
+            prefix = "Телефон",
+            manufacturer = "samsung",
+            model = "SM-F971B",
+            identity = HelperDeviceIdentity(shortId = "A1B2C3", legacyRecoveryAllowed = false),
+        )
+
+        assertEquals("Телефон · Samsung SM-F971B · A1B2C3", names.preferred)
+        assertEquals(listOf(names.preferred), names.recoveryNames)
+    }
+
+    @Test
+    fun upgradedInstallCanRecoverOneLegacyNameWithoutRenamingIt() {
+        val names = virtualDeviceNames(
+            prefix = "Здоровье",
+            manufacturer = "samsung",
+            model = "SM-F971B",
+            identity = HelperDeviceIdentity(shortId = "D4E5F6", legacyRecoveryAllowed = true),
+        )
+
+        assertEquals(
+            listOf("Здоровье · Samsung SM-F971B · D4E5F6", "Здоровье · Samsung SM-F971B"),
+            names.recoveryNames,
         )
     }
 

@@ -8,18 +8,27 @@ import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import java.net.URI
+import java.util.UUID
 import io.github.nikitau.spruthubhelper.presence.PresenceZone
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
 private val Context.settingsDataStore by preferencesDataStore(name = "spruthub_helper_settings")
 
+internal data class HelperDeviceIdentity(
+    val shortId: String,
+    val legacyRecoveryAllowed: Boolean,
+)
+
 class SettingsRepository(private val context: Context) {
     private val secretStore = SecretStore(context)
     private val json = Json { ignoreUnknownKeys = true }
+    private val deviceIdentityMutex = Mutex()
 
     val config: Flow<HubConfig> = context.settingsDataStore.data.map(::preferencesToConfig)
 
@@ -95,6 +104,33 @@ class SettingsRepository(private val context: Context) {
             ?.let { encoded -> runCatching { json.decodeFromString<List<PresenceZone>>(encoded) }.getOrNull() }
             .orEmpty()
             .distinctBy(PresenceZone::id)
+    }
+
+    /**
+     * Returns an installation-scoped pseudonymous identifier. It is random,
+     * contains no Android or SprutHub serial, and is persisted before a
+     * virtual accessory can be created. Existing installations may recover
+     * old unsuffixed device names; fresh installations never adopt a
+     * legacy accessory that could belong to another identical phone.
+     */
+    internal suspend fun helperDeviceIdentity(): HelperDeviceIdentity = deviceIdentityMutex.withLock {
+        val current = context.settingsDataStore.data.first()
+        current[Keys.DEVICE_INSTANCE_ID]?.takeIf(String::isNotBlank)?.let { saved ->
+            return@withLock HelperDeviceIdentity(
+                shortId = saved,
+                legacyRecoveryAllowed = current[Keys.DEVICE_LEGACY_RECOVERY] ?: true,
+            )
+        }
+
+        val identity = HelperDeviceIdentity(
+            shortId = UUID.randomUUID().toString().replace("-", "").take(6).uppercase(),
+            legacyRecoveryAllowed = current.asMap().isNotEmpty(),
+        )
+        context.settingsDataStore.edit { preferences ->
+            preferences[Keys.DEVICE_INSTANCE_ID] = identity.shortId
+            preferences[Keys.DEVICE_LEGACY_RECOVERY] = identity.legacyRecoveryAllowed
+        }
+        identity
     }
 
     suspend fun currentConfig(): HubConfig = config.first()
@@ -452,6 +488,8 @@ class SettingsRepository(private val context: Context) {
     }
 
     private object Keys {
+        val DEVICE_INSTANCE_ID = stringPreferencesKey("device_instance_id")
+        val DEVICE_LEGACY_RECOVERY = booleanPreferencesKey("device_legacy_recovery")
         val MODE = stringPreferencesKey("connection_mode")
         val LOCAL_URL = stringPreferencesKey("local_url")
         val CLOUD_URL = stringPreferencesKey("cloud_url")

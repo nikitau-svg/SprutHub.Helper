@@ -137,6 +137,21 @@ internal fun PresenceCard(
                 },
             )
 
+            if (presence.duplicateZoneNames.isNotEmpty()) {
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = MaterialTheme.colorScheme.errorContainer,
+                ) {
+                    Text(
+                        "Найдены зоны с одинаковым названием: ${presence.duplicateZoneNames.joinToString()}. " +
+                            "Helper сохранил их раздельные ID и не будет удалять автоматически; оставьте нужную ниже.",
+                        modifier = Modifier.padding(12.dp),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                    )
+                }
+            }
+
             AnimatedVisibility(expanded) {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text("Разрешения", fontWeight = FontWeight.SemiBold)

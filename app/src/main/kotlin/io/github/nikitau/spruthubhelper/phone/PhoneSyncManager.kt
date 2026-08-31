@@ -81,8 +81,7 @@ class PhoneSyncManager(
                 PhoneSensorAccess.NOTIFICATION_POLICY,
             ),
             binding = binding,
-            configurationMatches = binding == null ||
-                binding.targets.map { it.key }.toSet() == sensors.map(PhoneSensor::name).toSet(),
+            configurationMatches = binding == null || bindingMatchesFields(binding, phoneVirtualFields(sensors)),
             syncSettings = syncSettings,
             lastSyncEpochMs = lastSync,
             syncing = live.syncing,
@@ -121,6 +120,7 @@ class PhoneSyncManager(
                         Log.i(LOG_TAG, "No recoverable phone accessory on startup: ${error.message}")
                     }
             }
+            refreshDeviceInspection()
             settings.phoneBinding.first()?.let { binding ->
                 if (settings.phoneSyncSettings.first().enabled) {
                     refreshReliabilityInternal(binding, repair = true, force = true)
@@ -463,7 +463,7 @@ class PhoneSyncManager(
         if (!force && now - lastProtectionCheckElapsedMs < PROTECTION_CHECK_INTERVAL_MS) {
             return runtime.value.heartbeatProtection
         }
-        val inspection = runCatching { virtualDevice.inspect() }
+        val inspection = runCatching { virtualDevice.inspect(binding) }
             .onFailure { Log.w(LOG_TAG, "Virtual phone duplicate inspection failed", it) }
             .getOrNull()
         val report = runCatching {
@@ -496,7 +496,7 @@ class PhoneSyncManager(
     }
 
     private suspend fun refreshDeviceInspection() {
-        runCatching { virtualDevice.inspect() }
+        runCatching { virtualDevice.inspect(settings.phoneBinding.first()) }
             .onSuccess { inspection -> runtime.update { it.copy(deviceInspection = inspection) } }
             .onFailure { Log.w(LOG_TAG, "Virtual phone duplicate inspection failed", it) }
     }
@@ -528,7 +528,7 @@ class PhoneSyncManager(
     }
 
     private suspend fun pauseReliabilityInternal(binding: HealthDeviceBinding): HeartbeatProtectionReport {
-        val inspection = runCatching { virtualDevice.inspect() }
+        val inspection = runCatching { virtualDevice.inspect(binding) }
             .onFailure { Log.w(LOG_TAG, "Virtual phone duplicate inspection failed", it) }
             .getOrNull()
         val report = runCatching { heartbeatScenario.pause(binding) }.getOrElse { error ->

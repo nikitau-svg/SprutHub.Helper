@@ -2,6 +2,7 @@ package io.github.nikitau.spruthubhelper.presence
 
 import io.github.nikitau.spruthubhelper.data.HealthDeviceBinding
 import java.util.UUID
+import kotlin.math.abs
 import kotlinx.serialization.Serializable
 
 @Serializable
@@ -59,8 +60,36 @@ data class PresenceUiState(
     val permissions: PresencePermissionState = PresencePermissionState(),
     val busy: Boolean = false,
     val geofencesRegistered: Boolean = false,
+    val duplicateZoneNames: Set<String> = emptySet(),
     val message: String = "Добавьте первую зону",
 )
 
 internal const val PRESENCE_KEY = "PRESENCE"
 internal const val DISTANCE_KEY = "DISTANCE"
+
+internal fun presenceZoneNameKey(name: String): String =
+    name.trim().lowercase().filterNot(Char::isWhitespace)
+
+internal fun samePresenceZoneName(first: String, second: String): Boolean =
+    presenceZoneNameKey(first) == presenceZoneNameKey(second)
+
+internal fun duplicatePresenceZoneNames(zones: List<PresenceZone>): Set<String> = zones
+    .groupBy { zone -> presenceZoneNameKey(zone.name) }
+    .values
+    .filter { sameName -> sameName.size > 1 }
+    .mapTo(linkedSetOf()) { sameName -> sameName.first().name }
+
+internal fun samePresenceZoneDefinition(
+    zone: PresenceZone,
+    name: String,
+    latitude: Double,
+    longitude: Double,
+    radiusMeters: Double,
+    roomId: String,
+    publishDistance: Boolean,
+): Boolean = samePresenceZoneName(zone.name, name) &&
+    abs(zone.latitude - latitude) < 0.000001 &&
+    abs(zone.longitude - longitude) < 0.000001 &&
+    abs(zone.radiusMeters - radiusMeters) < 0.5 &&
+    zone.roomId == roomId &&
+    zone.publishDistance == publishDistance

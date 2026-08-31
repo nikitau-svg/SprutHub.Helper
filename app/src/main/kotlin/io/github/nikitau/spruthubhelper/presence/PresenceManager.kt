@@ -58,6 +58,7 @@ class PresenceManager(
             permissions = permissionState(),
             busy = live.busy,
             geofencesRegistered = live.registered,
+            duplicateZoneNames = duplicatePresenceZoneNames(zones),
             message = live.message,
         )
     }.stateIn(scope, SharingStarted.Eagerly, PresenceUiState())
@@ -88,18 +89,34 @@ class PresenceManager(
             check(name.isNotBlank()) { "Введите название зоны" }
             check(roomId.isNotBlank()) { "Выберите комнату SprutHub" }
             check(permissionState().preciseGranted) { "Разрешите точную геопозицию" }
+            val existingWithName = settings.presenceZones.first().firstOrNull { zone ->
+                samePresenceZoneName(zone.name, name)
+            }
+            val resumableDraft = existingWithName?.takeIf { zone ->
+                zone.binding == null && samePresenceZoneDefinition(
+                    zone = zone,
+                    name = name,
+                    latitude = latitude,
+                    longitude = longitude,
+                    radiusMeters = radiusMeters,
+                    roomId = roomId,
+                    publishDistance = publishDistance,
+                )
+            }
+            check(existingWithName == null || resumableDraft != null) {
+                "Зона с названием «${name.trim()}» уже существует"
+            }
             runtime.update { it.copy(busy = true, message = "Создаю зону…") }
             val location = currentLocation()
                 ?: error("Android пока не смог определить геопозицию. Включите геолокацию и повторите.")
-            var zone = PresenceZone.create(
+            var zone = resumableDraft ?: PresenceZone.create(
                 name = name,
                 latitude = latitude,
                 longitude = longitude,
                 radiusMeters = radiusMeters,
                 roomId = roomId,
                 publishDistance = publishDistance,
-            )
-            settings.upsertPresenceZone(zone)
+            ).also { draft -> settings.upsertPresenceZone(draft) }
             registerGeofences(settings.presenceZones.first())
 
             val distance = distanceMeters(zone, location)
