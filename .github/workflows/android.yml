@@ -49,6 +49,9 @@ jobs:
           printf '%s' "$ANDROID_SIGNING_KEY_BASE64" | base64 --decode > "$ANDROID_SIGNING_STORE_FILE"
           chmod 600 "$ANDROID_SIGNING_STORE_FILE"
 
+      - name: Test Telegram release notifier
+        run: python3 .github/scripts/test_notify_telegram_release.py
+
       - name: Lint, test and build release APK
         run: gradle --no-daemon :app:lintDebug :app:testDebugUnitTest :app:assembleRelease
 
