@@ -12,11 +12,13 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 from typing import Any
 
 
 GITHUB_API = "https://api.github.com"
-MAX_TELEGRAM_TEXT = 4000
+MAX_TELEGRAM_CAPTION = 1000
+MAX_TELEGRAM_UPLOAD = 50 * 1024 * 1024
 
 
 def github_request(url: str, token: str, accept: str = "application/vnd.github+json"):
@@ -50,6 +52,8 @@ def select_release_assets(release: dict[str, Any]) -> tuple[dict[str, Any], dict
         raise ValueError(f"Release does not contain {checksum_name}")
     if int(apk.get("size", 0)) < 1_000_000:
         raise ValueError("APK asset is unexpectedly small")
+    if int(apk.get("size", 0)) > MAX_TELEGRAM_UPLOAD:
+        raise ValueError("APK asset exceeds Telegram Bot API's 50 MB upload limit")
     return apk, checksums[0]
 
 
@@ -61,21 +65,18 @@ def read_asset(asset: dict[str, Any], token: str, limit: int | None = None) -> b
     return payload
 
 
-def verify_checksum(apk: dict[str, Any], checksum: dict[str, Any], token: str) -> str:
+def verify_checksum(apk: dict[str, Any], checksum: dict[str, Any], token: str) -> tuple[str, bytes]:
     checksum_text = read_asset(checksum, token, limit=4096).decode("utf-8", errors="strict")
     match = re.search(r"(?i)\b([0-9a-f]{64})\b", checksum_text)
     if not match:
         raise ValueError("SHA-256 asset does not contain a valid digest")
     expected = match.group(1).lower()
 
-    digest = hashlib.sha256()
-    with github_request(apk["url"], token, "application/octet-stream") as response:
-        while chunk := response.read(1024 * 1024):
-            digest.update(chunk)
-    actual = digest.hexdigest()
+    apk_payload = read_asset(apk, token, limit=MAX_TELEGRAM_UPLOAD)
+    actual = hashlib.sha256(apk_payload).hexdigest()
     if actual != expected:
         raise ValueError(f"APK checksum mismatch: expected {expected}, got {actual}")
-    return actual
+    return actual, apk_payload
 
 
 def markdown_to_plain(text: str) -> str:
@@ -101,23 +102,23 @@ def truncate_notes(notes: str, limit: int = 2300) -> str:
 def build_message(release: dict[str, Any], apk: dict[str, Any], digest: str) -> str:
     tag = str(release["tag_name"])
     version = tag.removeprefix("v")
-    notes = truncate_notes(markdown_to_plain(str(release.get("body") or "")))
+    notes = truncate_notes(markdown_to_plain(str(release.get("body") or "")), limit=520)
     parts = [
         f"🧪 <b>SprutHub Helper {html.escape(version)}</b>",
-        "Новая beta прошла сборку и проверку и уже опубликована в GitHub.",
+        "Новая beta прошла проверку и готова к установке.",
     ]
     if notes:
-        parts.extend(["<b>Что изменилось</b>", html.escape(notes)])
+        parts.extend(["<b>Коротко об обновлении</b>", html.escape(notes)])
     parts.extend(
         [
             f"📦 <code>{html.escape(str(apk['name']))}</code>",
             f"🔐 SHA-256: <code>{digest[:16]}…</code>",
-            "Можно устанавливать поверх предыдущей beta — настройки приложения сохранятся.",
+            "Устанавливается поверх предыдущей beta без сброса настроек.",
         ]
     )
     message = "\n\n".join(parts)
-    if len(message) > MAX_TELEGRAM_TEXT:
-        raise ValueError(f"Telegram message is too long: {len(message)} characters")
+    if len(message) > MAX_TELEGRAM_CAPTION:
+        raise ValueError(f"Telegram document caption is too long: {len(message)} characters")
     return message
 
 
@@ -128,25 +129,65 @@ def write_summary(text: str) -> None:
             summary.write(f"{text}\n")
 
 
-def send_telegram(bot_token: str, chat_id: str, text: str, apk_url: str, release_url: str) -> None:
-    payload = {
-        "chat_id": chat_id,
-        "text": text,
-        "parse_mode": "HTML",
-        "disable_web_page_preview": True,
-        "reply_markup": {
-            "inline_keyboard": [
-                [
-                    {"text": "📥 Скачать APK", "url": apk_url},
-                    {"text": "📝 Описание", "url": release_url},
-                ]
+def encode_multipart(
+    fields: dict[str, str],
+    file_field: str,
+    file_name: str,
+    file_payload: bytes,
+) -> tuple[str, bytes]:
+    boundary = f"SprutHubHelper{uuid.uuid4().hex}"
+    chunks: list[bytes] = []
+    for name, value in fields.items():
+        chunks.extend(
+            [
+                f"--{boundary}\r\n".encode(),
+                f'Content-Disposition: form-data; name="{name}"\r\n\r\n'.encode(),
+                value.encode("utf-8"),
+                b"\r\n",
             ]
-        },
+        )
+    safe_name = file_name.replace('"', "")
+    chunks.extend(
+        [
+            f"--{boundary}\r\n".encode(),
+            (
+                f'Content-Disposition: form-data; name="{file_field}"; filename="{safe_name}"\r\n'
+                "Content-Type: application/vnd.android.package-archive\r\n\r\n"
+            ).encode(),
+            file_payload,
+            b"\r\n",
+            f"--{boundary}--\r\n".encode(),
+        ]
+    )
+    return boundary, b"".join(chunks)
+
+
+def send_telegram_document(
+    bot_token: str,
+    chat_id: str,
+    caption: str,
+    apk_name: str,
+    apk_payload: bytes,
+    release_url: str,
+) -> None:
+    reply_markup = {
+        "inline_keyboard": [[{"text": "📝 Полное описание релиза", "url": release_url}]]
     }
+    boundary, payload = encode_multipart(
+        {
+            "chat_id": chat_id,
+            "caption": caption,
+            "parse_mode": "HTML",
+            "reply_markup": json.dumps(reply_markup, ensure_ascii=False),
+        },
+        "document",
+        apk_name,
+        apk_payload,
+    )
     request = urllib.request.Request(
-        f"https://api.telegram.org/bot{bot_token}/sendMessage",
-        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
+        f"https://api.telegram.org/bot{bot_token}/sendDocument",
+        data=payload,
+        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
         method="POST",
     )
     try:
@@ -181,12 +222,13 @@ def main() -> int:
         raise ValueError("Telegram notification is allowed only for a numbered beta prerelease")
 
     apk, checksum = select_release_assets(release)
-    digest = verify_checksum(apk, checksum, github_token)
+    digest, apk_payload = verify_checksum(apk, checksum, github_token)
     message = build_message(release, apk, digest)
 
     if dry_run:
         print(message)
-        write_summary("## Telegram dry run\n\n" + message)
+        print(f"\nAttachment: {apk['name']} ({len(apk_payload)} bytes)")
+        write_summary("## Telegram dry run\n\n" + message + f"\n\nAttachment: `{apk['name']}`")
         return 0
 
     if not bot_token or not chat_id:
@@ -195,11 +237,12 @@ def main() -> int:
         write_summary("## Telegram notification skipped\n\n" + warning)
         return 0
 
-    send_telegram(
+    send_telegram_document(
         bot_token,
         chat_id,
         message,
-        str(apk["browser_download_url"]),
+        str(apk["name"]),
+        apk_payload,
         str(release["html_url"]),
     )
     write_summary(f"## Telegram notification sent\n\nAnnounced `{tag}` after verifying its APK checksum.")
