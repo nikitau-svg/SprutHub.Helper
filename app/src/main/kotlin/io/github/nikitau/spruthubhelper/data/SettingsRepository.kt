@@ -52,12 +52,13 @@ class SettingsRepository(private val context: Context) {
     val lastHealthSync: Flow<Long?> = context.settingsDataStore.data.map { it[Keys.LAST_HEALTH_SYNC] }
 
     val selectedPhoneSensors: Flow<Set<PhoneSensor>> = context.settingsDataStore.data.map { preferences ->
-        preferences[Keys.PHONE_SENSORS]
+        val selected = preferences[Keys.PHONE_SENSORS]
             ?.split(',')
             ?.mapNotNull { runCatching { PhoneSensor.valueOf(it) }.getOrNull() }
             ?.toSet()
             ?.takeIf { it.isNotEmpty() }
             ?: DEFAULT_PHONE_SENSORS
+        withRequiredPhoneSensors(selected)
     }
 
     val phoneBinding: Flow<HealthDeviceBinding?> = context.settingsDataStore.data.map { preferences ->
@@ -84,6 +85,9 @@ class SettingsRepository(private val context: Context) {
     }
     val phoneWatchdogNotifiedReference: Flow<Long?> = context.settingsDataStore.data.map {
         it[Keys.PHONE_WATCHDOG_NOTIFIED_REFERENCE]
+    }
+    val phoneHeartbeatScenarioIndex: Flow<String?> = context.settingsDataStore.data.map {
+        it[Keys.PHONE_HEARTBEAT_SCENARIO_INDEX]
     }
 
     val presenceZones: Flow<List<PresenceZone>> = context.settingsDataStore.data.map { preferences ->
@@ -274,7 +278,8 @@ class SettingsRepository(private val context: Context) {
     suspend fun savePhoneSensors(sensors: Set<PhoneSensor>) {
         require(sensors.isNotEmpty()) { "Выберите хотя бы один показатель телефона" }
         context.settingsDataStore.edit { preferences ->
-            preferences[Keys.PHONE_SENSORS] = sensors.joinToString(",", transform = PhoneSensor::name)
+            preferences[Keys.PHONE_SENSORS] = withRequiredPhoneSensors(sensors)
+                .joinToString(",", transform = PhoneSensor::name)
         }
     }
 
@@ -346,6 +351,16 @@ class SettingsRepository(private val context: Context) {
     suspend fun markPhoneWatchdogNotified(referenceEpochMs: Long) {
         context.settingsDataStore.edit {
             it[Keys.PHONE_WATCHDOG_NOTIFIED_REFERENCE] = referenceEpochMs
+        }
+    }
+
+    suspend fun savePhoneHeartbeatScenarioIndex(index: String?) {
+        context.settingsDataStore.edit { preferences ->
+            if (index.isNullOrBlank()) {
+                preferences.remove(Keys.PHONE_HEARTBEAT_SCENARIO_INDEX)
+            } else {
+                preferences[Keys.PHONE_HEARTBEAT_SCENARIO_INDEX] = index
+            }
         }
     }
 
@@ -457,6 +472,7 @@ class SettingsRepository(private val context: Context) {
         val LAST_PHONE_SYNC = longPreferencesKey("last_phone_sync")
         val PHONE_MONITORING_STARTED = longPreferencesKey("phone_monitoring_started")
         val PHONE_WATCHDOG_NOTIFIED_REFERENCE = longPreferencesKey("phone_watchdog_notified_reference")
+        val PHONE_HEARTBEAT_SCENARIO_INDEX = stringPreferencesKey("phone_heartbeat_scenario_index")
         val PRESENCE_ZONES = stringPreferencesKey("presence_zones")
     }
 
@@ -482,6 +498,7 @@ class SettingsRepository(private val context: Context) {
             PhoneSensor.DEVICE_MODEL,
             PhoneSensor.ANDROID_VERSION,
             PhoneSensor.SCREEN_INTERACTIVE,
+            PhoneSensor.SYNC_HEARTBEAT,
             PhoneSensor.LAST_SYNC,
         )
     }

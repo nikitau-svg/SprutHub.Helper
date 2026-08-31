@@ -459,6 +459,14 @@ enum class PhoneSensor(
         PhoneSensorCategory.DIAGNOSTICS,
         PhoneUpdateKind.POLL,
     ),
+    SYNC_HEARTBEAT(
+        "Пульс синхронизации",
+        "Служебное число меняется после каждой отправки и позволяет SprutHub заметить остановку приложения",
+        "мин Unix",
+        HealthValueKind.INT,
+        PhoneSensorCategory.DIAGNOSTICS,
+        PhoneUpdateKind.EVENT_AND_POLL,
+    ),
     LAST_SYNC(
         "Последняя синхронизация",
         "Время последней отправки данных в SprutHub",
@@ -468,6 +476,13 @@ enum class PhoneSensor(
         PhoneUpdateKind.EVENT_AND_POLL,
     ),
 }
+
+/** Operational fields required for reliable recovery and hub-side monitoring. */
+val REQUIRED_PHONE_SENSORS: Set<PhoneSensor> = setOf(PhoneSensor.SYNC_HEARTBEAT)
+
+fun withRequiredPhoneSensors(sensors: Set<PhoneSensor>): Set<PhoneSensor> = sensors + REQUIRED_PHONE_SENSORS
+
+const val PHONE_HEARTBEAT_SCENARIO_NAME = "SprutHub Helper · Контроль телефона"
 
 @Serializable
 enum class PhoneSyncMode(val title: String, val description: String) {
@@ -501,6 +516,9 @@ data class HealthTarget(
     val serviceId: String,
     val characteristicId: String,
     val valueField: String,
+    /** SprutHub type identifiers used by block scenarios. Empty for bindings saved by older builds. */
+    val serviceType: String = "",
+    val characteristicType: String = "",
 )
 
 @Serializable

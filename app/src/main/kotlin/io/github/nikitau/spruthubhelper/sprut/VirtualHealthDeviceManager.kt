@@ -14,6 +14,8 @@ import io.github.nikitau.spruthubhelper.health.HealthReading
 import kotlin.math.abs
 import kotlin.math.roundToLong
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -40,6 +42,13 @@ data class VirtualFieldSpec(
     val required: Boolean = true,
 )
 
+data class VirtualDeviceInspection(
+    val matchingAccessoryIds: List<String> = emptyList(),
+) {
+    val exists: Boolean get() = matchingAccessoryIds.isNotEmpty()
+    val duplicateCount: Int get() = (matchingAccessoryIds.size - 1).coerceAtLeast(0)
+}
+
 class VirtualDeviceMissingException(message: String) : IllegalStateException(message)
 
 internal fun bindingMatchesFields(binding: HealthDeviceBinding, fields: List<VirtualFieldSpec>): Boolean =
@@ -50,9 +59,18 @@ class VirtualHealthDeviceManager(
     private val client: SprutRpcClient,
     private val profile: VirtualDeviceProfile = VirtualDeviceProfile.HEALTH,
 ) {
+    private val mutationMutex = Mutex()
+
     suspend fun createOrRecover(
         roomId: String,
         fields: List<VirtualFieldSpec> = defaultVirtualFields(),
+    ): HealthDeviceBinding = mutationMutex.withLock {
+        createOrRecoverLocked(roomId, fields)
+    }
+
+    private suspend fun createOrRecoverLocked(
+        roomId: String,
+        fields: List<VirtualFieldSpec>,
     ): HealthDeviceBinding {
         require(fields.isNotEmpty()) { "Выберите хотя бы один показатель" }
         val config = deviceConfig()
@@ -60,7 +78,7 @@ class VirtualHealthDeviceManager(
         val name = deviceName()
         Log.i(profile.logTag, "Virtual ${profile.name.lowercase()} device create/recover started")
 
-        findHealthAccessory(listExpandedAccessories(config), name)?.let { existing ->
+        findHealthAccessory(listExpandedAccessories(config), name, fields)?.let { existing ->
             val binding = awaitCompleteBinding(
                 config = config,
                 accessoryId = existing.scalar("id", "aId"),
@@ -124,12 +142,20 @@ class VirtualHealthDeviceManager(
 
     suspend fun recoverExisting(
         fields: List<VirtualFieldSpec> = defaultVirtualFields(),
+        allowIncomplete: Boolean = false,
+    ): HealthDeviceBinding? = mutationMutex.withLock {
+        recoverExistingLocked(fields, allowIncomplete)
+    }
+
+    private suspend fun recoverExistingLocked(
+        fields: List<VirtualFieldSpec>,
+        allowIncomplete: Boolean,
     ): HealthDeviceBinding? {
         require(fields.isNotEmpty()) { "Выберите хотя бы один показатель" }
         val config = deviceConfig()
         client.connect(config)
         val name = deviceName()
-        val accessory = findHealthAccessory(listExpandedAccessories(config), name) ?: return null
+        val accessory = findHealthAccessory(listExpandedAccessories(config), name, fields) ?: return null
         val binding = awaitCompleteBinding(
             config = config,
             accessoryId = accessory.scalar("id", "aId"),
@@ -138,9 +164,17 @@ class VirtualHealthDeviceManager(
             expectedTypes = null,
             existing = true,
             fields = fields,
+            allowIncomplete = allowIncomplete,
         )
-        validateBinding(binding, fields, existing = true)
-        Log.i(profile.logTag, "Virtual device binding repaired automatically")
+        if (!allowIncomplete) validateBinding(binding, fields, existing = true)
+        Log.i(
+            profile.logTag,
+            if (bindingMatchesFields(binding, fields)) {
+                "Virtual device binding repaired automatically"
+            } else {
+                "Existing virtual device adopted for explicit schema migration"
+            },
+        )
         return binding
     }
 
@@ -163,9 +197,9 @@ class VirtualHealthDeviceManager(
         var published = 0
         val failures = mutableListOf<String>()
         val expectedValues = linkedMapOf<String, JsonPrimitive>()
-        liveBinding.targets.forEach { target ->
-            val reading = readings[target.key] ?: return@forEach
-            val value = wireValue(target.valueField, reading) ?: return@forEach
+        suspend fun publishTarget(target: HealthTarget) {
+            val reading = readings[target.key] ?: return
+            val value = wireValue(target.valueField, reading) ?: return
             val body = buildJsonObject {
                 put("aId", idValue(liveBinding.accessoryId))
                 put("sId", idValue(target.serviceId))
@@ -184,11 +218,24 @@ class VirtualHealthDeviceManager(
                 Log.e(profile.logTag, "Virtual target ${target.key} failed", error)
             }
         }
+
+        val heartbeat = liveBinding.targets.firstOrNull { it.key == PHONE_HEARTBEAT_KEY }
+        liveBinding.targets.filterNot { it.key == PHONE_HEARTBEAT_KEY }.forEach { publishTarget(it) }
+        check(failures.isEmpty()) {
+            "Обновлено $published полей, не обновлено ${failures.size}: ${failures.joinToString().take(240)}"
+        }
+        if (expectedValues.isNotEmpty()) verifyPublishedValues(config, liveBinding, expectedValues)
+
+        // The hub-side heartbeat is committed only after all ordinary values
+        // were written and read back successfully. A partial or unverifiable
+        // snapshot therefore cannot postpone the SprutHub dead-man timer.
+        expectedValues.clear()
+        heartbeat?.let { publishTarget(it) }
         check(published > 0) { "Нет данных, подходящих для публикации в SprutHub" }
         check(failures.isEmpty()) {
             "Обновлено $published полей, не обновлено ${failures.size}: ${failures.joinToString().take(240)}"
         }
-        verifyPublishedValues(config, liveBinding, expectedValues)
+        if (expectedValues.isNotEmpty()) verifyPublishedValues(config, liveBinding, expectedValues)
         Log.i(profile.logTag, "Virtual device published and verified $published fields")
         return liveBinding
     }
@@ -213,6 +260,14 @@ class VirtualHealthDeviceManager(
         binding: HealthDeviceBinding,
         roomId: String,
         fields: List<VirtualFieldSpec>,
+    ): HealthDeviceBinding = mutationMutex.withLock {
+        recreateLocked(binding, roomId, fields)
+    }
+
+    private suspend fun recreateLocked(
+        binding: HealthDeviceBinding,
+        roomId: String,
+        fields: List<VirtualFieldSpec>,
     ): HealthDeviceBinding {
         require(fields.isNotEmpty()) { "Выберите хотя бы один показатель" }
         val config = deviceConfig()
@@ -223,7 +278,7 @@ class VirtualHealthDeviceManager(
         }
         if (accessory == null) {
             Log.i(profile.logTag, "Stored virtual accessory is already absent; creating the selected schema")
-            return createOrRecover(roomId, fields)
+            return createOrRecoverLocked(roomId, fields)
         }
         check(sameSprutLabel(accessory.scalar("name", "title", "displayName"), expectedName)) {
             "Защитная проверка остановила удаление: имя устройства изменилось"
@@ -245,10 +300,20 @@ class VirtualHealthDeviceManager(
             val stillExists = listExpandedAccessories(config).any { candidate ->
                 candidate.scalar("id", "aId") == binding.accessoryId
             }
-            if (!stillExists) return createOrRecover(replacementRoomId, fields)
+            if (!stillExists) return createOrRecoverLocked(replacementRoomId, fields)
             if (attempt < DELETE_VERIFY_ATTEMPTS - 1) delay(DELETE_VERIFY_RETRY_MS)
         }
         error("SprutHub принял удаление, но устройство всё ещё отображается")
+    }
+
+    suspend fun inspect(): VirtualDeviceInspection = mutationMutex.withLock {
+        val config = deviceConfig()
+        client.connect(config)
+        val ids = matchingVirtualAccessories(listExpandedAccessories(config), deviceName())
+            .map { it.scalar("id", "aId") }
+            .filter(String::isNotBlank)
+            .distinct()
+        VirtualDeviceInspection(ids)
     }
 
     private suspend fun ensureBinding(
@@ -259,10 +324,10 @@ class VirtualHealthDeviceManager(
     ): HealthDeviceBinding {
         val accessories = listExpandedAccessories(config)
         val accessory = accessories.firstOrNull { candidate ->
-            candidate.scalar("id", "aId") == binding.accessoryId
-        } ?: accessories.firstOrNull { candidate ->
-            sameSprutLabel(candidate.scalar("name", "title", "displayName"), binding.name)
-        }
+            candidate.scalar("id", "aId") == binding.accessoryId &&
+                candidate.boolean("virtual") != false &&
+                sameSprutLabel(candidate.scalar("name", "title", "displayName"), binding.name)
+        } ?: findHealthAccessory(accessories, binding.name, fields)
         if (accessory == null) {
             if (createIfMissing) {
                 Log.i(profile.logTag, "Virtual accessory was removed outside the app; recreating after explicit sync")
@@ -295,14 +360,19 @@ class VirtualHealthDeviceManager(
         existing: Boolean,
         createdAtEpochMs: Long = System.currentTimeMillis(),
         fields: List<VirtualFieldSpec>,
+        allowIncomplete: Boolean = false,
     ): HealthDeviceBinding {
         var lastProblem = "аксессуар ещё не появился в accessory.list"
+        var lastCandidate: HealthDeviceBinding? = null
         repeat(BINDING_ATTEMPTS) { attempt ->
             runCatching { listExpandedAccessories(config) }
                 .onSuccess { accessories ->
                     val accessory = accessories.firstOrNull { candidate ->
-                        (accessoryId.isNotBlank() && candidate.scalar("id", "aId") == accessoryId) ||
-                            sameSprutLabel(candidate.scalar("name", "title", "displayName"), name)
+                        candidate.boolean("virtual") != false &&
+                            (
+                                (accessoryId.isNotBlank() && candidate.scalar("id", "aId") == accessoryId) ||
+                                    sameSprutLabel(candidate.scalar("name", "title", "displayName"), name)
+                                )
                     }
                     if (accessory == null) {
                         lastProblem = "аксессуар не найден"
@@ -317,6 +387,7 @@ class VirtualHealthDeviceManager(
                             fields = fields,
                         )
                         if (candidate != null) {
+                            lastCandidate = candidate
                             val missing = missingFields(candidate, fields)
                             if (missing.isEmpty()) return candidate
                             lastProblem = "не распознано полей ${missing.size}"
@@ -326,6 +397,15 @@ class VirtualHealthDeviceManager(
                                     "missing=${missing.sorted().joinToString()}",
                             )
                         } else {
+                            if (allowIncomplete) {
+                                lastCandidate = HealthDeviceBinding(
+                                    accessoryId = accessory.scalar("id", "aId"),
+                                    name = name,
+                                    roomId = roomId,
+                                    targets = emptyList(),
+                                    createdAtEpochMs = createdAtEpochMs,
+                                )
+                            }
                             lastProblem = "структура характеристик ещё не распознана"
                             Log.w(profile.logTag, bindingDiagnostic(accessory, fields))
                         }
@@ -334,6 +414,7 @@ class VirtualHealthDeviceManager(
                 .onFailure { error -> lastProblem = error.message ?: "ошибка accessory.list" }
             if (attempt < BINDING_ATTEMPTS - 1) delay(BINDING_RETRY_MS)
         }
+        if (allowIncomplete && lastCandidate != null) return lastCandidate!!
         val prefix = if (existing) "Существующее" else "Созданное"
         error("$prefix устройство ${profile.title} не готово: $lastProblem")
     }
@@ -405,6 +486,18 @@ class VirtualHealthDeviceManager(
                 serviceId = serviceId,
                 characteristicId = characteristicId,
                 valueField = valueField,
+                serviceType = service.scalar("type", "serviceType", "typeName", "shortId")
+                    .ifBlank { OPTION_SERVICE_TYPE },
+                characteristicType = characteristic.scalar(
+                    "type",
+                    "characteristicType",
+                    "typeName",
+                    "shortId",
+                ).ifBlank {
+                    expectedTypes?.get(field.kind).orEmpty()
+                }.ifBlank {
+                    characteristic.typeIdentifiers().firstOrNull().orEmpty()
+                },
             )
         }
         if (targets.isEmpty()) return null
@@ -581,13 +674,39 @@ class VirtualHealthDeviceManager(
 
     private fun idValue(value: String): JsonPrimitive = value.toLongOrNull()?.let { JsonPrimitive(it) } ?: JsonPrimitive(value)
 
-    private fun findHealthAccessory(accessories: List<JsonObject>, name: String): JsonObject? =
-        accessories
-            .filter {
-                sameSprutLabel(it.scalar("name", "title", "displayName"), name) &&
-                    it.boolean("virtual") != false
-            }
-            .maxByOrNull { it.array("services")?.size ?: 0 }
+    private fun matchingVirtualAccessories(accessories: List<JsonObject>, name: String): List<JsonObject> =
+        accessories.filter {
+            sameSprutLabel(it.scalar("name", "title", "displayName"), name) &&
+                it.boolean("virtual") != false
+        }
+
+    private fun findHealthAccessory(
+        accessories: List<JsonObject>,
+        name: String,
+        fields: List<VirtualFieldSpec>? = null,
+    ): JsonObject? {
+        val matches = matchingVirtualAccessories(accessories, name)
+        if (matches.size > 1) {
+            Log.w(profile.logTag, "Found ${matches.size} virtual accessories with the app-owned name")
+        }
+        val expectedTitles = fields?.mapTo(mutableSetOf()) { sprutLabelKey(it.title) }.orEmpty()
+        return matches.maxWithOrNull(
+            compareBy<JsonObject> { accessory ->
+                if (expectedTitles.isEmpty()) 0 else {
+                    val actual = accessory.array("services")
+                        .orEmpty()
+                        .mapNotNull { it as? JsonObject }
+                        .mapTo(mutableSetOf()) { sprutLabelKey(it.scalar("name", "title", "displayName")) }
+                    if (actual.containsAll(expectedTitles)) 1 else 0
+                }
+            }.thenBy { accessory ->
+                accessory.array("services")
+                    .orEmpty()
+                    .mapNotNull { it as? JsonObject }
+                    .count { sprutLabelKey(it.scalar("name", "title", "displayName")) in expectedTitles }
+            }.thenBy { it.array("services")?.size ?: 0 },
+        )
+    }
 
     private fun findAccessory(element: JsonElement): JsonObject? = findAccessories(element).firstOrNull()
 
@@ -737,6 +856,7 @@ class VirtualHealthDeviceManager(
         private const val VERIFY_RETRY_MS = 300L
         private const val DELETE_VERIFY_ATTEMPTS = 10
         private const val DELETE_VERIFY_RETRY_MS = 300L
+        private const val PHONE_HEARTBEAT_KEY = "SYNC_HEARTBEAT"
         private val VALUE_FIELDS = listOf(
             "boolValue",
             "intValue",

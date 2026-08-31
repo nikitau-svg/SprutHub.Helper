@@ -6,6 +6,7 @@ import io.github.nikitau.spruthubhelper.health.HealthUiState
 import io.github.nikitau.spruthubhelper.phone.PhoneUiState
 import io.github.nikitau.spruthubhelper.presence.PresenceUiState
 import io.github.nikitau.spruthubhelper.presence.PresenceZone
+import io.github.nikitau.spruthubhelper.sprut.HeartbeatProtectionStatus
 
 internal enum class GuidanceAction {
     SAVE_AND_TEST_CONNECTION,
@@ -21,6 +22,7 @@ internal enum class GuidanceAction {
     ENABLE_PHONE_BACKGROUND,
     REQUEST_PHONE_LIVE_MODE,
     REQUEST_PHONE_WATCHDOG,
+    REPAIR_PHONE_PROTECTION,
     OPEN_BATTERY_SETTINGS,
     SYNC_PHONE,
     REQUEST_FOREGROUND_LOCATION,
@@ -165,6 +167,18 @@ internal fun phoneGuidance(
         tone = SetupTone.ATTENTION,
         action = GuidanceAction.ENABLE_PHONE_BACKGROUND,
         actionLabel = "Включить фон",
+    )
+    phone.heartbeatProtection.status in setOf(
+        HeartbeatProtectionStatus.NEEDS_REPAIR,
+        HeartbeatProtectionStatus.CONFLICT,
+        HeartbeatProtectionStatus.ERROR,
+    ) -> SectionGuidance(
+        progress = "Защита требует внимания",
+        title = "Проверьте контроль синхронизации",
+        detail = phone.heartbeatProtection.message,
+        tone = SetupTone.ATTENTION,
+        action = GuidanceAction.REPAIR_PHONE_PROTECTION,
+        actionLabel = "Проверить и восстановить",
     )
     phone.syncSettings.mode == PhoneSyncMode.LIVE && !phone.notificationPermissionGranted -> SectionGuidance(
         progress = "Нужно разрешение Android",

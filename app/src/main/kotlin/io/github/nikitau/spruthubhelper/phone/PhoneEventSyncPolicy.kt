@@ -22,7 +22,7 @@ private val NETWORK_EVENT_SENSORS = eventSensors(
 )
 
 private fun eventSensors(vararg sensors: PhoneSensor): Set<PhoneSensor> =
-    sensors.toSet() + PhoneSensor.LAST_SYNC
+    sensors.toSet() + PhoneSensor.LAST_SYNC + PhoneSensor.SYNC_HEARTBEAT
 
 /**
  * An auditable map between Android callbacks and the phone values they can

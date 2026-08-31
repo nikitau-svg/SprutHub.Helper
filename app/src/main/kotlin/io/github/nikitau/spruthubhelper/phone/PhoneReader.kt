@@ -17,6 +17,7 @@ import io.github.nikitau.spruthubhelper.health.HealthReading
 import java.net.Inet4Address
 import java.time.OffsetDateTime
 import java.time.ZoneId
+import java.util.concurrent.TimeUnit
 import kotlin.math.round
 
 class PhoneReader(private val context: Context) {
@@ -128,6 +129,7 @@ class PhoneReader(private val context: Context) {
         PhoneSensor.TOTAL_STORAGE_GB -> HealthReading(
             numberValue = rounded(storage.totalBytes / BYTES_PER_GIB),
         )
+        PhoneSensor.SYNC_HEARTBEAT -> HealthReading(numberValue = heartbeatMinute().toDouble())
         PhoneSensor.LAST_SYNC -> HealthReading(stringValue = OffsetDateTime.now().toString())
     }
 
@@ -148,3 +150,6 @@ class PhoneReader(private val context: Context) {
         const val BYTES_PER_GIB = 1024.0 * 1024.0 * 1024.0
     }
 }
+
+internal fun heartbeatMinute(epochMs: Long = System.currentTimeMillis()): Long =
+    TimeUnit.MILLISECONDS.toMinutes(epochMs)

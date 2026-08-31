@@ -125,6 +125,7 @@ import io.github.nikitau.spruthubhelper.data.HealthMetric
 import io.github.nikitau.spruthubhelper.data.PanelItem
 import io.github.nikitau.spruthubhelper.data.PanelItemSize
 import io.github.nikitau.spruthubhelper.data.PhonePollInterval
+import io.github.nikitau.spruthubhelper.data.REQUIRED_PHONE_SENSORS
 import io.github.nikitau.spruthubhelper.data.PhoneSensor
 import io.github.nikitau.spruthubhelper.data.PhoneSensorCategory
 import io.github.nikitau.spruthubhelper.data.PhoneSyncMode
@@ -139,6 +140,7 @@ import io.github.nikitau.spruthubhelper.health.HealthUiState
 import io.github.nikitau.spruthubhelper.icons.CustomIconManager
 import io.github.nikitau.spruthubhelper.phone.PhoneUiState
 import io.github.nikitau.spruthubhelper.presence.PresenceUiState
+import io.github.nikitau.spruthubhelper.sprut.HeartbeatProtectionStatus
 import io.github.nikitau.spruthubhelper.tiles.TileInstallStateStore
 import io.github.nikitau.spruthubhelper.widget.SprutAppWidgetProvider
 import java.text.DateFormat
@@ -983,6 +985,7 @@ private fun HealthCard(
                     }
                 },
             )
+
             if (health.binding != null) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("Фоновое обновление каждые ~15 минут", modifier = Modifier.weight(1f))
@@ -1181,6 +1184,7 @@ private fun PhoneCard(
                         GuidanceAction.ENABLE_PHONE_BACKGROUND -> viewModel.setPhoneEnabled(true)
                         GuidanceAction.REQUEST_PHONE_LIVE_MODE -> onRequestLiveMode()
                         GuidanceAction.REQUEST_PHONE_WATCHDOG -> onRequestWatchdog()
+                        GuidanceAction.REPAIR_PHONE_PROTECTION -> viewModel.checkAndRepairPhoneReliability()
                         GuidanceAction.OPEN_BATTERY_SETTINGS -> {
                             context.startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
                         }
@@ -1189,6 +1193,35 @@ private fun PhoneCard(
                     }
                 },
             )
+
+            phone.deviceInspection?.takeIf { it.duplicateCount > 0 }?.let { inspection ->
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = MaterialTheme.colorScheme.errorContainer,
+                ) {
+                    Text(
+                        "Найдены дубли устройства телефона: ${inspection.matchingAccessoryIds.joinToString()}. " +
+                            "Helper не создаст ещё один и не удалит их без подтверждения.",
+                        modifier = Modifier.padding(12.dp),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                    )
+                }
+            }
+            if (
+                phone.binding != null &&
+                phone.heartbeatProtection.status in setOf(
+                    HeartbeatProtectionStatus.NEEDS_REPAIR,
+                    HeartbeatProtectionStatus.CONFLICT,
+                    HeartbeatProtectionStatus.ERROR,
+                )
+            ) {
+                Text(
+                    "Защита требует внимания: ${phone.heartbeatProtection.message}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
 
             if (phone.binding != null) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1261,20 +1294,23 @@ private fun PhoneCard(
                     PhoneSensorCategory.entries.forEach { category ->
                         Text(category.title, color = SprutGreen, fontWeight = FontWeight.SemiBold)
                         PhoneSensor.entries.filter { it.category == category }.forEach { sensor ->
+                            val required = sensor in REQUIRED_PHONE_SENSORS
                             Row(verticalAlignment = Alignment.Top) {
                                 Checkbox(
-                                    checked = sensor in selectedSensors,
+                                    checked = required || sensor in selectedSensors,
                                     onCheckedChange = { checked ->
-                                        val next = if (checked) selectedSensors + sensor else selectedSensors - sensor
-                                        if (next.isNotEmpty()) {
-                                            selectedSensors = next
-                                            viewModel.savePhoneSensors(next)
+                                        if (!required) {
+                                            val next = if (checked) selectedSensors + sensor else selectedSensors - sensor
+                                            if (next.isNotEmpty()) {
+                                                selectedSensors = next
+                                                viewModel.savePhoneSensors(next)
+                                            }
                                         }
                                     },
-                                    enabled = !phone.syncing,
+                                    enabled = !phone.syncing && !required,
                                 )
                                 Column(Modifier.weight(1f).padding(top = 9.dp)) {
-                                    Text(sensor.title)
+                                    Text(if (required) "${sensor.title} · всегда включён" else sensor.title)
                                     Text(
                                         buildString {
                                             append(sensor.description)
@@ -1291,6 +1327,52 @@ private fun PhoneCard(
 
                     HorizontalDivider()
                     Text("Разрешения и надёжность", fontWeight = FontWeight.SemiBold)
+                    ReliabilityRow(
+                        title = "Защита на стороне SprutHub",
+                        ready = phone.heartbeatProtection.ready ||
+                            phone.heartbeatProtection.status == HeartbeatProtectionStatus.PAUSED,
+                        readyText = if (phone.heartbeatProtection.status == HeartbeatProtectionStatus.PAUSED) {
+                            "приостановлена штатно"
+                        } else {
+                            "сценарий активен"
+                        },
+                        missingText = when (phone.heartbeatProtection.status) {
+                            HeartbeatProtectionStatus.NOT_CONFIGURED -> "ещё не настроена"
+                            HeartbeatProtectionStatus.PAUSED -> "приостановлена"
+                            HeartbeatProtectionStatus.CONFLICT -> "конфликт имени"
+                            HeartbeatProtectionStatus.ERROR -> "ошибка проверки"
+                            else -> "нужно восстановление"
+                        },
+                    )
+                    Text(
+                        phone.heartbeatProtection.message,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    phone.heartbeatProtection.notificationServiceCount?.let { count ->
+                        Text(
+                            if (count > 0) {
+                                "Сервисы уведомлений SprutHub: $count"
+                            } else {
+                                "В SprutHub не найден сервис уведомлений: настройте Web Push, Telegram или e-mail"
+                            },
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (count > 0) SprutGreen else MaterialTheme.colorScheme.error,
+                        )
+                    }
+                    OutlinedButton(
+                        onClick = viewModel::checkAndRepairPhoneReliability,
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = !phone.syncing && !phone.reliabilityChecking && phone.binding != null,
+                    ) {
+                        Text(if (phone.reliabilityChecking) "Проверяю…" else "Проверить и восстановить защиту")
+                    }
+                    Text(
+                        "Внешний сервер не нужен: таймер и отправка уведомления выполняются в SprutHub. " +
+                            "Helper периодически проверяет сценарий и восстанавливает его, если приложение может запуститься.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
                             Text("Предупреждать о застывшей синхронизации")

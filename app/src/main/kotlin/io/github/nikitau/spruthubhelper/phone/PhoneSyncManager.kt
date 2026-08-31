@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.PowerManager
+import android.os.SystemClock
 import android.util.Log
 import androidx.core.content.ContextCompat
 import androidx.work.BackoffPolicy
@@ -23,6 +24,10 @@ import io.github.nikitau.spruthubhelper.data.PhoneSyncSettings
 import io.github.nikitau.spruthubhelper.data.SettingsRepository
 import io.github.nikitau.spruthubhelper.diagnostics.DiagnosticCategory
 import io.github.nikitau.spruthubhelper.diagnostics.DiagnosticOutcome
+import io.github.nikitau.spruthubhelper.sprut.HeartbeatProtectionReport
+import io.github.nikitau.spruthubhelper.sprut.HeartbeatProtectionStatus
+import io.github.nikitau.spruthubhelper.sprut.SprutHeartbeatScenarioManager
+import io.github.nikitau.spruthubhelper.sprut.VirtualDeviceInspection
 import io.github.nikitau.spruthubhelper.sprut.VirtualHealthDeviceManager
 import io.github.nikitau.spruthubhelper.sprut.VirtualFieldSpec
 import io.github.nikitau.spruthubhelper.sprut.bindingMatchesFields
@@ -46,10 +51,12 @@ class PhoneSyncManager(
     private val settings: SettingsRepository,
     private val reader: PhoneReader,
     private val virtualDevice: VirtualHealthDeviceManager,
+    private val heartbeatScenario: SprutHeartbeatScenarioManager,
     private val scope: CoroutineScope,
 ) {
     private val runtime = MutableStateFlow(PhoneRuntimeState())
     private val syncMutex = Mutex()
+    private var lastProtectionCheckElapsedMs = 0L
 
     val state: StateFlow<PhoneUiState> = combine(
         settings.selectedPhoneSensors,
@@ -69,6 +76,9 @@ class PhoneSyncManager(
             monitorRunning = live.monitorRunning,
             notificationPermissionGranted = notificationPermissionGranted(),
             batteryOptimizationIgnored = batteryOptimizationIgnored(),
+            deviceInspection = live.deviceInspection,
+            heartbeatProtection = live.heartbeatProtection,
+            reliabilityChecking = live.reliabilityChecking,
             message = live.message,
         )
     }.stateIn(scope, SharingStarted.Eagerly, PhoneUiState())
@@ -82,7 +92,12 @@ class PhoneSyncManager(
         scope.launch {
             if (settings.phoneBinding.first() == null) {
                 val selected = settings.selectedPhoneSensors.first()
-                runCatching { virtualDevice.recoverExisting(phoneVirtualFields(selected)) }
+                runCatching {
+                    virtualDevice.recoverExisting(
+                        fields = phoneVirtualFields(selected),
+                        allowIncomplete = true,
+                    )
+                }
                     .onSuccess { binding ->
                         if (binding != null) {
                             settings.savePhoneBinding(binding)
@@ -92,6 +107,13 @@ class PhoneSyncManager(
                     .onFailure { error ->
                         Log.i(LOG_TAG, "No recoverable phone accessory on startup: ${error.message}")
                     }
+            }
+            settings.phoneBinding.first()?.let { binding ->
+                if (settings.phoneSyncSettings.first().enabled) {
+                    refreshReliabilityInternal(binding, repair = true, force = true)
+                } else {
+                    pauseReliabilityInternal(binding)
+                }
             }
             settings.phoneSyncSettings.distinctUntilChanged().collect { syncSettings ->
                 if (syncSettings.enabled) {
@@ -132,13 +154,18 @@ class PhoneSyncManager(
         val selected = settings.selectedPhoneSensors.first()
         runtime.update { it.copy(syncing = true, message = "Создаю устройство телефона…") }
         val binding = virtualDevice.createOrRecover(roomId, phoneVirtualFields(selected))
-        val published = publishAndPersist(binding)
+        refreshReliabilityInternal(binding, repair = true, force = true)
+        val publishResult = publishAndPersist(binding)
+        if (heartbeatBindingChanged(binding, publishResult.binding)) {
+            refreshReliabilityInternal(publishResult.binding, repair = true, force = true)
+        }
+        refreshDeviceInspection()
         settings.setPhoneEnabled(true)
         schedule()
         runtime.update {
             it.copy(
                 syncing = false,
-                message = "Устройство телефона готово: обновлено $published полей",
+                message = "Устройство телефона готово: обновлено ${publishResult.publishedFields} полей",
             )
         }
         binding
@@ -179,18 +206,31 @@ class PhoneSyncManager(
                     "Выбор показателей изменён. Примените новый состав устройства телефона в SprutHub"
                 }
                 runtime.update { it.copy(syncing = true, message = "Собираю данные телефона…") }
-                val published = publishAndPersist(
+                if (settings.phoneSyncSettings.first().enabled) {
+                    refreshReliabilityInternal(
+                        binding = binding,
+                        repair = true,
+                        force = !fromBackground,
+                    )
+                }
+                val publishResult = publishAndPersist(
                     initialBinding = binding,
                     fields = selectedFields,
                     createIfMissing = !fromBackground,
                 )
+                if (
+                    settings.phoneSyncSettings.first().enabled &&
+                    heartbeatBindingChanged(binding, publishResult.binding)
+                ) {
+                    refreshReliabilityInternal(publishResult.binding, repair = true, force = true)
+                }
                 runtime.update {
                     it.copy(
                         syncing = false,
-                        message = "Телефон синхронизирован: обновлено $published полей",
+                        message = "Телефон синхронизирован: обновлено ${publishResult.publishedFields} полей",
                     )
                 }
-                Log.i(LOG_TAG, "Phone sync completed with $published fields")
+                Log.i(LOG_TAG, "Phone sync completed with ${publishResult.publishedFields} fields")
                 Unit
             }.onSuccess {
                 AppGraph.diagnostics.record(
@@ -224,11 +264,24 @@ class PhoneSyncManager(
             roomId = current.roomId,
             fields = phoneVirtualFields(selected),
         )
-        val published = publishAndPersist(binding)
+        if (settings.phoneSyncSettings.first().enabled) {
+            refreshReliabilityInternal(binding, repair = true, force = true)
+        } else {
+            pauseReliabilityInternal(binding)
+        }
+        val publishResult = publishAndPersist(binding)
+        if (heartbeatBindingChanged(binding, publishResult.binding)) {
+            if (settings.phoneSyncSettings.first().enabled) {
+                refreshReliabilityInternal(publishResult.binding, repair = true, force = true)
+            } else {
+                pauseReliabilityInternal(publishResult.binding)
+            }
+        }
+        refreshDeviceInspection()
         runtime.update {
             it.copy(
                 syncing = false,
-                message = "Состав устройства телефона обновлён: $published полей",
+                message = "Состав устройства телефона обновлён: ${publishResult.publishedFields} полей",
             )
         }
         binding
@@ -239,13 +292,21 @@ class PhoneSyncManager(
     }
 
     suspend fun setEnabled(enabled: Boolean) {
+        val binding = settings.phoneBinding.first()
         if (enabled) {
-            check(settings.phoneBinding.first() != null) { "Сначала создайте устройство телефона в SprutHub" }
+            check(binding != null) { "Сначала создайте устройство телефона в SprutHub" }
             val syncSettings = settings.phoneSyncSettings.first()
             if (syncSettings.mode == PhoneSyncMode.LIVE) {
                 check(notificationPermissionGranted()) {
                     "Для постоянного подключения разрешите уведомления"
                 }
+            }
+        }
+        val protection = binding?.let {
+            if (enabled) {
+                refreshReliabilityInternal(it, repair = true, force = true)
+            } else {
+                pauseReliabilityInternal(it)
             }
         }
         settings.setPhoneEnabled(enabled)
@@ -262,7 +323,14 @@ class PhoneSyncManager(
             PhoneMonitorService.stop(context)
         }
         runtime.update {
-            it.copy(message = if (enabled) "Фоновая синхронизация телефона включена" else "Фоновая синхронизация выключена")
+            it.copy(
+                message = when {
+                    protection?.status == HeartbeatProtectionStatus.ERROR ->
+                        "Синхронизация ${if (enabled) "включена" else "выключена"}, но SprutHub не подтвердил защитный сценарий"
+                    enabled -> "Фоновая синхронизация телефона включена"
+                    else -> "Фоновая синхронизация и тревога SprutHub приостановлены"
+                },
+            )
         }
     }
 
@@ -343,11 +411,105 @@ class PhoneSyncManager(
         runtime.update { it.copy(statusRevision = it.statusRevision + 1) }
     }
 
+    suspend fun checkAndRepairReliability(): Result<HeartbeatProtectionReport> = runCatching {
+        val binding = settings.phoneBinding.first()
+            ?: error("Сначала создайте устройство телефона в SprutHub")
+        runtime.update { it.copy(reliabilityChecking = true, message = "Проверяю защиту и дубли…") }
+        val report = if (settings.phoneSyncSettings.first().enabled) {
+            refreshReliabilityInternal(binding, repair = true, force = true)
+        } else {
+            pauseReliabilityInternal(binding)
+        }
+        runtime.update {
+            it.copy(
+                reliabilityChecking = false,
+                message = report.message,
+            )
+        }
+        report
+    }.onFailure { error ->
+        runtime.update {
+            it.copy(
+                reliabilityChecking = false,
+                message = error.message ?: "Не удалось проверить защиту синхронизации",
+            )
+        }
+    }
+
+    private suspend fun refreshReliabilityInternal(
+        binding: HealthDeviceBinding,
+        repair: Boolean,
+        force: Boolean,
+    ): HeartbeatProtectionReport {
+        val now = SystemClock.elapsedRealtime()
+        if (!force && now - lastProtectionCheckElapsedMs < PROTECTION_CHECK_INTERVAL_MS) {
+            return runtime.value.heartbeatProtection
+        }
+        val inspection = runCatching { virtualDevice.inspect() }
+            .onFailure { Log.w(LOG_TAG, "Virtual phone duplicate inspection failed", it) }
+            .getOrNull()
+        val report = runCatching {
+            if (repair) heartbeatScenario.ensure(binding) else heartbeatScenario.inspect(binding)
+        }.getOrElse { error ->
+            Log.w(LOG_TAG, "SprutHub heartbeat protection check failed", error)
+            HeartbeatProtectionReport(
+                status = HeartbeatProtectionStatus.ERROR,
+                message = error.message ?: "SprutHub не подтвердил служебный сценарий",
+            )
+        }
+        lastProtectionCheckElapsedMs = now
+        runtime.update {
+            it.copy(
+                deviceInspection = inspection ?: it.deviceInspection,
+                heartbeatProtection = report,
+            )
+        }
+        AppGraph.diagnostics.record(
+            category = DiagnosticCategory.SYNC,
+            event = "Защита синхронизации телефона",
+            outcome = if (report.ready) DiagnosticOutcome.SUCCESS else DiagnosticOutcome.FAILED,
+            reason = report.message,
+            details = buildMap {
+                put("сценариев Helper", report.appOwnedScenarioCount.toString())
+                put("дублей аксессуара", inspection?.duplicateCount?.toString() ?: "не проверено")
+            },
+        )
+        return report
+    }
+
+    private suspend fun refreshDeviceInspection() {
+        runCatching { virtualDevice.inspect() }
+            .onSuccess { inspection -> runtime.update { it.copy(deviceInspection = inspection) } }
+            .onFailure { Log.w(LOG_TAG, "Virtual phone duplicate inspection failed", it) }
+    }
+
+    private suspend fun pauseReliabilityInternal(binding: HealthDeviceBinding): HeartbeatProtectionReport {
+        val inspection = runCatching { virtualDevice.inspect() }
+            .onFailure { Log.w(LOG_TAG, "Virtual phone duplicate inspection failed", it) }
+            .getOrNull()
+        val report = runCatching { heartbeatScenario.pause(binding) }.getOrElse { error ->
+            Log.w(LOG_TAG, "SprutHub heartbeat protection could not be paused", error)
+            HeartbeatProtectionReport(
+                status = HeartbeatProtectionStatus.ERROR,
+                message = "Синхронизация выключена, но SprutHub не подтвердил остановку тревоги: " +
+                    (error.message ?: "неизвестная ошибка"),
+            )
+        }
+        lastProtectionCheckElapsedMs = SystemClock.elapsedRealtime()
+        runtime.update {
+            it.copy(
+                deviceInspection = inspection ?: it.deviceInspection,
+                heartbeatProtection = report,
+            )
+        }
+        return report
+    }
+
     private suspend fun publishAndPersist(
         initialBinding: HealthDeviceBinding,
         fields: List<VirtualFieldSpec>? = null,
         createIfMissing: Boolean = false,
-    ): Int {
+    ): PhonePublishResult {
         val selected = settings.selectedPhoneSensors.first()
         val publishFields = fields ?: phoneVirtualFields(selected)
         val readings = reader.read(selected)
@@ -365,7 +527,10 @@ class PhoneSyncManager(
         settings.savePhoneBinding(verifiedBinding)
         settings.markPhoneSynced()
         PhoneSyncWatchdog.onSyncSucceeded(context)
-        return readings.keys.count { key -> verifiedBinding.targets.any { it.key == key } }
+        return PhonePublishResult(
+            binding = verifiedBinding,
+            publishedFields = readings.keys.count { key -> verifiedBinding.targets.any { it.key == key } },
+        )
     }
 
     private fun schedule() {
@@ -396,7 +561,22 @@ class PhoneSyncManager(
     private companion object {
         const val WORK_NAME = "spruthub_phone_sync"
         const val LOG_TAG = "SprutHubPhone"
+        // Slightly below WorkManager's 15-minute cadence so scheduler jitter
+        // cannot postpone a missing-scenario check to the following cycle.
+        const val PROTECTION_CHECK_INTERVAL_MS = 12 * 60 * 1_000L
     }
+}
+
+private data class PhonePublishResult(
+    val binding: HealthDeviceBinding,
+    val publishedFields: Int,
+)
+
+internal fun heartbeatBindingChanged(first: HealthDeviceBinding, second: HealthDeviceBinding): Boolean {
+    fun identity(binding: HealthDeviceBinding): Triple<String, String, String>? = binding.targets
+        .firstOrNull { it.key == PhoneSensor.SYNC_HEARTBEAT.name }
+        ?.let { Triple(binding.accessoryId, it.serviceId, it.characteristicId) }
+    return identity(first) != identity(second)
 }
 
 data class PhoneUiState(
@@ -409,12 +589,18 @@ data class PhoneUiState(
     val monitorRunning: Boolean = false,
     val notificationPermissionGranted: Boolean = false,
     val batteryOptimizationIgnored: Boolean = false,
+    val deviceInspection: VirtualDeviceInspection? = null,
+    val heartbeatProtection: HeartbeatProtectionReport = HeartbeatProtectionReport(),
+    val reliabilityChecking: Boolean = false,
     val message: String = "Не настроено",
 )
 
 private data class PhoneRuntimeState(
     val syncing: Boolean = false,
     val monitorRunning: Boolean = false,
+    val deviceInspection: VirtualDeviceInspection? = null,
+    val heartbeatProtection: HeartbeatProtectionReport = HeartbeatProtectionReport(),
+    val reliabilityChecking: Boolean = false,
     val message: String = "Не настроено",
     val statusRevision: Long = 0,
 )

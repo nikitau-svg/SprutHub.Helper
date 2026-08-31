@@ -10,6 +10,8 @@ import io.github.nikitau.spruthubhelper.phone.PhoneUiState
 import io.github.nikitau.spruthubhelper.presence.PresencePermissionState
 import io.github.nikitau.spruthubhelper.presence.PresenceUiState
 import io.github.nikitau.spruthubhelper.presence.PresenceZone
+import io.github.nikitau.spruthubhelper.sprut.HeartbeatProtectionReport
+import io.github.nikitau.spruthubhelper.sprut.HeartbeatProtectionStatus
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -98,6 +100,25 @@ class SetupGuidanceTest {
 
         assertEquals(GuidanceAction.REQUEST_PHONE_LIVE_MODE, guidance.action)
         assertEquals(SetupTone.ATTENTION, guidance.tone)
+    }
+
+    @Test
+    fun `missing hub protection is surfaced before secondary Android tuning`() {
+        val guidance = phoneGuidance(
+            PhoneUiState(
+                binding = binding,
+                syncSettings = PhoneSyncSettings(enabled = true),
+                heartbeatProtection = HeartbeatProtectionReport(
+                    status = HeartbeatProtectionStatus.NEEDS_REPAIR,
+                    message = "Сценарий удалён",
+                ),
+                notificationPermissionGranted = true,
+                batteryOptimizationIgnored = false,
+            ),
+        )
+
+        assertEquals(GuidanceAction.REPAIR_PHONE_PROTECTION, guidance.action)
+        assertEquals("Сценарий удалён", guidance.detail)
     }
 
     @Test

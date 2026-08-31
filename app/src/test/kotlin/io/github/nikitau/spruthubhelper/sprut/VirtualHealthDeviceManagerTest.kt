@@ -62,4 +62,13 @@ class VirtualHealthDeviceManagerTest {
             ),
         )
     }
+
+    @Test
+    fun reportsDuplicatesWithoutSelectingObjectsForDeletion() {
+        val inspection = VirtualDeviceInspection(listOf("11", "14", "19"))
+
+        assertTrue(inspection.exists)
+        assertTrue(inspection.duplicateCount == 2)
+        assertTrue(inspection.matchingAccessoryIds == listOf("11", "14", "19"))
+    }
 }

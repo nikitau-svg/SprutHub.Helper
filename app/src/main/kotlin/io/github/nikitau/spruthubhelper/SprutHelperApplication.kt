@@ -17,6 +17,7 @@ import io.github.nikitau.spruthubhelper.phone.PhoneReader
 import io.github.nikitau.spruthubhelper.phone.PhoneSyncManager
 import io.github.nikitau.spruthubhelper.presence.PresenceManager
 import io.github.nikitau.spruthubhelper.sprut.SprutCatalogParser
+import io.github.nikitau.spruthubhelper.sprut.SprutHeartbeatScenarioManager
 import io.github.nikitau.spruthubhelper.sprut.SprutRpcClient
 import io.github.nikitau.spruthubhelper.sprut.VirtualHealthDeviceManager
 import io.github.nikitau.spruthubhelper.sprut.VirtualDeviceProfile
@@ -67,6 +68,7 @@ object AppGraph {
         val repositoryClient = SprutRpcClient(appContext)
         val healthClient = SprutRpcClient(appContext)
         val phoneClient = SprutRpcClient(appContext)
+        val heartbeatClient = SprutRpcClient(appContext)
         val presenceClient = SprutRpcClient(appContext)
         repository = SprutRepository(
             settings = settings,
@@ -91,6 +93,7 @@ object AppGraph {
                 client = phoneClient,
                 profile = VirtualDeviceProfile.PHONE,
             ),
+            heartbeatScenario = SprutHeartbeatScenarioManager(settings, heartbeatClient),
             scope = applicationScope,
         )
         presence = PresenceManager(

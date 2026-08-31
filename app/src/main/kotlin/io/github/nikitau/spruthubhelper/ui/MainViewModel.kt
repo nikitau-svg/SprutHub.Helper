@@ -221,6 +221,11 @@ class MainViewModel : ViewModel() {
         phone.setWatchdogEnabled(enabled)
     }
 
+    fun checkAndRepairPhoneReliability() = launchWork(null) {
+        val report = phone.checkAndRepairReliability().getOrThrow()
+        _notice.value = report.message
+    }
+
     fun refreshPhoneStatus() = phone.refreshRuntimeStatus()
 
     fun requestCurrentCoordinates() = launchWork(null) {
