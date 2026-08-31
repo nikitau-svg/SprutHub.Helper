@@ -46,7 +46,19 @@ class ReleaseNotifierTest(unittest.TestCase):
         message = notifier.build_message(release, apk, "a" * 64)
         self.assertIn("SprutHub Helper 0.3.0-beta.7", message)
         self.assertIn("• Исправлена &lt;панель&gt;", message)
-        self.assertLessEqual(len(message), notifier.MAX_TELEGRAM_TEXT)
+        self.assertLessEqual(len(message), notifier.MAX_TELEGRAM_CAPTION)
+
+    def test_encodes_apk_as_multipart_document(self):
+        boundary, payload = notifier.encode_multipart(
+            {"chat_id": "@sprut_test", "caption": "Готово"},
+            "document",
+            "SprutHub.Helper.apk",
+            b"APK-CONTENT",
+        )
+        self.assertIn(f"--{boundary}".encode(), payload)
+        self.assertIn(b'name="document"; filename="SprutHub.Helper.apk"', payload)
+        self.assertIn(b"application/vnd.android.package-archive", payload)
+        self.assertIn(b"APK-CONTENT", payload)
 
 
 if __name__ == "__main__":
