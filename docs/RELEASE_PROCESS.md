@@ -32,7 +32,7 @@ git push -u origin beta
 
 ### Уведомление Telegram после публикации
 
-Workflow `Telegram beta release` запускается только после публикации нумерованного beta-prerelease. Перед отправкой он проверяет, что в релизе ровно один APK, находит соответствующий `.sha256`, скачивает APK и сравнивает его фактическую SHA-256. После проверки в канал уходит одна понятная публикация: краткое описание обновления, APK вложением и кнопка на полные release notes. Draft, стабильный релиз, неполный набор файлов, APK больше лимита Bot API 50 МБ или несовпадение контрольной суммы в канал не публикуются.
+Workflow `Telegram beta release` запускается только после публикации нумерованного beta-prerelease. Перед отправкой он проверяет, что в релизе ровно один APK, находит соответствующий `.sha256`, скачивает APK и сравнивает его фактическую SHA-256. После проверки в канал уходит одна понятная публикация: краткое описание обновления, APK вложением и обычная ссылка в тексте на полные release notes. Inline-клавиатура не добавляется, чтобы Telegram показывал штатную кнопку комментариев. Draft, стабильный релиз, неполный набор файлов, APK больше лимита Bot API 50 МБ или несовпадение контрольной суммы в канал не публикуются.
 
 В **Settings → Secrets and variables → Actions** создаются два repository secret:
 
@@ -90,7 +90,7 @@ export ANDROID_SIGNING_STORE_PASSWORD
 read -r -s ANDROID_SIGNING_KEY_PASSWORD
 export ANDROID_SIGNING_KEY_PASSWORD
 
-gradle --no-daemon :app:clean :app:lintRelease :app:testDebugUnitTest :app:assembleRelease
+./scripts/android-build.sh :app:clean :app:lintRelease :app:testDebugUnitTest :app:assembleRelease
 
 unset ANDROID_SIGNING_STORE_PASSWORD ANDROID_SIGNING_KEY_PASSWORD
 ```

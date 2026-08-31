@@ -3,6 +3,7 @@
 import importlib.util
 from pathlib import Path
 import unittest
+from unittest import mock
 
 
 SCRIPT = Path(__file__).with_name("notify_telegram_release.py")
@@ -41,11 +42,17 @@ class ReleaseNotifierTest(unittest.TestCase):
         release = {
             "tag_name": "v0.3.0-beta.7",
             "body": "- Исправлена <панель>",
+            "html_url": "https://github.com/example/SprutHub.Helper/releases/tag/v0.3.0-beta.7",
         }
         apk = {"name": "SprutHub.Helper.apk"}
         message = notifier.build_message(release, apk, "a" * 64)
         self.assertIn("SprutHub Helper 0.3.0-beta.7", message)
         self.assertIn("• Исправлена &lt;панель&gt;", message)
+        self.assertIn(
+            '<a href="https://github.com/example/SprutHub.Helper/releases/tag/v0.3.0-beta.7">'
+            "Полное описание релиза</a>",
+            message,
+        )
         self.assertLessEqual(len(message), notifier.MAX_TELEGRAM_CAPTION)
 
     def test_encodes_apk_as_multipart_document(self):
@@ -59,6 +66,35 @@ class ReleaseNotifierTest(unittest.TestCase):
         self.assertIn(b'name="document"; filename="SprutHub.Helper.apk"', payload)
         self.assertIn(b"application/vnd.android.package-archive", payload)
         self.assertIn(b"APK-CONTENT", payload)
+
+    def test_sends_release_without_inline_keyboard(self):
+        class SuccessfulResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc_value, traceback):
+                return False
+
+            def read(self):
+                return b'{"ok": true}'
+
+        with mock.patch.object(
+            notifier.urllib.request,
+            "urlopen",
+            return_value=SuccessfulResponse(),
+        ) as urlopen:
+            notifier.send_telegram_document(
+                "test-token",
+                "@sprut_test",
+                '📝 <a href="https://example.test/release">Полное описание релиза</a>',
+                "SprutHub.Helper.apk",
+                b"APK-CONTENT",
+            )
+
+        request = urlopen.call_args.args[0]
+        self.assertIn(b'name="caption"', request.data)
+        self.assertIn(b"https://example.test/release", request.data)
+        self.assertNotIn(b'name="reply_markup"', request.data)
 
 
 if __name__ == "__main__":

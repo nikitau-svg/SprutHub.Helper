@@ -102,6 +102,7 @@ def truncate_notes(notes: str, limit: int = 2300) -> str:
 def build_message(release: dict[str, Any], apk: dict[str, Any], digest: str) -> str:
     tag = str(release["tag_name"])
     version = tag.removeprefix("v")
+    release_url = html.escape(str(release["html_url"]), quote=True)
     notes = truncate_notes(markdown_to_plain(str(release.get("body") or "")), limit=520)
     parts = [
         f"🧪 <b>SprutHub Helper {html.escape(version)}</b>",
@@ -114,6 +115,7 @@ def build_message(release: dict[str, Any], apk: dict[str, Any], digest: str) -> 
             f"📦 <code>{html.escape(str(apk['name']))}</code>",
             f"🔐 SHA-256: <code>{digest[:16]}…</code>",
             "Устанавливается поверх предыдущей beta без сброса настроек.",
+            f'📝 <a href="{release_url}">Полное описание релиза</a>',
         ]
     )
     message = "\n\n".join(parts)
@@ -168,17 +170,12 @@ def send_telegram_document(
     caption: str,
     apk_name: str,
     apk_payload: bytes,
-    release_url: str,
 ) -> None:
-    reply_markup = {
-        "inline_keyboard": [[{"text": "📝 Полное описание релиза", "url": release_url}]]
-    }
     boundary, payload = encode_multipart(
         {
             "chat_id": chat_id,
             "caption": caption,
             "parse_mode": "HTML",
-            "reply_markup": json.dumps(reply_markup, ensure_ascii=False),
         },
         "document",
         apk_name,
@@ -243,7 +240,6 @@ def main() -> int:
         message,
         str(apk["name"]),
         apk_payload,
-        str(release["html_url"]),
     )
     write_summary(f"## Telegram notification sent\n\nAnnounced `{tag}` after verifying its APK checksum.")
     print(f"Telegram notification sent for {tag}")
