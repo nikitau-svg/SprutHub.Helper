@@ -56,6 +56,7 @@ class PhoneSyncManager(
 ) {
     private val runtime = MutableStateFlow(PhoneRuntimeState())
     private val syncMutex = Mutex()
+    private val deviceMutationMutex = Mutex()
     private var lastProtectionCheckElapsedMs = 0L
 
     val state: StateFlow<PhoneUiState> = combine(
@@ -149,10 +150,12 @@ class PhoneSyncManager(
         }
     }
 
-    suspend fun createDevice(roomId: String): Result<HealthDeviceBinding> = runCatching {
+    suspend fun createDevice(roomId: String): Result<HealthDeviceBinding> = runExclusiveDeviceMutation(
+        progressMessage = "Создаю устройство телефона…",
+        failureMessage = "Не удалось создать устройство телефона",
+    ) {
         check(roomId.isNotBlank()) { "Выберите комнату SprutHub" }
         val selected = settings.selectedPhoneSensors.first()
-        runtime.update { it.copy(syncing = true, message = "Создаю устройство телефона…") }
         val binding = virtualDevice.createOrRecover(roomId, phoneVirtualFields(selected))
         refreshReliabilityInternal(binding, repair = true, force = true)
         val publishResult = publishAndPersist(binding)
@@ -162,15 +165,14 @@ class PhoneSyncManager(
         refreshDeviceInspection()
         settings.setPhoneEnabled(true)
         schedule()
+        refreshLiveMonitorAfterBindingChange()
         runtime.update {
             it.copy(
                 syncing = false,
                 message = "Устройство телефона готово: обновлено ${publishResult.publishedFields} полей",
             )
         }
-        binding
-    }.onFailure { error ->
-        runtime.update { it.copy(syncing = false, message = error.message ?: "Не удалось создать устройство телефона") }
+        publishResult.binding
     }
 
     suspend fun syncNow(fromBackground: Boolean = false): Result<Unit> {
@@ -253,43 +255,43 @@ class PhoneSyncManager(
         }
     }
 
-    suspend fun recreateDevice(selectedOverride: Set<PhoneSensor>? = null): Result<HealthDeviceBinding> = runCatching {
-        val current = settings.phoneBinding.first()
-            ?: error("Сначала создайте устройство телефона в SprutHub")
-        val selected = selectedOverride ?: settings.selectedPhoneSensors.first()
-        if (selectedOverride != null) settings.savePhoneSensors(selectedOverride)
-        runtime.update { it.copy(syncing = true, message = "Пересоздаю устройство телефона…") }
-        val binding = virtualDevice.recreate(
-            binding = current,
-            roomId = current.roomId,
-            fields = phoneVirtualFields(selected),
-        )
-        if (settings.phoneSyncSettings.first().enabled) {
-            refreshReliabilityInternal(binding, repair = true, force = true)
-        } else {
-            pauseReliabilityInternal(binding)
-        }
-        val publishResult = publishAndPersist(binding)
-        if (heartbeatBindingChanged(binding, publishResult.binding)) {
-            if (settings.phoneSyncSettings.first().enabled) {
-                refreshReliabilityInternal(publishResult.binding, repair = true, force = true)
-            } else {
-                pauseReliabilityInternal(publishResult.binding)
-            }
-        }
-        refreshDeviceInspection()
-        runtime.update {
-            it.copy(
-                syncing = false,
-                message = "Состав устройства телефона обновлён: ${publishResult.publishedFields} полей",
+    suspend fun recreateDevice(selectedOverride: Set<PhoneSensor>? = null): Result<HealthDeviceBinding> =
+        runExclusiveDeviceMutation(
+            progressMessage = "Пересоздаю устройство телефона…",
+            failureMessage = "Не удалось пересоздать устройство телефона",
+        ) {
+            val current = settings.phoneBinding.first()
+                ?: error("Сначала создайте устройство телефона в SprutHub")
+            val selected = selectedOverride ?: settings.selectedPhoneSensors.first()
+            if (selectedOverride != null) settings.savePhoneSensors(selectedOverride)
+            val binding = virtualDevice.recreate(
+                binding = current,
+                roomId = current.roomId,
+                fields = phoneVirtualFields(selected),
             )
+            if (settings.phoneSyncSettings.first().enabled) {
+                refreshReliabilityInternal(binding, repair = true, force = true)
+            } else {
+                pauseReliabilityInternal(binding)
+            }
+            val publishResult = publishAndPersist(binding)
+            if (heartbeatBindingChanged(binding, publishResult.binding)) {
+                if (settings.phoneSyncSettings.first().enabled) {
+                    refreshReliabilityInternal(publishResult.binding, repair = true, force = true)
+                } else {
+                    pauseReliabilityInternal(publishResult.binding)
+                }
+            }
+            refreshDeviceInspection()
+            refreshLiveMonitorAfterBindingChange()
+            runtime.update {
+                it.copy(
+                    syncing = false,
+                    message = "Состав устройства телефона обновлён: ${publishResult.publishedFields} полей",
+                )
+            }
+            publishResult.binding
         }
-        binding
-    }.onFailure { error ->
-        runtime.update {
-            it.copy(syncing = false, message = error.message ?: "Не удалось пересоздать устройство телефона")
-        }
-    }
 
     suspend fun setEnabled(enabled: Boolean) {
         val binding = settings.phoneBinding.first()
@@ -481,6 +483,32 @@ class PhoneSyncManager(
         runCatching { virtualDevice.inspect() }
             .onSuccess { inspection -> runtime.update { it.copy(deviceInspection = inspection) } }
             .onFailure { Log.w(LOG_TAG, "Virtual phone duplicate inspection failed", it) }
+    }
+
+    private suspend fun refreshLiveMonitorAfterBindingChange() {
+        val syncSettings = settings.phoneSyncSettings.first()
+        if (syncSettings.enabled && syncSettings.mode == PhoneSyncMode.LIVE) {
+            PhoneMonitorService.refresh(context)
+        }
+    }
+
+    private suspend fun <T> runExclusiveDeviceMutation(
+        progressMessage: String,
+        failureMessage: String,
+        block: suspend () -> T,
+    ): Result<T> {
+        if (!deviceMutationMutex.tryLock()) {
+            return Result.failure(IllegalStateException("Изменение устройства уже выполняется — дождитесь завершения"))
+        }
+        runtime.update { it.copy(syncing = true, message = progressMessage) }
+        val result = try {
+            syncMutex.withLock { runCatching { block() } }
+        } finally {
+            deviceMutationMutex.unlock()
+        }
+        return result.onFailure { error ->
+            runtime.update { it.copy(syncing = false, message = error.message ?: failureMessage) }
+        }
     }
 
     private suspend fun pauseReliabilityInternal(binding: HealthDeviceBinding): HeartbeatProtectionReport {

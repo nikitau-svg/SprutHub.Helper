@@ -312,7 +312,7 @@ class SprutHeartbeatScenarioManager(
                 runCatching {
                     val detail = client.call(
                         config,
-                        request("scenario", "get", buildJsonObject { put("index", summary.index) }),
+                        scenarioDetailRequest(summary.index),
                     )
                     findScenario(detail, summary.index) ?: summary
                 }.getOrDefault(summary)
@@ -339,8 +339,8 @@ class SprutHeartbeatScenarioManager(
     private suspend fun loadNotificationServiceCount(
         config: io.github.nikitau.spruthubhelper.data.HubConfig,
     ): Int? = runCatching {
-        val response = client.call(config, request("notification", "list"))
-        listOf("notifications", "notificationServices", "services")
+        val response = client.call(config, notificationServiceListRequest())
+        listOf("extensions", "notifications", "notificationServices", "services")
             .firstNotNullOfOrNull { key -> findArray(response, key) }
             ?.mapNotNull { it as? JsonObject }
             ?.count { it.boolean("active", "enabled") != false }
@@ -368,7 +368,9 @@ class SprutHeartbeatScenarioManager(
             active = objectValue.boolean("active", "enabled"),
             onStart = objectValue.boolean("onStart"),
             type = objectValue.scalar("type"),
-            data = objectValue.scalar("data"),
+            data = scenarioDataText(
+                objectValue.entries.firstOrNull { it.key.equals("data", ignoreCase = true) }?.value,
+            ),
         )
     }
 
@@ -409,7 +411,15 @@ class SprutHeartbeatScenarioManager(
     private fun JsonObject.boolean(vararg keys: String): Boolean? = keys.firstNotNullOfOrNull { expected ->
         entries.firstOrNull { it.key.equals(expected, ignoreCase = true) }
             ?.value
-            ?.let { (it as? JsonPrimitive)?.booleanOrNull }
+            ?.let { value ->
+                (value as? JsonPrimitive)?.let { primitive ->
+                    primitive.booleanOrNull ?: when (primitive.contentOrNull?.lowercase()) {
+                        "1" -> true
+                        "0" -> false
+                        else -> null
+                    }
+                }
+            }
     }
 
     private companion object {
@@ -421,6 +431,28 @@ class SprutHeartbeatScenarioManager(
 
 internal const val PHONE_HEARTBEAT_OWNER_MARKER = "[spruthub-helper:phone-heartbeat:v1]"
 internal const val PHONE_HEARTBEAT_TIMEOUT_MS = 45 * 60 * 1_000L
+
+/** SprutHub omits the block graph unless scenario.get explicitly expands data. */
+internal fun scenarioDetailRequest(index: String): JsonObject = buildJsonObject {
+    put("scenario", buildJsonObject {
+        put("get", buildJsonObject {
+            put("index", index)
+            put("expand", "data")
+        })
+    })
+}
+
+internal fun notificationServiceListRequest(): JsonObject = buildJsonObject {
+    put("extension", buildJsonObject {
+        put("list", buildJsonObject { put("bundleType", "NOTIFICATION") })
+    })
+}
+
+internal fun scenarioDataText(value: JsonElement?): String = when (value) {
+    is JsonPrimitive -> value.contentOrNull.orEmpty()
+    is JsonObject, is JsonArray -> value.toString()
+    else -> ""
+}
 
 internal data class ScenarioRecord(
     val index: String,

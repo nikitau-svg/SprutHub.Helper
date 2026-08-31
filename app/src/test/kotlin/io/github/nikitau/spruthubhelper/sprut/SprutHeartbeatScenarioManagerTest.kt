@@ -4,6 +4,7 @@ import io.github.nikitau.spruthubhelper.data.HealthDeviceBinding
 import io.github.nikitau.spruthubhelper.data.HealthTarget
 import io.github.nikitau.spruthubhelper.data.PhoneSensor
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -50,6 +51,33 @@ class SprutHeartbeatScenarioManagerTest {
         assertEquals(PHONE_HEARTBEAT_TIMEOUT_MS, delay.getValue("time").jsonPrimitive.content.toLong())
         assertEquals("PUSH", notification.getValue("mode").jsonPrimitive.content)
         assertTrue(notifications.any { it.getValue("mode").jsonPrimitive.content == "MESSAGE" })
+    }
+
+    @Test
+    fun `scenario detail request expands block graph`() {
+        val get = scenarioDetailRequest("18")
+            .getValue("scenario").jsonObject
+            .getValue("get").jsonObject
+
+        assertEquals("18", get.getValue("index").jsonPrimitive.content)
+        assertEquals("data", get.getValue("expand").jsonPrimitive.content)
+    }
+
+    @Test
+    fun `expanded scenario data accepts encoded string and json object`() {
+        val data = heartbeatScenarioData(binding, target)
+
+        assertEquals(data.toString(), scenarioDataText(JsonPrimitive(data.toString())))
+        assertEquals(data.toString(), scenarioDataText(data))
+    }
+
+    @Test
+    fun `notification services use extension api supported by current hub`() {
+        val list = notificationServiceListRequest()
+            .getValue("extension").jsonObject
+            .getValue("list").jsonObject
+
+        assertEquals("NOTIFICATION", list.getValue("bundleType").jsonPrimitive.content)
     }
 
     @Test
