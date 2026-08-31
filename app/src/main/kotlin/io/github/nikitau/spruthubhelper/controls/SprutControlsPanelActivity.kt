@@ -140,7 +140,11 @@ class SprutPanelPreviewActivity : ComponentActivity() {
     }
 
     private fun closePreview() {
-        moveTaskToBack(true)
+        startActivity(
+            Intent(Intent.ACTION_MAIN)
+                .addCategory(Intent.CATEGORY_HOME)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+        )
         finish()
     }
 }
