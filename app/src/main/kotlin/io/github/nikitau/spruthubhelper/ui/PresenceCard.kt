@@ -61,8 +61,9 @@ internal fun PresenceCard(
     viewModel: MainViewModel,
     onRequestForegroundLocation: () -> Unit,
     onOpenBackgroundLocationSettings: () -> Unit,
+    expandedByDefault: Boolean = false,
 ) {
-    var expanded by rememberSaveable { mutableStateOf(false) }
+    var expanded by rememberSaveable(expandedByDefault) { mutableStateOf(expandedByDefault) }
     var roomMenu by remember { mutableStateOf(false) }
     var name by rememberSaveable { mutableStateOf("Дом") }
     var latitude by rememberSaveable { mutableStateOf("") }

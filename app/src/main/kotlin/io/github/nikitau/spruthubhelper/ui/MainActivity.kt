@@ -11,10 +11,12 @@ import android.os.Bundle
 import android.provider.Settings
 import android.service.controls.ControlsProviderService
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -33,6 +35,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.BugReport
+import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.DevicesOther
 import androidx.compose.material.icons.rounded.DashboardCustomize
 import androidx.compose.material.icons.rounded.ArrowDownward
@@ -43,6 +48,8 @@ import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.Lightbulb
 import androidx.compose.material.icons.rounded.Image
 import androidx.compose.material.icons.rounded.Lock
+import androidx.compose.material.icons.rounded.LocationOn
+import androidx.compose.material.icons.rounded.Menu
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.PowerSettingsNew
 import androidx.compose.material.icons.rounded.Refresh
@@ -131,6 +138,7 @@ import io.github.nikitau.spruthubhelper.tiles.TileIconResolver
 import io.github.nikitau.spruthubhelper.health.HealthUiState
 import io.github.nikitau.spruthubhelper.icons.CustomIconManager
 import io.github.nikitau.spruthubhelper.phone.PhoneUiState
+import io.github.nikitau.spruthubhelper.presence.PresenceUiState
 import io.github.nikitau.spruthubhelper.tiles.TileInstallStateStore
 import io.github.nikitau.spruthubhelper.widget.SprutAppWidgetProvider
 import java.text.DateFormat
@@ -250,6 +258,9 @@ private fun MainScreen(viewModel: MainViewModel = viewModel()) {
     val screenScope = rememberCoroutineScope()
     var iconTargetId by remember { mutableStateOf<String?>(null) }
     var iconRevision by remember { mutableStateOf(0) }
+    var settingsOpen by rememberSaveable { mutableStateOf(false) }
+    var settingsSectionName by rememberSaveable { mutableStateOf<String?>(null) }
+    val settingsSection = SettingsSection.entries.firstOrNull { it.name == settingsSectionName }
     val healthPermissionLauncher = rememberLauncherForActivityResult(
         PermissionController.createRequestPermissionResultContract(),
     ) { viewModel.onHealthPermissionsChanged() }
@@ -339,14 +350,100 @@ private fun MainScreen(viewModel: MainViewModel = viewModel()) {
         }
     }
 
+    BackHandler(enabled = settingsOpen) {
+        if (settingsSection != null) settingsSectionName = null
+        else settingsOpen = false
+    }
+
+    val requestLiveMode = {
+        if (
+            Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.POST_NOTIFICATIONS,
+            ) == PackageManager.PERMISSION_GRANTED
+        ) {
+            viewModel.setPhoneSyncMode(PhoneSyncMode.LIVE)
+        } else {
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
+    val requestWatchdog = {
+        if (
+            Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.POST_NOTIFICATIONS,
+            ) == PackageManager.PERMISSION_GRANTED
+        ) {
+            viewModel.setPhoneWatchdogEnabled(true)
+        } else {
+            watchdogNotificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
+    val requestForegroundLocation = {
+        locationPermissionLauncher.launch(
+            arrayOf(
+                Manifest.permission.ACCESS_COARSE_LOCATION,
+                Manifest.permission.ACCESS_FINE_LOCATION,
+            ),
+        )
+    }
+    val openBackgroundLocationSettings = {
+        context.startActivity(
+            Intent(
+                Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                Uri.parse("package:${context.packageName}"),
+            ),
+        )
+    }
+
     Scaffold(
         snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
             TopAppBar(
                 title = {
                     Column {
-                        Text("SprutHub Helper", fontWeight = FontWeight.SemiBold)
-                        Text("Устройства Android", style = MaterialTheme.typography.labelMedium)
+                        Text(
+                            when {
+                                !settingsOpen -> "SprutHub Helper"
+                                settingsSection != null -> settingsSection.title
+                                else -> "Настройки"
+                            },
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Text(
+                            when {
+                                !settingsOpen -> "Устройства Android"
+                                settingsSection != null -> settingsSection.description
+                                else -> "Подключение, данные и надёжность"
+                            },
+                            style = MaterialTheme.typography.labelMedium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                },
+                navigationIcon = {
+                    if (settingsOpen) {
+                        IconButton(
+                            onClick = {
+                                if (settingsSection != null) settingsSectionName = null
+                                else settingsOpen = false
+                            },
+                        ) {
+                            Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Назад")
+                        }
+                    }
+                },
+                actions = {
+                    if (!settingsOpen) {
+                        IconButton(onClick = {
+                            settingsSectionName = null
+                            settingsOpen = true
+                        }) {
+                            Icon(Icons.Rounded.Menu, contentDescription = "Открыть настройки")
+                        }
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -356,139 +453,373 @@ private fun MainScreen(viewModel: MainViewModel = viewModel()) {
             )
         },
     ) { padding ->
-        var search by rememberSaveable { mutableStateOf("") }
-        val filtered = remember(ui.catalog.controls, search) {
-            groupControlsByAccessory(ui.catalog.controls).filter { it.matches(search) }
-        }
-        LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(padding),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            item { ConnectionCard(ui, busy, viewModel) }
-            item { HealthCard(health, ui, viewModel) }
-            item {
-                PhoneCard(
-                    phone = phone,
-                    ui = ui,
-                    viewModel = viewModel,
-                    onRequestLiveMode = {
-                        if (
-                            Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
-                            ContextCompat.checkSelfPermission(
-                                context,
-                                Manifest.permission.POST_NOTIFICATIONS,
-                            ) == PackageManager.PERMISSION_GRANTED
-                        ) {
-                            viewModel.setPhoneSyncMode(PhoneSyncMode.LIVE)
-                        } else {
-                            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-                        }
-                    },
-                    onRequestWatchdog = {
-                        if (
-                            Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
-                            ContextCompat.checkSelfPermission(
-                                context,
-                                Manifest.permission.POST_NOTIFICATIONS,
-                            ) == PackageManager.PERMISSION_GRANTED
-                        ) {
-                            viewModel.setPhoneWatchdogEnabled(true)
-                        } else {
-                            watchdogNotificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-                        }
-                    },
-                )
-            }
-            item {
-                PresenceCard(
-                    presence = presence,
-                    ui = ui,
-                    viewModel = viewModel,
-                    onRequestForegroundLocation = {
-                        locationPermissionLauncher.launch(
-                            arrayOf(
-                                Manifest.permission.ACCESS_COARSE_LOCATION,
-                                Manifest.permission.ACCESS_FINE_LOCATION,
-                            ),
-                        )
-                    },
-                    onOpenBackgroundLocationSettings = {
-                        context.startActivity(
-                            Intent(
-                                Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                                Uri.parse("package:${context.packageName}"),
-                            ),
-                        )
-                    },
-                )
-            }
-            item {
-                PanelSummaryCard(
-                    items = ui.panelItems,
-                    controls = ui.catalog.controls,
-                    viewModel = viewModel,
-                )
-            }
-            item {
-                TileSummaryCard(
-                    assignments = ui.assignments,
-                    controls = ui.catalog.controls,
-                    installedSlots = installedTileSlots,
-                    viewModel = viewModel,
-                )
-            }
-            item {
-                Column(Modifier.padding(horizontal = 16.dp)) {
-                    Text("Устройства", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                    Text(
-                        "Добавьте сервисы в панель устройств или назначьте отдельные плитки шторки.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Spacer(Modifier.height(10.dp))
-                    OutlinedTextField(
-                        value = search,
-                        onValueChange = { search = it },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                        label = { Text("Поиск") },
-                        leadingIcon = { Icon(Icons.Rounded.Search, null) },
-                        colors = sprutTextFieldColors(),
-                    )
-                }
-            }
-            if (filtered.isEmpty()) {
-                item {
-                    EmptyCatalogCard(
-                        hasCache = ui.catalog.controls.isNotEmpty(),
-                        onRefresh = viewModel::testConnection,
-                    )
-                }
-            } else {
-                items(filtered, key = AccessoryControlGroup::key) { group ->
-                    AccessoryCard(
-                        group = group,
-                        assignments = ui.assignments,
-                        panelItems = ui.panelItems,
-                        viewModel = viewModel,
-                        iconRevision = iconRevision,
-                        onPickIcon = { controlId ->
-                            iconTargetId = controlId
-                            customIconLauncher.launch("image/*")
-                        },
-                    )
-                }
-            }
-            item { DiagnosticsCard(ui) }
-            item { Spacer(Modifier.height(24.dp)) }
+        if (!settingsOpen) {
+            HomeContent(
+                ui = ui,
+                health = health,
+                phone = phone,
+                presence = presence,
+                installedTileSlots = installedTileSlots,
+                iconRevision = iconRevision,
+                viewModel = viewModel,
+                modifier = Modifier.fillMaxSize().padding(padding),
+                onOpenSettings = { section ->
+                    settingsSectionName = section.name
+                    settingsOpen = true
+                },
+                onPickIcon = { controlId ->
+                    iconTargetId = controlId
+                    customIconLauncher.launch("image/*")
+                },
+            )
+        } else {
+            SettingsContent(
+                selectedSection = settingsSection,
+                ui = ui,
+                busy = busy,
+                health = health,
+                phone = phone,
+                presence = presence,
+                viewModel = viewModel,
+                modifier = Modifier.fillMaxSize().padding(padding),
+                onSelectSection = { settingsSectionName = it.name },
+                onRequestLiveMode = requestLiveMode,
+                onRequestWatchdog = requestWatchdog,
+                onRequestForegroundLocation = requestForegroundLocation,
+                onOpenBackgroundLocationSettings = openBackgroundLocationSettings,
+            )
         }
     }
 }
 
 @Composable
-private fun HealthCard(health: HealthUiState, ui: MainUiState, viewModel: MainViewModel) {
+private fun HomeContent(
+    ui: MainUiState,
+    health: HealthUiState,
+    phone: PhoneUiState,
+    presence: PresenceUiState,
+    installedTileSlots: Set<Int>,
+    iconRevision: Int,
+    viewModel: MainViewModel,
+    modifier: Modifier,
+    onOpenSettings: (SettingsSection) -> Unit,
+    onPickIcon: (String) -> Unit,
+) {
+    var search by rememberSaveable { mutableStateOf("") }
+    val filtered = remember(ui.catalog.controls, search) {
+        groupControlsByAccessory(ui.catalog.controls).filter { it.matches(search) }
+    }
+    val setupItems = buildSetupOverview(ui, health, phone, presence)
+
+    LazyColumn(
+        modifier = modifier,
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        item {
+            SetupOverviewCard(
+                items = setupItems,
+                onOpenSettings = onOpenSettings,
+            )
+        }
+        item {
+            PanelSummaryCard(
+                items = ui.panelItems,
+                controls = ui.catalog.controls,
+                viewModel = viewModel,
+            )
+        }
+        item {
+            TileSummaryCard(
+                assignments = ui.assignments,
+                controls = ui.catalog.controls,
+                installedSlots = installedTileSlots,
+                viewModel = viewModel,
+            )
+        }
+        item {
+            Column(Modifier.padding(horizontal = 16.dp)) {
+                Text("Устройства", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                Text(
+                    "Добавьте сервисы в панель устройств или назначьте отдельные плитки шторки.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(10.dp))
+                OutlinedTextField(
+                    value = search,
+                    onValueChange = { search = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    label = { Text("Поиск") },
+                    leadingIcon = { Icon(Icons.Rounded.Search, null) },
+                    colors = sprutTextFieldColors(),
+                )
+            }
+        }
+        if (filtered.isEmpty()) {
+            item {
+                EmptyCatalogCard(
+                    hasCache = ui.catalog.controls.isNotEmpty(),
+                    onRefresh = viewModel::testConnection,
+                )
+            }
+        } else {
+            items(filtered, key = AccessoryControlGroup::key) { group ->
+                AccessoryCard(
+                    group = group,
+                    assignments = ui.assignments,
+                    panelItems = ui.panelItems,
+                    viewModel = viewModel,
+                    iconRevision = iconRevision,
+                    onPickIcon = { onPickIcon(it) },
+                )
+            }
+        }
+        item { Spacer(Modifier.height(24.dp)) }
+    }
+}
+
+@Composable
+private fun SettingsContent(
+    selectedSection: SettingsSection?,
+    ui: MainUiState,
+    busy: Boolean,
+    health: HealthUiState,
+    phone: PhoneUiState,
+    presence: PresenceUiState,
+    viewModel: MainViewModel,
+    modifier: Modifier,
+    onSelectSection: (SettingsSection) -> Unit,
+    onRequestLiveMode: () -> Unit,
+    onRequestWatchdog: () -> Unit,
+    onRequestForegroundLocation: () -> Unit,
+    onOpenBackgroundLocationSettings: () -> Unit,
+) {
+    if (selectedSection == null) {
+        SettingsHub(
+            ui = ui,
+            health = health,
+            phone = phone,
+            presence = presence,
+            modifier = modifier,
+            onSelectSection = onSelectSection,
+        )
+        return
+    }
+
+    LazyColumn(
+        modifier = modifier,
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        item {
+            when (selectedSection) {
+                SettingsSection.CONNECTION -> ConnectionCard(ui, busy, viewModel, expandedByDefault = true)
+                SettingsSection.HEALTH -> HealthCard(health, ui, viewModel, expandedByDefault = true)
+                SettingsSection.PHONE -> PhoneCard(
+                    phone = phone,
+                    ui = ui,
+                    viewModel = viewModel,
+                    onRequestLiveMode = onRequestLiveMode,
+                    onRequestWatchdog = onRequestWatchdog,
+                    expandedByDefault = true,
+                )
+                SettingsSection.PRESENCE -> PresenceCard(
+                    presence = presence,
+                    ui = ui,
+                    viewModel = viewModel,
+                    onRequestForegroundLocation = onRequestForegroundLocation,
+                    onOpenBackgroundLocationSettings = onOpenBackgroundLocationSettings,
+                    expandedByDefault = true,
+                )
+                SettingsSection.DIAGNOSTICS -> DiagnosticsCard(ui, expandedByDefault = true)
+            }
+        }
+        item { Spacer(Modifier.height(24.dp)) }
+    }
+}
+
+@Composable
+private fun SetupOverviewCard(
+    items: List<SetupOverviewItem>,
+    onOpenSettings: (SettingsSection) -> Unit,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(containerColor = SprutSurfaceElevated),
+    ) {
+        Column(Modifier.padding(18.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Готовность", fontWeight = FontWeight.Bold)
+                    Text(
+                        "Для плиток и панели обязателен только SprutHub. Остальные источники подключаются по желанию.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Icon(Icons.Rounded.Settings, contentDescription = null, tint = SprutGreen)
+            }
+            Spacer(Modifier.height(8.dp))
+            items.forEachIndexed { index, item ->
+                if (index > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                SetupOverviewRow(item = item, onClick = { onOpenSettings(item.section) })
+            }
+        }
+    }
+}
+
+@Composable
+private fun SetupOverviewRow(item: SetupOverviewItem, onClick: () -> Unit) {
+    val statusColor = setupToneColor(item.tone)
+    Row(
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 11.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Surface(
+            shape = CircleShape,
+            color = statusColor.copy(alpha = 0.16f),
+        ) {
+            Icon(
+                item.section.icon(),
+                contentDescription = null,
+                modifier = Modifier.padding(8.dp).size(20.dp),
+                tint = statusColor,
+            )
+        }
+        Spacer(Modifier.size(11.dp))
+        Column(Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(item.section.title, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                Text(item.status, style = MaterialTheme.typography.labelMedium, color = statusColor)
+            }
+            Text(
+                item.detail,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Spacer(Modifier.size(4.dp))
+        Icon(Icons.Rounded.ChevronRight, contentDescription = "Открыть")
+    }
+}
+
+@Composable
+private fun SettingsHub(
+    ui: MainUiState,
+    health: HealthUiState,
+    phone: PhoneUiState,
+    presence: PresenceUiState,
+    modifier: Modifier,
+    onSelectSection: (SettingsSection) -> Unit,
+) {
+    val setupItems = buildSetupOverview(ui, health, phone, presence)
+    val hasDiagnosticErrors = ui.diagnostics.any { it.isError }
+    LazyColumn(
+        modifier = modifier,
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        item {
+            Card(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                shape = RoundedCornerShape(20.dp),
+                colors = CardDefaults.cardColors(containerColor = SprutSurfaceElevated),
+            ) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                    Text("Всё служебное — здесь", fontWeight = FontWeight.Bold)
+                    Text(
+                        "Подключение, разрешения, фоновые режимы и восстановление. Управление устройствами остаётся на главном экране.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+        items(setupItems, key = { it.section.name }) { item ->
+            SettingsEntryCard(
+                section = item.section,
+                status = item.status,
+                statusTone = item.tone,
+                onClick = { onSelectSection(item.section) },
+            )
+        }
+        item {
+            SettingsEntryCard(
+                section = SettingsSection.DIAGNOSTICS,
+                status = if (hasDiagnosticErrors) "Есть ошибки в журнале" else "Журнал и проверка состояния",
+                statusTone = if (hasDiagnosticErrors) SetupTone.ATTENTION else SetupTone.READY,
+                onClick = { onSelectSection(SettingsSection.DIAGNOSTICS) },
+            )
+        }
+        item { Spacer(Modifier.height(24.dp)) }
+    }
+}
+
+@Composable
+private fun SettingsEntryCard(
+    section: SettingsSection,
+    status: String,
+    statusTone: SetupTone,
+    onClick: () -> Unit,
+) {
+    val statusColor = setupToneColor(statusTone)
+    OutlinedCard(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).clickable(onClick = onClick),
+        shape = RoundedCornerShape(18.dp),
+    ) {
+        Row(
+            modifier = Modifier.padding(15.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Surface(shape = CircleShape, color = statusColor.copy(alpha = 0.14f)) {
+                Icon(
+                    section.icon(),
+                    contentDescription = null,
+                    modifier = Modifier.padding(10.dp).size(22.dp),
+                    tint = statusColor,
+                )
+            }
+            Spacer(Modifier.size(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(section.title, fontWeight = FontWeight.SemiBold)
+                Text(
+                    section.description,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(status, style = MaterialTheme.typography.labelMedium, color = statusColor)
+            }
+            Icon(Icons.Rounded.ChevronRight, contentDescription = "Открыть")
+        }
+    }
+}
+
+@Composable
+private fun setupToneColor(tone: SetupTone): Color = when (tone) {
+    SetupTone.READY -> SprutGreen
+    SetupTone.ATTENTION -> MaterialTheme.colorScheme.error
+    SetupTone.OPTIONAL -> MaterialTheme.colorScheme.onSurfaceVariant
+}
+
+private fun SettingsSection.icon(): ImageVector = when (this) {
+    SettingsSection.CONNECTION -> Icons.Rounded.Settings
+    SettingsSection.HEALTH -> Icons.Rounded.Favorite
+    SettingsSection.PHONE -> Icons.Rounded.Smartphone
+    SettingsSection.PRESENCE -> Icons.Rounded.LocationOn
+    SettingsSection.DIAGNOSTICS -> Icons.Rounded.BugReport
+}
+
+@Composable
+private fun HealthCard(
+    health: HealthUiState,
+    ui: MainUiState,
+    viewModel: MainViewModel,
+    expandedByDefault: Boolean = false,
+) {
     val context = LocalContext.current
-    var expanded by rememberSaveable { mutableStateOf(false) }
+    var expanded by rememberSaveable(expandedByDefault) { mutableStateOf(expandedByDefault) }
     var roomMenu by remember { mutableStateOf(false) }
     var confirmRecreate by remember { mutableStateOf(false) }
     var confirmRevoke by remember { mutableStateOf(false) }
@@ -747,9 +1078,10 @@ private fun PhoneCard(
     viewModel: MainViewModel,
     onRequestLiveMode: () -> Unit,
     onRequestWatchdog: () -> Unit,
+    expandedByDefault: Boolean = false,
 ) {
     val context = LocalContext.current
-    var expanded by rememberSaveable { mutableStateOf(false) }
+    var expanded by rememberSaveable(expandedByDefault) { mutableStateOf(expandedByDefault) }
     var roomMenu by remember { mutableStateOf(false) }
     var confirmRecreate by remember { mutableStateOf(false) }
     var selectedRoomId by remember(phone.binding?.roomId, ui.catalog.rooms) {
@@ -1070,8 +1402,13 @@ private fun ReliabilityRow(
 }
 
 @Composable
-private fun ConnectionCard(ui: MainUiState, busy: Boolean, viewModel: MainViewModel) {
-    var expanded by rememberSaveable { mutableStateOf(false) }
+private fun ConnectionCard(
+    ui: MainUiState,
+    busy: Boolean,
+    viewModel: MainViewModel,
+    expandedByDefault: Boolean = false,
+) {
+    var expanded by rememberSaveable(expandedByDefault) { mutableStateOf(expandedByDefault) }
     var mode by remember(ui.config.mode) { mutableStateOf(ui.config.mode) }
     var localUrl by remember(ui.config.localUrl) { mutableStateOf(ui.config.localUrl) }
     var cloudUrl by remember(ui.config.cloudUrl) { mutableStateOf(ui.config.cloudUrl) }
@@ -1772,10 +2109,10 @@ private fun EmptyCatalogCard(hasCache: Boolean, onRefresh: () -> Unit) {
 }
 
 @Composable
-private fun DiagnosticsCard(ui: MainUiState) {
+private fun DiagnosticsCard(ui: MainUiState, expandedByDefault: Boolean = false) {
     val context = LocalContext.current
     val events by AppGraph.diagnostics.events.collectAsState()
-    var expanded by rememberSaveable { mutableStateOf(false) }
+    var expanded by rememberSaveable(expandedByDefault) { mutableStateOf(expandedByDefault) }
     OutlinedCard(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
         shape = RoundedCornerShape(18.dp),
