@@ -3,6 +3,7 @@ package io.github.nikitau.spruthubhelper
 import io.github.nikitau.spruthubhelper.data.ControlBehavior
 import io.github.nikitau.spruthubhelper.data.DeviceKind
 import io.github.nikitau.spruthubhelper.data.SprutControl
+import io.github.nikitau.spruthubhelper.data.buildServiceControlCards
 import io.github.nikitau.spruthubhelper.sprut.SprutCatalogParser
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
@@ -81,6 +82,8 @@ class SprutCatalogParserTest {
                     "characteristics": [
                       {"id": 18, "type": "C_ACTIVE", "control": {"write": true, "value": {"intValue": 1}}},
                       {"id": 20, "type": "C_CURRENT_TEMPERATURE", "control": {"write": false, "value": {"doubleValue": 23.5}}},
+                      {"id": 21, "type": "C_TARGET_HEATER_COOLER_STATE", "name": "Режим",
+                       "control": {"write": true, "value": {"intValue": 2}}},
                       {"id": 19, "type": "C_COOLING_THRESHOLD_TEMPERATURE", "minValue": 17, "maxValue": 30,
                        "control": {"write": true, "value": {"doubleValue": 22.0}}}
                     ]
@@ -98,14 +101,26 @@ class SprutCatalogParserTest {
         assertEquals(DeviceKind.THERMOSTAT, control.kind)
         assertEquals(ControlBehavior.TOGGLE_RANGE, control.behavior)
         assertEquals("18", control.characteristicId)
+        assertEquals("C_ACTIVE", control.characteristicType)
+        assertEquals("C_COOLING_THRESHOLD_TEMPERATURE", control.rangeCharacteristicType)
+        assertEquals("Кондиционер", control.serviceName)
         assertEquals("intValue", control.valueField)
         assertEquals("19", control.rangeCharacteristicId)
         assertEquals("doubleValue", control.rangeValueField)
         assertEquals(true, control.value.boolValue)
         assertEquals(22.0, control.value.numberValue!!, 0.0)
-        val currentTemperature = parsedControls.single { it.behavior == ControlBehavior.SENSOR }
+        val attributes = parsedControls.filter { it.behavior == ControlBehavior.SENSOR }
+        val currentTemperature = attributes.single { it.characteristicId == "20" }
         assertEquals("20", currentTemperature.characteristicId)
+        assertEquals("C_CURRENT_TEMPERATURE", currentTemperature.characteristicType)
         assertEquals(23.5, currentTemperature.value.numberValue!!, 0.0)
+        val writableMode = attributes.single { it.characteristicId == "21" }
+        assertEquals("Режим", writableMode.characteristicName)
+        assertEquals(false, writableMode.writable)
+        assertEquals(
+            listOf("20", "21"),
+            buildServiceControlCards(parsedControls).single().defaultAttributes().map(SprutControl::characteristicId),
+        )
     }
 
     @Test

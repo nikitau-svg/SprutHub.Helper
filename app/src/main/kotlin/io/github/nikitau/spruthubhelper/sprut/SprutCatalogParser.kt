@@ -119,6 +119,10 @@ class SprutCatalogParser {
         val serviceId = service.scalar("id", "sId", "index").ifBlank { serviceIndex.toString() }
         val serviceName = service.scalar("name", "title", "displayName")
         val sourceType = service.scalar("type", "serviceType", "typeName")
+        val servicePrimary = service.booleanScalar("primary") ?: false
+        val linkedServiceIds = service.arrayValue("linkedServices")
+            .orEmpty()
+            .mapNotNull { (it as? JsonPrimitive)?.content }
         val descriptor = listOf(accessoryName, serviceName, sourceType, collectDescriptors(service))
             .joinToString(" ")
             .lowercase()
@@ -164,14 +168,20 @@ class SprutCatalogParser {
                     kind = kind,
                     behavior = ControlBehavior.TOGGLE_RANGE,
                     value = SprutValue(
-                        boolValue = toggle.value.asBoolean(),
-                        numberValue = range.value.asDouble(),
+                        boolValue = toggle.value.asBooleanOrNull(),
+                        numberValue = range.value.numberValue,
                     ),
                     minimum = range.minimum,
                     maximum = range.maximum,
                     step = range.step,
                     unit = range.unit,
                     sourceType = sourceType,
+                    serviceName = serviceName,
+                    characteristicType = toggle.typeName,
+                    characteristicName = toggle.displayName,
+                    rangeCharacteristicType = range.typeName,
+                    servicePrimary = servicePrimary,
+                    linkedServiceIds = linkedServiceIds,
                     valueField = toggle.valueField,
                     rangeValueField = range.valueField,
                 ),
@@ -188,6 +198,9 @@ class SprutCatalogParser {
                             room,
                             kind,
                             sourceType,
+                            serviceName,
+                            servicePrimary,
+                            linkedServiceIds,
                             ControlBehavior.TOGGLE,
                         ),
                     )
@@ -203,6 +216,9 @@ class SprutCatalogParser {
                                 room,
                                 kind,
                                 sourceType,
+                                serviceName,
+                                servicePrimary,
+                                linkedServiceIds,
                                 ControlBehavior.RANGE,
                             ),
                         )
@@ -218,14 +234,24 @@ class SprutCatalogParser {
                             room,
                             kind,
                             sourceType,
+                            serviceName,
+                            servicePrimary,
+                            linkedServiceIds,
                             ControlBehavior.BUTTON,
                         ),
                     )
                 }
             }
         }
-        val sensors = parsed
-            .filter { it.hasValue && !it.writable && !it.isNameMetadata }
+        val actionCharacteristicIds = primaryActions.flatMap { control ->
+            listOfNotNull(control.characteristicId, control.rangeCharacteristicId)
+        }.toSet()
+        val attributes = parsed
+            .filter { characteristic ->
+                characteristic.hasValue &&
+                    !characteristic.isNameMetadata &&
+                    characteristic.id !in actionCharacteristicIds
+            }
             .map { characteristic ->
                 characteristic.toControl(
                     accessoryId,
@@ -235,10 +261,13 @@ class SprutCatalogParser {
                     room,
                     kind,
                     sourceType,
+                    serviceName,
+                    servicePrimary,
+                    linkedServiceIds,
                     ControlBehavior.SENSOR,
-                )
+                ).copy(writable = false)
             }
-        return (primaryActions + sensors).distinctBy(SprutControl::id)
+        return (primaryActions + attributes).distinctBy(SprutControl::id)
     }
 
     private fun ParsedCharacteristic.toControl(
@@ -249,6 +278,9 @@ class SprutCatalogParser {
         room: String,
         kind: DeviceKind,
         sourceType: String,
+        serviceName: String,
+        servicePrimary: Boolean,
+        linkedServiceIds: List<String>,
         behavior: ControlBehavior,
     ) = SprutControl(
         id = "$accessoryId:$serviceId:$id",
@@ -267,6 +299,11 @@ class SprutCatalogParser {
         unit = unit,
         writable = writable,
         sourceType = sourceType,
+        serviceName = serviceName,
+        characteristicType = typeName,
+        characteristicName = displayName,
+        servicePrimary = servicePrimary,
+        linkedServiceIds = linkedServiceIds,
         valueField = valueField,
         rangeValueField = valueField,
     )
@@ -450,6 +487,11 @@ class SprutCatalogParser {
 
     private fun JsonObject.objectValue(name: String): JsonObject? =
         entries.firstOrNull { it.key.equals(name, true) }?.value as? JsonObject
+
+    private fun JsonObject.booleanScalar(name: String): Boolean? =
+        entries.firstOrNull { it.key.equals(name, true) }
+            ?.value
+            ?.let { (it as? JsonPrimitive)?.booleanOrNull }
 
     private fun String.containsAny(vararg values: String): Boolean = values.any(::contains)
 

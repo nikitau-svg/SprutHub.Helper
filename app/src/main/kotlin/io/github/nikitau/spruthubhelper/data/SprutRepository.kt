@@ -185,10 +185,10 @@ class SprutRepository(
     }
 
     suspend fun addPanelItem(controlId: String): Result<Unit> = runCatching {
-        val control = _catalog.value.controls.firstOrNull { it.id == controlId }
+        val card = buildServiceControlCards(_catalog.value.controls).firstOrNull { it.id == controlId }
             ?: error("Устройство не найдено")
-        settings.addPanelItem(controlId)
-        log("${control.title} добавлено в крупную панель")
+        settings.addPanelItem(card.id)
+        log("${card.title} добавлено в панель устройств")
     }
 
     suspend fun removePanelItem(controlId: String): Result<Unit> = runCatching {
@@ -200,6 +200,16 @@ class SprutRepository(
         settings.setPanelItemSize(controlId, size)
         log("Размер элемента крупной панели изменён")
     }
+
+    suspend fun setPanelItemAttributes(controlId: String, attributeControlIds: List<String>?): Result<Unit> =
+        runCatching {
+            val card = buildServiceControlCards(_catalog.value.controls).firstOrNull { it.id == controlId }
+                ?: error("Устройство не найдено")
+            val validIds = card.availableAttributes().mapTo(mutableSetOf(), SprutControl::id)
+            val selected = attributeControlIds?.filter(validIds::contains)?.take(2)
+            settings.setPanelItemAttributes(controlId, selected)
+            log("Показатели карточки обновлены")
+        }
 
     suspend fun movePanelItem(controlId: String, offset: Int): Result<Unit> = runCatching {
         settings.movePanelItem(controlId, offset)
@@ -268,11 +278,8 @@ class SprutRepository(
         currentControls: List<SprutControl>,
     ) {
         val validIds = currentControls.mapTo(mutableSetOf(), SprutControl::id)
-        val assignedIds = (
-            settings.tileAssignments.first().map(TileAssignment::controlId) +
-                settings.panelItems.first().map(PanelItem::controlId)
-            ).distinct()
-        val replacements = assignedIds
+        val tileIds = settings.tileAssignments.first().map(TileAssignment::controlId).distinct()
+        val tileReplacements = tileIds
             .filterNot(validIds::contains)
             .mapNotNull { oldId ->
                 val old = previousControls.firstOrNull { it.id == oldId }
@@ -289,9 +296,46 @@ class SprutRepository(
                 oldId to replacement.id
             }
             .toMap()
-        settings.reconcileTileAssignments(validIds, replacements)
-        settings.reconcilePanelItems(validIds, replacements)
-        replacements.forEach { (oldId, newId) ->
+        settings.reconcileTileAssignments(validIds, tileReplacements)
+
+        val currentCards = buildServiceControlCards(currentControls)
+        val previousCards = buildServiceControlCards(previousControls)
+        val validCardIds = currentCards.mapTo(mutableSetOf(), ServiceControlCard::id)
+        val panelIds = settings.panelItems.first().map(PanelItem::controlId).distinct()
+        val panelReplacements = panelIds
+            .filterNot(validCardIds::contains)
+            .mapNotNull { oldId ->
+                val oldControl = currentControls.firstOrNull { it.id == oldId }
+                    ?: previousControls.firstOrNull { it.id == oldId }
+                val oldCard = previousCards.firstOrNull { it.id == oldId }
+                val accessoryId = oldControl?.accessoryId
+                    ?: oldCard?.accessoryId
+                    ?: oldId.removePrefix("service:").substringBefore(':').takeIf {
+                        oldId.startsWith("service:") && it.isNotBlank()
+                    }
+                    ?: oldId.substringBefore(':').takeIf {
+                        !oldId.startsWith("control:") && oldId.count { character -> character == ':' } >= 2
+                    }
+                    ?: return@mapNotNull null
+                val serviceId = oldControl?.serviceId
+                    ?: oldCard?.serviceId
+                    ?: oldId.removePrefix("service:").substringAfter(':').substringBefore(':').takeIf {
+                        oldId.startsWith("service:") && it.isNotBlank()
+                    }
+                    ?: oldId.substringAfter(':').substringBefore(':').takeIf(String::isNotBlank)
+                val exact = currentCards.firstOrNull {
+                    it.accessoryId == accessoryId && it.serviceId == serviceId
+                }
+                val replacement = exact ?: currentCards
+                    .filter { it.accessoryId == accessoryId }
+                    .maxByOrNull { candidate -> replacementScore(oldControl ?: oldCard?.primaryControl, candidate.primaryControl) }
+                    ?: return@mapNotNull null
+                oldId to replacement.id
+            }
+            .toMap()
+        settings.reconcilePanelItems(validCardIds, panelReplacements)
+
+        (tileReplacements + panelReplacements).forEach { (oldId, newId) ->
             Log.i(LOG_TAG, "Android assignment migrated: $oldId -> $newId")
         }
     }

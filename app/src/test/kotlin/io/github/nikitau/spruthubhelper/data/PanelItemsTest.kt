@@ -40,4 +40,30 @@ class PanelItemsTest {
 
         assertEquals(listOf(PanelItem("current", PanelItemSize.LARGE)), result)
     }
+
+    @Test
+    fun `reconcile migrates raw characteristic selection to service card and keeps attributes`() {
+        val current = listOf(
+            PanelItem(
+                controlId = "11:13:main",
+                size = PanelItemSize.LARGE,
+                attributeControlIds = listOf("11:13:20"),
+            ),
+        )
+
+        val result = reconcilePanelSelection(
+            current = current,
+            validControlIds = setOf("service:11:13"),
+            replacements = mapOf("11:13:main" to "service:11:13"),
+        )
+
+        assertEquals(
+            PanelItem(
+                controlId = "service:11:13",
+                size = PanelItemSize.LARGE,
+                attributeControlIds = listOf("11:13:20"),
+            ),
+            result.single(),
+        )
+    }
 }

@@ -101,10 +101,17 @@ data class SprutValue(
     val numberValue: Double? = null,
     val stringValue: String? = null,
 ) {
-    fun asBoolean(): Boolean = boolValue
+    fun asBooleanOrNull(): Boolean? = boolValue
         ?: numberValue?.let { it > 0.0 }
-        ?: stringValue?.let { it.equals("true", true) || it == "1" || it.equals("on", true) }
-        ?: false
+        ?: stringValue?.let { raw ->
+            when (raw.lowercase()) {
+                "true", "1", "on", "active", "enabled" -> true
+                "false", "0", "off", "inactive", "disabled" -> false
+                else -> null
+            }
+        }
+
+    fun asBoolean(): Boolean = asBooleanOrNull() ?: false
 
     fun asDouble(): Double = numberValue
         ?: if (boolValue == true) 1.0 else 0.0
@@ -129,6 +136,13 @@ data class SprutControl(
     val unit: String = "",
     val writable: Boolean = true,
     val sourceType: String = "",
+    /** Stable SprutHub service metadata used to assemble one logical card. */
+    val serviceName: String = "",
+    val characteristicType: String = "",
+    val characteristicName: String = "",
+    val rangeCharacteristicType: String = "",
+    val servicePrimary: Boolean = false,
+    val linkedServiceIds: List<String> = emptyList(),
     val valueField: String = "boolValue",
     val rangeValueField: String = "doubleValue",
 ) {
@@ -181,8 +195,15 @@ enum class PanelItemSize {
 /** One user-selected item in the app-owned Device Controls panel. */
 @Serializable
 data class PanelItem(
+    /**
+     * Kept under the legacy JSON name for an in-place upgrade. New values are
+     * logical card ids (`service:aId:sId`), while old values may still contain
+     * a raw control id and are migrated after the next catalog refresh.
+     */
     val controlId: String,
     val size: PanelItemSize = PanelItemSize.COMPACT,
+    /** `null` means automatic attributes, an empty list means show none. */
+    val attributeControlIds: List<String>? = null,
 )
 
 internal fun reconcilePanelSelection(

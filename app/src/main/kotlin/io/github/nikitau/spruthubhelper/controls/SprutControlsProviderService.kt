@@ -7,6 +7,7 @@ import android.service.controls.actions.CommandAction
 import android.service.controls.actions.ControlAction
 import android.service.controls.actions.FloatAction
 import io.github.nikitau.spruthubhelper.AppGraph
+import io.github.nikitau.spruthubhelper.data.buildServiceControlCards
 import java.util.concurrent.Flow.Publisher
 import java.util.function.Consumer
 import kotlinx.coroutines.CoroutineScope
@@ -24,15 +25,21 @@ class SprutControlsProviderService : ControlsProviderService() {
 
     override fun createPublisherForAllAvailable(): Publisher<Control> = flow {
         val catalog = repository.refreshIfStale().getOrElse { repository.catalog.value }
-        catalog.controls.forEach { emit(ControlFactory.stateless(this@SprutControlsProviderService, it)) }
+        buildServiceControlCards(catalog.controls).forEach { card ->
+            emit(ControlFactory.stateless(this@SprutControlsProviderService, card.primaryControl))
+        }
     }.asPublisher(scope.coroutineContext)
 
     override fun createPublisherForSuggested(): Publisher<Control> = flow {
         val catalog = repository.refreshIfStale().getOrElse { repository.catalog.value }
         val selectedIds = AppGraph.settings.panelItems.first().map { it.controlId }
+        val cards = buildServiceControlCards(catalog.controls)
+        val cardsById = cards.associateBy { it.id }
         val byId = catalog.controls.associateBy { it.id }
         val suggestions = (
-            selectedIds.mapNotNull(byId::get) + catalog.controls.filterNot { it.id in selectedIds }
+            selectedIds.mapNotNull { selectedId ->
+                cardsById[selectedId]?.primaryControl ?: byId[selectedId]
+            } + cards.map { it.primaryControl }
             ).distinctBy { it.id }.take(6)
         suggestions.forEach { emit(ControlFactory.stateless(this@SprutControlsProviderService, it)) }
     }.asPublisher(scope.coroutineContext)

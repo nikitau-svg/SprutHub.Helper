@@ -23,24 +23,22 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.ArrowBack
-import androidx.compose.material.icons.rounded.Launch
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.automirrored.rounded.Launch
+import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Tune
@@ -84,11 +82,14 @@ import io.github.nikitau.spruthubhelper.data.ConnectionPhase
 import io.github.nikitau.spruthubhelper.data.ControlBehavior
 import io.github.nikitau.spruthubhelper.data.PanelItem
 import io.github.nikitau.spruthubhelper.data.PanelItemSize
+import io.github.nikitau.spruthubhelper.data.ServiceControlCard
 import io.github.nikitau.spruthubhelper.data.SprutControl
+import io.github.nikitau.spruthubhelper.data.buildServiceControlCards
 import io.github.nikitau.spruthubhelper.icons.CustomIconManager
 import io.github.nikitau.spruthubhelper.tiles.TileIconResolver
 import io.github.nikitau.spruthubhelper.ui.MainActivity
 import io.github.nikitau.spruthubhelper.ui.SprutHelperTheme
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /** Custom Android 14+ activity embedded by SystemUI in the Device Controls surface. */
@@ -160,12 +161,21 @@ private fun SprutDevicePanel(
     val connection by repository.connectionStatus.collectAsState()
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
-    var busyControlId by remember { mutableStateOf<String?>(null) }
-    var rangeControl by remember { mutableStateOf<SprutControl?>(null) }
+    var busyCardId by remember { mutableStateOf<String?>(null) }
+    var sentCardId by remember { mutableStateOf<String?>(null) }
+    var rangeCard by remember { mutableStateOf<ServiceControlCard?>(null) }
 
+    val cards = remember(catalog.controls) { buildServiceControlCards(catalog.controls) }
+    val cardsById = remember(cards) { cards.associateBy(ServiceControlCard::id) }
     val controlsById = remember(catalog.controls) { catalog.controls.associateBy(SprutControl::id) }
-    val resolvedItems = remember(panelItems, controlsById) {
-        panelItems.mapNotNull { item -> controlsById[item.controlId]?.let { item to it } }
+    val resolvedItems = remember(panelItems, cardsById, controlsById) {
+        panelItems.mapNotNull { item ->
+            val card = cardsById[item.controlId]
+                ?: controlsById[item.controlId]?.let { oldControl ->
+                    cards.firstOrNull { candidate -> candidate.controls.any { it.id == oldControl.id } }
+                }
+            card?.let { item to it }
+        }.distinctBy { (_, card) -> card.id }
     }
 
     fun showMessage(message: String) {
@@ -189,27 +199,34 @@ private fun SprutDevicePanel(
         )
     }
 
-    fun runCommand(control: SprutControl, command: suspend () -> Result<Unit>) {
+    fun runCommand(card: ServiceControlCard, control: SprutControl, command: suspend () -> Result<Unit>) {
         authorize(control) {
             scope.launch {
-                busyControlId = control.id
-                command()
-                    .onSuccess { showMessage("${control.title}: команда отправлена") }
-                    .onFailure { showMessage(it.message ?: "Не удалось выполнить команду") }
-                busyControlId = null
+                busyCardId = card.id
+                val result = command()
+                busyCardId = null
+                result.onSuccess {
+                    sentCardId = card.id
+                    showMessage("${card.title}: команда отправлена")
+                    scope.launch {
+                        delay(1_600)
+                        if (sentCardId == card.id) sentCardId = null
+                    }
+                }.onFailure { showMessage(it.message ?: "Не удалось выполнить команду") }
             }
         }
     }
 
-    fun primaryAction(control: SprutControl) {
+    fun primaryAction(card: ServiceControlCard) {
+        val control = card.primaryControl
         when (control.behavior) {
             ControlBehavior.TOGGLE,
-            ControlBehavior.TOGGLE_RANGE -> runCommand(control) {
+            ControlBehavior.TOGGLE_RANGE -> runCommand(card, control) {
                 repository.setBoolean(control.id, !control.value.asBoolean())
             }
-            ControlBehavior.BUTTON -> runCommand(control) { repository.execute(control.id) }
-            ControlBehavior.RANGE -> rangeControl = control
-            ControlBehavior.SENSOR -> showMessage("${control.title}: ${control.displayValue}")
+            ControlBehavior.BUTTON -> runCommand(card, control) { repository.execute(control.id) }
+            ControlBehavior.RANGE -> rangeCard = card
+            ControlBehavior.SENSOR -> showMessage("${card.title}: ${card.headlineValue()}")
         }
     }
 
@@ -261,19 +278,20 @@ private fun SprutDevicePanel(
                     ) {
                         items(
                             items = resolvedItems,
-                            key = { (_, control) -> control.id },
+                            key = { (_, card) -> card.id },
                             span = { (item, _) ->
                                 GridItemSpan(
                                     if (item.size == PanelItemSize.LARGE && maxLineSpan > 1) 2 else 1,
                                 )
                             },
-                        ) { (item, control) ->
-                            ControlBubble(
+                        ) { (item, card) ->
+                            ServiceGlassCard(
                                 item = item,
-                                control = control,
-                                busy = busyControlId == control.id,
-                                onClick = { primaryAction(control) },
-                                onAdjust = { rangeControl = control },
+                                card = card,
+                                busy = busyCardId == card.id,
+                                sent = sentCardId == card.id,
+                                onClick = { primaryAction(card) },
+                                onAdjust = { rangeCard = card },
                             )
                         }
                     }
@@ -281,7 +299,7 @@ private fun SprutDevicePanel(
             }
             Spacer(Modifier.height(12.dp))
             OutlinedButton(onClick = onOpenApp, modifier = Modifier.fillMaxWidth()) {
-                Icon(Icons.Rounded.Launch, null)
+                Icon(Icons.AutoMirrored.Rounded.Launch, null)
                 Spacer(Modifier.size(8.dp))
                 Text(if (showBack) "Готово" else "Открыть SprutHub Helper")
             }
@@ -292,13 +310,14 @@ private fun SprutDevicePanel(
         )
     }
 
-    rangeControl?.let { control ->
+    rangeCard?.let { card ->
+        val control = card.primaryControl
         RangeDialog(
             control = control,
-            onDismiss = { rangeControl = null },
+            onDismiss = { rangeCard = null },
             onConfirm = { value ->
-                rangeControl = null
-                runCommand(control) { repository.setRange(control.id, value.toDouble()) }
+                rangeCard = null
+                runCommand(card, control) { repository.setRange(control.id, value.toDouble()) }
             },
         )
     }
@@ -318,7 +337,7 @@ private fun GlassBackground(content: @Composable BoxScope.() -> Unit) {
         Canvas(Modifier.fillMaxSize()) {
             drawCircle(
                 brush = Brush.radialGradient(
-                    listOf(Color(0x6672DDB2), Color.Transparent),
+                    listOf(Color(0x4D72DDB2), Color.Transparent),
                     center = Offset(size.width * 0.14f, size.height * 0.18f),
                     radius = size.minDimension * 0.55f,
                 ),
@@ -327,7 +346,7 @@ private fun GlassBackground(content: @Composable BoxScope.() -> Unit) {
             )
             drawCircle(
                 brush = Brush.radialGradient(
-                    listOf(Color(0x55416DFF), Color.Transparent),
+                    listOf(Color(0x3D5FA889), Color.Transparent),
                     center = Offset(size.width * 0.88f, size.height * 0.72f),
                     radius = size.minDimension * 0.62f,
                 ),
@@ -349,10 +368,10 @@ private fun PanelHeader(
 ) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         if (showBack) {
-            IconButton(onClick = onBack) { Icon(Icons.Rounded.ArrowBack, "Назад") }
+            IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Назад") }
         }
         Column(Modifier.weight(1f)) {
-            Text("Крупная панель", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+            Text("Панель устройств", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
             Text(
                 connectionText,
                 maxLines = 1,
@@ -371,101 +390,171 @@ private fun PanelHeader(
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun ControlBubble(
+private fun ServiceGlassCard(
     item: PanelItem,
-    control: SprutControl,
+    card: ServiceControlCard,
     busy: Boolean,
+    sent: Boolean,
     onClick: () -> Unit,
     onAdjust: () -> Unit,
 ) {
     val context = LocalContext.current
-    val active = control.behavior in setOf(ControlBehavior.TOGGLE, ControlBehavior.TOGGLE_RANGE) &&
-        control.value.asBoolean()
-    val customBitmap = remember(control.id) { CustomIconManager(context).loadBitmap(control.id) }
-    val supportsRange = control.behavior == ControlBehavior.RANGE || control.behavior == ControlBehavior.TOGGLE_RANGE
-    val diameter = if (item.size == PanelItemSize.LARGE) 238.dp else 180.dp
+    val control = card.primaryControl
+    val active = card.isActive == true
+    val attributes = card.selectedAttributes(item)
+    val customBitmap = remember(card.id, control.id) {
+        val icons = CustomIconManager(context)
+        icons.loadBitmap(card.id) ?: icons.loadBitmap(control.id)
+    }
+    val shape = RoundedCornerShape(if (item.size == PanelItemSize.LARGE) 30.dp else 26.dp)
+    val subtitle = listOf(card.serviceName, card.room)
+        .filter(String::isNotBlank)
+        .distinctBy { it.lowercase() }
+        .joinToString(" · ")
 
-    Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth(if (item.size == PanelItemSize.LARGE) 0.72f else 1f)
-                .widthIn(max = diameter)
-                .aspectRatio(1f)
-                .clip(CircleShape)
-                .background(
-                    Brush.radialGradient(
-                        colors = if (active) {
-                            listOf(Color(0xAA28765C), Color(0x99304E45), Color(0x8831423E))
-                        } else {
-                            listOf(Color(0x33FFFFFF), Color(0x1AFFFFFF), Color(0x242A3B37))
-                        },
-                    ),
-                )
-                .border(BorderStroke(1.dp, Color.White.copy(alpha = if (active) 0.35f else 0.18f)), CircleShape)
-                .combinedClickable(
-                    enabled = !busy,
-                    onClick = onClick,
-                    onLongClick = if (supportsRange) onAdjust else null,
-                )
-                .padding(if (item.size == PanelItemSize.LARGE) 26.dp else 18.dp),
-            contentAlignment = Alignment.Center,
-        ) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                if (busy) {
-                    CircularProgressIndicator(Modifier.size(if (item.size == PanelItemSize.LARGE) 54.dp else 42.dp))
-                } else if (customBitmap != null) {
-                    Image(
-                        bitmap = customBitmap.asImageBitmap(),
-                        contentDescription = null,
-                        modifier = Modifier.size(if (item.size == PanelItemSize.LARGE) 70.dp else 52.dp),
-                        contentScale = ContentScale.Fit,
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(if (item.size == PanelItemSize.LARGE) 156.dp else 148.dp)
+            .clip(shape)
+            .background(
+                Brush.linearGradient(
+                    colors = if (active) {
+                        listOf(Color(0x73346756), Color(0x4D284B40), Color(0x383C4B46))
+                    } else {
+                        listOf(Color(0x24FFFFFF), Color(0x14FFFFFF), Color(0x2424332F))
+                    },
+                ),
+            )
+            .border(
+                BorderStroke(1.dp, Color.White.copy(alpha = if (active) 0.34f else 0.16f)),
+                shape,
+            )
+            .combinedClickable(
+                enabled = !busy,
+                onClick = onClick,
+                onLongClick = if (card.supportsRange) onAdjust else null,
+            )
+            .padding(14.dp),
+    ) {
+        Column(Modifier.fillMaxSize()) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(Color.White.copy(alpha = if (active) 0.14f else 0.08f)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    if (busy) {
+                        CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
+                    } else if (customBitmap != null) {
+                        Image(
+                            bitmap = customBitmap.asImageBitmap(),
+                            contentDescription = null,
+                            modifier = Modifier.size(30.dp),
+                            contentScale = ContentScale.Fit,
+                        )
+                    } else {
+                        Icon(
+                            painter = painterResource(TileIconResolver.resource(control.kind)),
+                            contentDescription = null,
+                            modifier = Modifier.size(27.dp),
+                            tint = if (active) Color(0xFF9BF2CF) else Color.White,
+                        )
+                    }
+                }
+                Spacer(Modifier.size(10.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        card.title,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
                     )
-                } else {
+                    if (subtitle.isNotBlank()) {
+                        Text(
+                            subtitle,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                if (sent) {
                     Icon(
-                        painter = painterResource(TileIconResolver.resource(control.kind)),
-                        contentDescription = null,
-                        modifier = Modifier.size(if (item.size == PanelItemSize.LARGE) 66.dp else 48.dp),
-                        tint = if (active) Color(0xFF9BF2CF) else Color.White,
+                        Icons.Rounded.CheckCircle,
+                        "Команда отправлена",
+                        modifier = Modifier.size(19.dp),
+                        tint = Color(0xFF9BF2CF),
                     )
                 }
-                Spacer(Modifier.height(10.dp))
-                Text(
-                    control.title,
-                    maxLines = if (item.size == PanelItemSize.LARGE) 2 else 1,
-                    overflow = TextOverflow.Ellipsis,
-                    textAlign = TextAlign.Center,
-                    style = if (item.size == PanelItemSize.LARGE) {
-                        MaterialTheme.typography.titleLarge
-                    } else {
-                        MaterialTheme.typography.titleMedium
-                    },
-                    fontWeight = FontWeight.SemiBold,
-                )
-                Text(
-                    control.displayValue,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = if (active) Color(0xFFB8F6DC) else MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                if (card.supportsRange) {
+                    Icon(
+                        Icons.Rounded.Tune,
+                        "Удерживайте для регулировки",
+                        modifier = Modifier.padding(start = 5.dp).size(18.dp),
+                        tint = Color.White.copy(alpha = 0.68f),
+                    )
+                }
+                if (control.requiresAuthentication()) {
+                    Icon(
+                        Icons.Rounded.Lock,
+                        "Требуется разблокировка",
+                        modifier = Modifier.padding(start = 5.dp).size(17.dp),
+                        tint = Color.White.copy(alpha = 0.62f),
+                    )
+                }
             }
-            if (control.requiresAuthentication()) {
-                Icon(
-                    Icons.Rounded.Lock,
-                    "Требуется разблокировка",
-                    modifier = Modifier.align(Alignment.TopStart).size(18.dp),
-                    tint = Color.White.copy(alpha = 0.68f),
-                )
-            }
-            if (supportsRange) {
-                Icon(
-                    Icons.Rounded.Tune,
-                    "Удерживайте для регулировки",
-                    modifier = Modifier.align(Alignment.TopEnd).size(20.dp),
-                    tint = Color.White.copy(alpha = 0.72f),
-                )
+            Spacer(Modifier.height(6.dp))
+            Text(
+                if (busy) "Отправляем…" else card.headlineValue(),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                color = if (active) Color(0xFFB8F6DC) else Color.White,
+            )
+            if (attributes.isNotEmpty()) {
+                Spacer(Modifier.height(5.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    attributes.forEach { attribute ->
+                        AttributePill(
+                            label = card.attributeLabel(attribute),
+                            value = card.attributeValue(attribute),
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                }
             }
         }
+    }
+}
+
+@Composable
+private fun AttributePill(label: String, value: String, modifier: Modifier = Modifier) {
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(Color.White.copy(alpha = 0.065f))
+            .padding(horizontal = 8.dp, vertical = 3.dp),
+    ) {
+        Text(
+            label,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            value,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            style = MaterialTheme.typography.bodySmall,
+            fontWeight = FontWeight.Medium,
+        )
     }
 }
 
@@ -484,7 +573,7 @@ private fun EmptyPanel(modifier: Modifier, onOpenApp: () -> Unit) {
             Text("Панель пока пустая", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(8.dp))
             Text(
-                "Добавьте устройства в разделе «Крупная панель» приложения.",
+                "Добавьте сервисы в разделе «Панель устройств» приложения.",
                 textAlign = TextAlign.Center,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

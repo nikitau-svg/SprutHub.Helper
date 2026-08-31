@@ -18,6 +18,8 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -120,7 +122,9 @@ import io.github.nikitau.spruthubhelper.data.PhoneSensor
 import io.github.nikitau.spruthubhelper.data.PhoneSensorCategory
 import io.github.nikitau.spruthubhelper.data.PhoneSyncMode
 import io.github.nikitau.spruthubhelper.data.SprutControl
+import io.github.nikitau.spruthubhelper.data.ServiceControlCard
 import io.github.nikitau.spruthubhelper.data.TileAssignment
+import io.github.nikitau.spruthubhelper.data.buildServiceControlCards
 import io.github.nikitau.spruthubhelper.data.groupControlsByAccessory
 import io.github.nikitau.spruthubhelper.tiles.TileComponents
 import io.github.nikitau.spruthubhelper.tiles.TileIconResolver
@@ -306,8 +310,11 @@ private fun MainScreen(viewModel: MainViewModel = viewModel()) {
     }
 
     LaunchedEffect(viewModel) {
-        viewModel.panelAddRequests.collect { controlId ->
-            val control = viewModel.uiState.value.catalog.controls.firstOrNull { it.id == controlId }
+        viewModel.panelAddRequests.collect { cardId ->
+            val controls = viewModel.uiState.value.catalog.controls
+            val cards = buildServiceControlCards(controls)
+            val control = cards.firstOrNull { it.id == cardId }?.primaryControl
+                ?: controls.firstOrNull { it.id == cardId }
             if (control != null && DevicePanelSupport.hasSystemControls(context)) {
                 ControlsProviderService.requestAddControl(
                     context,
@@ -414,7 +421,7 @@ private fun MainScreen(viewModel: MainViewModel = viewModel()) {
                 Column(Modifier.padding(horizontal = 16.dp)) {
                     Text("Устройства", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
                     Text(
-                        "Добавьте элементы в крупную панель или назначьте отдельные плитки шторки.",
+                        "Добавьте сервисы в панель устройств или назначьте отдельные плитки шторки.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -1216,6 +1223,7 @@ private fun StatusDot(phase: ConnectionPhase) {
     Surface(modifier = Modifier.size(12.dp), shape = CircleShape, color = color) {}
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun PanelSummaryCard(
     items: List<PanelItem>,
@@ -1223,7 +1231,13 @@ private fun PanelSummaryCard(
     viewModel: MainViewModel,
 ) {
     val context = LocalContext.current
-    val names = controls.associateBy(SprutControl::id)
+    val cards = remember(controls) { buildServiceControlCards(controls) }
+    val cardsById = remember(cards) { cards.associateBy(ServiceControlCard::id) }
+    val controlsById = remember(controls) { controls.associateBy(SprutControl::id) }
+    fun resolveCard(item: PanelItem): ServiceControlCard? = cardsById[item.controlId]
+        ?: controlsById[item.controlId]?.let { oldControl ->
+            cards.firstOrNull { card -> card.controls.any { it.id == oldControl.id } }
+        }
     val hasEmbeddedPanel = remember { DevicePanelSupport.hasEmbeddedPanel(context) }
     val hasSystemControls = remember { DevicePanelSupport.hasSystemControls(context) }
     var expanded by rememberSaveable { mutableStateOf(items.size <= 4) }
@@ -1240,7 +1254,7 @@ private fun PanelSummaryCard(
                 }
                 Spacer(Modifier.size(10.dp))
                 Column(Modifier.weight(1f)) {
-                    Text("Крупная панель", fontWeight = FontWeight.Bold)
+                    Text("Панель устройств", fontWeight = FontWeight.Bold)
                     Text(
                         when {
                             hasEmbeddedPanel -> "Раскрытая Device Controls с нашим glassmorphism-интерфейсом"
@@ -1251,7 +1265,7 @@ private fun PanelSummaryCard(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                Text("${items.size}/24", style = MaterialTheme.typography.labelLarge)
+                Text("${items.size}/48", style = MaterialTheme.typography.labelLarge)
                 if (items.isNotEmpty()) {
                     IconButton(onClick = { expanded = !expanded }) {
                         Icon(if (expanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, null)
@@ -1261,7 +1275,7 @@ private fun PanelSummaryCard(
 
             Text(
                 if (hasEmbeddedPanel) {
-                    "Android 14+ сможет встроить наш экран. Компактный блок в шторке всё равно оформляет Samsung, Xiaomi или другая оболочка."
+                    "Android 14+ сможет встроить наш экран. Одна карточка здесь соответствует одному сервису SprutHub, а его показатели собираются внутри."
                 } else {
                     "Точный вид и место панели зависят от производителя. Предпросмотр работает даже если оболочка не показывает панель в шторке."
                 },
@@ -1280,7 +1294,7 @@ private fun PanelSummaryCard(
 
             if (items.isEmpty()) {
                 Text(
-                    "Пока пусто. Нажмите «В крупную панель» у нужных устройств ниже.",
+                    "Пока пусто. Нажмите «В панель устройств» у нужных сервисов ниже.",
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
@@ -1288,19 +1302,20 @@ private fun PanelSummaryCard(
             AnimatedVisibility(expanded && items.isNotEmpty()) {
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     items.forEachIndexed { index, item ->
-                        val control = names[item.controlId]
+                        val card = resolveCard(item)
                         if (index > 0) HorizontalDivider(Modifier.padding(vertical = 4.dp))
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
                                 Text(
-                                    control?.title ?: "Недоступное устройство",
+                                    card?.title ?: "Недоступное устройство",
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
                                 )
                                 Text(
                                     listOfNotNull(
-                                        control?.room,
-                                        if (item.size == PanelItemSize.LARGE) "крупный элемент" else "обычный элемент",
+                                        card?.serviceName?.takeIf(String::isNotBlank) ?: card?.serviceType,
+                                        card?.room,
+                                        if (item.size == PanelItemSize.LARGE) "широкая" else "компактная",
                                     ).filter(String::isNotBlank).joinToString(" · "),
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1314,6 +1329,48 @@ private fun PanelSummaryCard(
                                 onClick = { viewModel.movePanelItem(item.controlId, 1) },
                                 enabled = index < items.lastIndex,
                             ) { Icon(Icons.Rounded.ArrowDownward, "Ниже") }
+                        }
+                        if (card != null && card.availableAttributes().isNotEmpty()) {
+                            val available = card.availableAttributes()
+                            val availableIds = available.mapTo(mutableSetOf(), SprutControl::id)
+                            val selectedIds = (
+                                item.attributeControlIds
+                                    ?: card.defaultAttributes().map(SprutControl::id)
+                                ).filter(availableIds::contains)
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    "Показатели · до 2",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                if (item.attributeControlIds != null) {
+                                    TextButton(
+                                        onClick = { viewModel.setPanelItemAttributes(card.id, null) },
+                                    ) { Text("Авто") }
+                                }
+                            }
+                            FlowRow(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalArrangement = Arrangement.spacedBy(4.dp),
+                            ) {
+                                available.forEach { attribute ->
+                                    val selected = attribute.id in selectedIds
+                                    FilterChip(
+                                        selected = selected,
+                                        enabled = selected || selectedIds.size < 2,
+                                        onClick = {
+                                            val next = if (selected) {
+                                                selectedIds - attribute.id
+                                            } else {
+                                                selectedIds + attribute.id
+                                            }
+                                            viewModel.setPanelItemAttributes(card.id, next)
+                                        },
+                                        label = { Text(card.attributeLabel(attribute)) },
+                                    )
+                                }
+                            }
                         }
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             TextButton(
@@ -1329,7 +1386,7 @@ private fun PanelSummaryCard(
                                 },
                                 modifier = Modifier.weight(1f),
                             ) {
-                                Text(if (item.size == PanelItemSize.LARGE) "Сделать обычным" else "Сделать крупным")
+                                Text(if (item.size == PanelItemSize.LARGE) "Сделать компактной" else "Сделать широкой")
                             }
                             TextButton(
                                 onClick = { viewModel.removePanelItem(item.controlId) },
@@ -1338,7 +1395,7 @@ private fun PanelSummaryCard(
                         }
                     }
                     OutlinedButton(onClick = { confirmClear = true }, modifier = Modifier.fillMaxWidth()) {
-                        Text("Очистить крупную панель")
+                        Text("Очистить панель устройств")
                     }
                 }
             }
@@ -1348,7 +1405,7 @@ private fun PanelSummaryCard(
     if (confirmClear) {
         AlertDialog(
             onDismissRequest = { confirmClear = false },
-            title = { Text("Очистить крупную панель?") },
+            title = { Text("Очистить панель устройств?") },
             text = { Text("Устройства SprutHub и отдельные плитки шторки не затрагиваются.") },
             confirmButton = {
                 TextButton(onClick = {
@@ -1478,19 +1535,25 @@ private fun AccessoryCard(
                     Text(
                         listOf(
                             group.room,
-                            if (group.controls.size > 1) "${group.controls.size} действия" else group.controls.single().displayValue,
+                            if (group.serviceCards.size > 1) {
+                                "${group.serviceCards.size} сервиса"
+                            } else {
+                                group.serviceCards.single().headlineValue()
+                            },
                         ).filter(String::isNotBlank).joinToString(" · "),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             }
-            group.controls.forEachIndexed { index, control ->
-                if (index > 0 || group.controls.size > 1) HorizontalDivider()
+            group.serviceCards.forEachIndexed { index, card ->
+                val control = card.primaryControl
+                if (index > 0 || group.serviceCards.size > 1) HorizontalDivider()
                 ControlActions(
+                    card = card,
                     control = control,
-                    serviceLabel = group.serviceLabel(control),
-                    showServiceLabel = group.controls.size > 1 || control.subtitle.isNotBlank(),
+                    serviceLabel = group.serviceLabel(card),
+                    showServiceLabel = group.serviceCards.size > 1 || card.serviceName.isNotBlank(),
                     assignments = assignments,
                     panelItems = panelItems,
                     viewModel = viewModel,
@@ -1504,6 +1567,7 @@ private fun AccessoryCard(
 
 @Composable
 private fun ControlActions(
+    card: ServiceControlCard,
     control: SprutControl,
     serviceLabel: String,
     showServiceLabel: Boolean,
@@ -1520,14 +1584,17 @@ private fun ControlActions(
         mutableStateOf(iconManager.hasIcon(control.id))
     }
     val assignedSlot = assignments.firstOrNull { it.controlId == control.id }?.slot
-    val inPanel = panelItems.any { it.controlId == control.id }
+    val selectedPanelItem = panelItems.firstOrNull { item ->
+        item.controlId == card.id || card.controls.any { it.id == item.controlId }
+    }
+    val inPanel = selectedPanelItem != null
     val firstFreeSlot = (1..12).firstOrNull { slot -> assignments.none { it.slot == slot } }
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         if (showServiceLabel) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(serviceLabel, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
                 Text(
-                    control.displayValue,
+                    card.headlineValue(),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -1536,11 +1603,11 @@ private fun ControlActions(
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(
                     onClick = {
-                        if (inPanel) viewModel.removePanelItem(control.id)
-                        else viewModel.addPanelItem(control.id)
+                        if (selectedPanelItem != null) viewModel.removePanelItem(selectedPanelItem.controlId)
+                        else viewModel.addPanelItem(card.id)
                     },
                     modifier = Modifier.weight(1f),
-                ) { Text(if (inPanel) "В крупной панели" else "В крупную панель") }
+                ) { Text(if (inPanel) "В панели устройств" else "В панель устройств") }
                 Box(Modifier.weight(1f)) {
                     Button(onClick = { menuExpanded = true }, modifier = Modifier.fillMaxWidth()) {
                         Text(assignedSlot?.let { "Плитка $it" } ?: "Добавить плитку")

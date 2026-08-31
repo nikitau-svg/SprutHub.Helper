@@ -153,10 +153,9 @@ class SettingsRepository(private val context: Context) {
         context.settingsDataStore.edit { preferences ->
             val current = decodePanelItems(preferences)
             if (current.none { it.controlId == controlId }) {
-                require(current.size < MAX_PANEL_ITEMS) { "В крупной панели уже $MAX_PANEL_ITEMS элемента" }
-                val defaultSize = if (current.isEmpty()) PanelItemSize.LARGE else PanelItemSize.COMPACT
+                require(current.size < MAX_PANEL_ITEMS) { "В панели уже $MAX_PANEL_ITEMS карточек" }
                 preferences[Keys.PANEL_ITEMS] = json.encodeToString(
-                    current + PanelItem(controlId = controlId, size = defaultSize),
+                    current + PanelItem(controlId = controlId, size = PanelItemSize.COMPACT),
                 )
             }
         }
@@ -175,6 +174,17 @@ class SettingsRepository(private val context: Context) {
             preferences[Keys.PANEL_ITEMS] = json.encodeToString(
                 decodePanelItems(preferences).map { item ->
                     if (item.controlId == controlId) item.copy(size = size) else item
+                },
+            )
+        }
+    }
+
+    suspend fun setPanelItemAttributes(controlId: String, attributeControlIds: List<String>?) {
+        val normalized = attributeControlIds?.filter(String::isNotBlank)?.distinct()?.take(2)
+        context.settingsDataStore.edit { preferences ->
+            preferences[Keys.PANEL_ITEMS] = json.encodeToString(
+                decodePanelItems(preferences).map { item ->
+                    if (item.controlId == controlId) item.copy(attributeControlIds = normalized) else item
                 },
             )
         }
@@ -343,6 +353,14 @@ class SettingsRepository(private val context: Context) {
             .orEmpty()
             .filter { it.controlId.isNotBlank() }
             .distinctBy(PanelItem::controlId)
+            .map { item ->
+                item.copy(
+                    attributeControlIds = item.attributeControlIds
+                        ?.filter(String::isNotBlank)
+                        ?.distinct()
+                        ?.take(2),
+                )
+            }
             .take(MAX_PANEL_ITEMS)
 
     private fun validate(config: HubConfig) {
@@ -392,7 +410,7 @@ class SettingsRepository(private val context: Context) {
 
     companion object {
         const val MAX_TILE_SLOTS = 12
-        const val MAX_PANEL_ITEMS = 24
+        const val MAX_PANEL_ITEMS = 48
         val DEFAULT_HEALTH_METRICS = setOf(
             HealthMetric.STEPS,
             HealthMetric.HEART_RATE,

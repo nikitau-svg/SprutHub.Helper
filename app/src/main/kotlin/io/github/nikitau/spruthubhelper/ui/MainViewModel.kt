@@ -145,6 +145,10 @@ class MainViewModel : ViewModel() {
         repository.setPanelItemSize(controlId, size).getOrThrow()
     }
 
+    fun setPanelItemAttributes(controlId: String, attributeControlIds: List<String>?) = launchWork(null) {
+        repository.setPanelItemAttributes(controlId, attributeControlIds).getOrThrow()
+    }
+
     fun movePanelItem(controlId: String, offset: Int) = launchWork(null) {
         repository.movePanelItem(controlId, offset).getOrThrow()
     }
