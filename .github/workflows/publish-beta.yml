@@ -1,0 +1,142 @@
+name: Publish beta release
+
+on:
+  push:
+    tags:
+      - "v*-beta.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing numbered beta tag to publish
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: publish-beta-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+      ANDROID_SIGNING_STORE_FILE: ${{ github.workspace }}/.signing/spruthub-helper.p12
+      ANDROID_SIGNING_STORE_PASSWORD: ${{ secrets.ANDROID_SIGNING_STORE_PASSWORD }}
+      ANDROID_SIGNING_KEY_ALIAS: ${{ secrets.ANDROID_SIGNING_KEY_ALIAS }}
+      ANDROID_SIGNING_KEY_PASSWORD: ${{ secrets.ANDROID_SIGNING_KEY_PASSWORD }}
+
+    steps:
+      - name: Checkout tagged source
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          fetch-depth: 0
+
+      - name: Validate beta tag and changelog
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-beta\.[0-9]+$ ]]; then
+            echo "Beta tags must use vX.Y.Z-beta.N" >&2
+            exit 1
+          fi
+
+          git fetch --no-tags origin beta:refs/remotes/origin/beta
+          tag_commit="$(git rev-parse "${RELEASE_TAG}^{commit}")"
+          if ! git merge-base --is-ancestor "$tag_commit" refs/remotes/origin/beta; then
+            echo "Beta tag must point to a commit contained in beta" >&2
+            exit 1
+          fi
+
+          app_version="$(sed -n 's/^[[:space:]]*versionName = "\([^"]*\)"/\1/p' app/build.gradle.kts)"
+          test "$RELEASE_TAG" = "v$app_version"
+
+          version="${RELEASE_TAG#v}"
+          awk -v heading="## $version " '
+            index($0, heading) == 1 { capture = 1 }
+            capture && /^## / && index($0, heading) != 1 { exit }
+            capture { print }
+          ' CHANGELOG.md > release-notes.md
+          test -s release-notes.md
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v5
+        with:
+          gradle-version: "8.11.1"
+
+      - name: Restore stable APK signing key
+        env:
+          ANDROID_SIGNING_KEY_BASE64: ${{ secrets.ANDROID_SIGNING_KEY_BASE64 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$ANDROID_SIGNING_KEY_BASE64"
+          mkdir -p .signing
+          printf '%s' "$ANDROID_SIGNING_KEY_BASE64" | base64 --decode > "$ANDROID_SIGNING_STORE_FILE"
+          chmod 600 "$ANDROID_SIGNING_STORE_FILE"
+
+      - name: Test, lint and build signed APK
+        run: |
+          python3 .github/scripts/test_notify_telegram_release.py
+          gradle --no-daemon :app:lintDebug :app:testDebugUnitTest :app:assembleRelease
+
+      - name: Prepare and verify release files
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG#v}"
+          apk_name="SprutHub.Helper-$version.apk"
+          source_apk="app/build/outputs/apk/release/app-release.apk"
+          test -f "$source_apk"
+          mkdir -p dist
+          cp "$source_apk" "dist/$apk_name"
+          (
+            cd dist
+            sha256sum "$apk_name" > "$apk_name.sha256"
+          )
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs "dist/$apk_name"
+
+      - name: Preserve verified files
+        uses: actions/upload-artifact@v4
+        with:
+          name: SprutHub.Helper-${{ env.RELEASE_TAG }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish GitHub prerelease
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $RELEASE_TAG already exists; refusing to overwrite it" >&2
+            exit 1
+          fi
+          gh release create "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --verify-tag \
+            --prerelease \
+            --title "SprutHub Helper ${RELEASE_TAG#v}" \
+            --notes-file release-notes.md \
+            dist/*
+
+      - name: Dispatch Telegram announcement
+        shell: bash
+        run: |
+          gh workflow run telegram-beta-release.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            --ref main \
+            -f tag="$RELEASE_TAG" \
+            -f dry_run=false
