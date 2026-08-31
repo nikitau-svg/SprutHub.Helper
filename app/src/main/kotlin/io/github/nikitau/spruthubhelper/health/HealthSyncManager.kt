@@ -32,6 +32,9 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
+private const val HEALTH_NOT_CONFIGURED = "Не настроено"
+private const val HEALTH_CONFIGURED = "Устройство здоровья настроено"
+
 class HealthSyncManager(
     private val context: Context,
     private val settings: SettingsRepository,
@@ -64,7 +67,7 @@ class HealthSyncManager(
             enabled = enabled,
             lastSyncEpochMs = lastSync,
             syncing = live.syncing,
-            message = live.message,
+            message = resolveHealthMessage(binding, live.message),
         )
     }.stateIn(scope, SharingStarted.Eagerly, HealthUiState())
 
@@ -120,6 +123,10 @@ class HealthSyncManager(
             if (backgroundReadAvailable()) permissions += HealthPermission.PERMISSION_READ_HEALTH_DATA_IN_BACKGROUND
             _permissionRequests.emit(permissions)
         }
+    }
+
+    fun refreshRuntimeStatus() {
+        scope.launch { refreshPermissions() }
     }
 
     suspend fun onPermissionsChanged() {
@@ -372,7 +379,7 @@ data class HealthUiState(
     val enabled: Boolean = false,
     val lastSyncEpochMs: Long? = null,
     val syncing: Boolean = false,
-    val message: String = "Не настроено",
+    val message: String = HEALTH_NOT_CONFIGURED,
 )
 
 private data class HealthRuntimeState(
@@ -380,5 +387,8 @@ private data class HealthRuntimeState(
     val backgroundReadAvailable: Boolean = false,
     val grantedPermissions: Set<String> = emptySet(),
     val syncing: Boolean = false,
-    val message: String = "Не настроено",
+    val message: String = HEALTH_NOT_CONFIGURED,
 )
+
+internal fun resolveHealthMessage(binding: HealthDeviceBinding?, runtimeMessage: String): String =
+    if (binding != null && runtimeMessage == HEALTH_NOT_CONFIGURED) HEALTH_CONFIGURED else runtimeMessage

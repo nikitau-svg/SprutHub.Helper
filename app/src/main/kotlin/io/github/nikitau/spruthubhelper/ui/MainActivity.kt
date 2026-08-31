@@ -157,6 +157,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        AppGraph.health.refreshRuntimeStatus()
         AppGraph.phone.refreshRuntimeStatus()
         AppGraph.presence.refreshPermissionState()
     }
