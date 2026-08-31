@@ -32,6 +32,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.DevicesOther
+import androidx.compose.material.icons.rounded.DashboardCustomize
+import androidx.compose.material.icons.rounded.ArrowDownward
+import androidx.compose.material.icons.rounded.ArrowUpward
 import androidx.compose.material.icons.rounded.ExpandLess
 import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.rounded.Favorite
@@ -102,12 +105,16 @@ import androidx.core.content.ContextCompat
 import io.github.nikitau.spruthubhelper.AppGraph
 import io.github.nikitau.spruthubhelper.R
 import io.github.nikitau.spruthubhelper.controls.ControlFactory
+import io.github.nikitau.spruthubhelper.controls.DevicePanelSupport
+import io.github.nikitau.spruthubhelper.controls.SprutPanelPreviewActivity
 import io.github.nikitau.spruthubhelper.controls.SprutControlsProviderService
 import io.github.nikitau.spruthubhelper.data.AccessoryControlGroup
 import io.github.nikitau.spruthubhelper.data.ConnectionMode
 import io.github.nikitau.spruthubhelper.data.ConnectionPhase
 import io.github.nikitau.spruthubhelper.data.DeviceKind
 import io.github.nikitau.spruthubhelper.data.HealthMetric
+import io.github.nikitau.spruthubhelper.data.PanelItem
+import io.github.nikitau.spruthubhelper.data.PanelItemSize
 import io.github.nikitau.spruthubhelper.data.PhonePollInterval
 import io.github.nikitau.spruthubhelper.data.PhoneSensor
 import io.github.nikitau.spruthubhelper.data.PhoneSensorCategory
@@ -298,6 +305,19 @@ private fun MainScreen(viewModel: MainViewModel = viewModel()) {
         }
     }
 
+    LaunchedEffect(viewModel) {
+        viewModel.panelAddRequests.collect { controlId ->
+            val control = viewModel.uiState.value.catalog.controls.firstOrNull { it.id == controlId }
+            if (control != null && DevicePanelSupport.hasSystemControls(context)) {
+                ControlsProviderService.requestAddControl(
+                    context,
+                    ComponentName(context, SprutControlsProviderService::class.java),
+                    ControlFactory.stateless(context, control),
+                )
+            }
+        }
+    }
+
     LaunchedEffect(notice) {
         notice?.let {
             snackbar.showSnackbar(it)
@@ -376,6 +396,13 @@ private fun MainScreen(viewModel: MainViewModel = viewModel()) {
                 )
             }
             item {
+                PanelSummaryCard(
+                    items = ui.panelItems,
+                    controls = ui.catalog.controls,
+                    viewModel = viewModel,
+                )
+            }
+            item {
                 TileSummaryCard(
                     assignments = ui.assignments,
                     controls = ui.catalog.controls,
@@ -387,7 +414,7 @@ private fun MainScreen(viewModel: MainViewModel = viewModel()) {
                 Column(Modifier.padding(horizontal = 16.dp)) {
                     Text("Устройства", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
                     Text(
-                        "Добавьте нужные элементы в системную панель Samsung или назначьте на плитку шторки.",
+                        "Добавьте элементы в крупную панель или назначьте отдельные плитки шторки.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -415,6 +442,7 @@ private fun MainScreen(viewModel: MainViewModel = viewModel()) {
                     AccessoryCard(
                         group = group,
                         assignments = ui.assignments,
+                        panelItems = ui.panelItems,
                         viewModel = viewModel,
                         iconRevision = iconRevision,
                         onPickIcon = { controlId ->
@@ -1189,6 +1217,151 @@ private fun StatusDot(phase: ConnectionPhase) {
 }
 
 @Composable
+private fun PanelSummaryCard(
+    items: List<PanelItem>,
+    controls: List<SprutControl>,
+    viewModel: MainViewModel,
+) {
+    val context = LocalContext.current
+    val names = controls.associateBy(SprutControl::id)
+    val hasEmbeddedPanel = remember { DevicePanelSupport.hasEmbeddedPanel(context) }
+    val hasSystemControls = remember { DevicePanelSupport.hasSystemControls(context) }
+    var expanded by rememberSaveable { mutableStateOf(items.size <= 4) }
+    var confirmClear by remember { mutableStateOf(false) }
+
+    OutlinedCard(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+        shape = RoundedCornerShape(20.dp),
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Surface(shape = CircleShape, color = MaterialTheme.colorScheme.primaryContainer) {
+                    Icon(Icons.Rounded.DashboardCustomize, null, Modifier.padding(9.dp), tint = SprutGreen)
+                }
+                Spacer(Modifier.size(10.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("Крупная панель", fontWeight = FontWeight.Bold)
+                    Text(
+                        when {
+                            hasEmbeddedPanel -> "Раскрытая Device Controls с нашим glassmorphism-интерфейсом"
+                            hasSystemControls -> "Стандартная Device Controls этой версии Android"
+                            else -> "Прошивка не сообщает о поддержке Device Controls"
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Text("${items.size}/24", style = MaterialTheme.typography.labelLarge)
+                if (items.isNotEmpty()) {
+                    IconButton(onClick = { expanded = !expanded }) {
+                        Icon(if (expanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, null)
+                    }
+                }
+            }
+
+            Text(
+                if (hasEmbeddedPanel) {
+                    "Android 14+ сможет встроить наш экран. Компактный блок в шторке всё равно оформляет Samsung, Xiaomi или другая оболочка."
+                } else {
+                    "Точный вид и место панели зависят от производителя. Предпросмотр работает даже если оболочка не показывает панель в шторке."
+                },
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+
+            Button(
+                onClick = { context.startActivity(Intent(context, SprutPanelPreviewActivity::class.java)) },
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Icon(Icons.Rounded.Visibility, null)
+                Spacer(Modifier.size(8.dp))
+                Text("Открыть предпросмотр")
+            }
+
+            if (items.isEmpty()) {
+                Text(
+                    "Пока пусто. Нажмите «В крупную панель» у нужных устройств ниже.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+
+            AnimatedVisibility(expanded && items.isNotEmpty()) {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    items.forEachIndexed { index, item ->
+                        val control = names[item.controlId]
+                        if (index > 0) HorizontalDivider(Modifier.padding(vertical = 4.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    control?.title ?: "Недоступное устройство",
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                Text(
+                                    listOfNotNull(
+                                        control?.room,
+                                        if (item.size == PanelItemSize.LARGE) "крупный элемент" else "обычный элемент",
+                                    ).filter(String::isNotBlank).joinToString(" · "),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            IconButton(
+                                onClick = { viewModel.movePanelItem(item.controlId, -1) },
+                                enabled = index > 0,
+                            ) { Icon(Icons.Rounded.ArrowUpward, "Выше") }
+                            IconButton(
+                                onClick = { viewModel.movePanelItem(item.controlId, 1) },
+                                enabled = index < items.lastIndex,
+                            ) { Icon(Icons.Rounded.ArrowDownward, "Ниже") }
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            TextButton(
+                                onClick = {
+                                    viewModel.setPanelItemSize(
+                                        item.controlId,
+                                        if (item.size == PanelItemSize.LARGE) {
+                                            PanelItemSize.COMPACT
+                                        } else {
+                                            PanelItemSize.LARGE
+                                        },
+                                    )
+                                },
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                Text(if (item.size == PanelItemSize.LARGE) "Сделать обычным" else "Сделать крупным")
+                            }
+                            TextButton(
+                                onClick = { viewModel.removePanelItem(item.controlId) },
+                                modifier = Modifier.weight(1f),
+                            ) { Text("Убрать") }
+                        }
+                    }
+                    OutlinedButton(onClick = { confirmClear = true }, modifier = Modifier.fillMaxWidth()) {
+                        Text("Очистить крупную панель")
+                    }
+                }
+            }
+        }
+    }
+
+    if (confirmClear) {
+        AlertDialog(
+            onDismissRequest = { confirmClear = false },
+            title = { Text("Очистить крупную панель?") },
+            text = { Text("Устройства SprutHub и отдельные плитки шторки не затрагиваются.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmClear = false
+                    viewModel.clearPanelItems()
+                }) { Text("Очистить") }
+            },
+            dismissButton = { TextButton(onClick = { confirmClear = false }) { Text("Отмена") } },
+        )
+    }
+}
+
+@Composable
 private fun TileSummaryCard(
     assignments: List<TileAssignment>,
     controls: List<SprutControl>,
@@ -1285,6 +1458,7 @@ private fun TileSummaryCard(
 private fun AccessoryCard(
     group: AccessoryControlGroup,
     assignments: List<TileAssignment>,
+    panelItems: List<PanelItem>,
     viewModel: MainViewModel,
     iconRevision: Int,
     onPickIcon: (String) -> Unit,
@@ -1318,6 +1492,7 @@ private fun AccessoryCard(
                     serviceLabel = group.serviceLabel(control),
                     showServiceLabel = group.controls.size > 1 || control.subtitle.isNotBlank(),
                     assignments = assignments,
+                    panelItems = panelItems,
                     viewModel = viewModel,
                     iconRevision = iconRevision,
                     onPickIcon = { onPickIcon(control.id) },
@@ -1333,6 +1508,7 @@ private fun ControlActions(
     serviceLabel: String,
     showServiceLabel: Boolean,
     assignments: List<TileAssignment>,
+    panelItems: List<PanelItem>,
     viewModel: MainViewModel,
     iconRevision: Int,
     onPickIcon: () -> Unit,
@@ -1344,6 +1520,7 @@ private fun ControlActions(
         mutableStateOf(iconManager.hasIcon(control.id))
     }
     val assignedSlot = assignments.firstOrNull { it.controlId == control.id }?.slot
+    val inPanel = panelItems.any { it.controlId == control.id }
     val firstFreeSlot = (1..12).firstOrNull { slot -> assignments.none { it.slot == slot } }
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         if (showServiceLabel) {
@@ -1359,14 +1536,11 @@ private fun ControlActions(
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(
                     onClick = {
-                        ControlsProviderService.requestAddControl(
-                            context,
-                            ComponentName(context, SprutControlsProviderService::class.java),
-                            ControlFactory.stateless(context, control),
-                        )
+                        if (inPanel) viewModel.removePanelItem(control.id)
+                        else viewModel.addPanelItem(control.id)
                     },
                     modifier = Modifier.weight(1f),
-                ) { Text("Панель Android") }
+                ) { Text(if (inPanel) "В крупной панели" else "В крупную панель") }
                 Box(Modifier.weight(1f)) {
                     Button(onClick = { menuExpanded = true }, modifier = Modifier.fillMaxWidth()) {
                         Text(assignedSlot?.let { "Плитка $it" } ?: "Добавить плитку")

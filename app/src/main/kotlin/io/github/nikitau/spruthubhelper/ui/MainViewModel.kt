@@ -9,6 +9,8 @@ import io.github.nikitau.spruthubhelper.data.DiagnosticEvent
 import io.github.nikitau.spruthubhelper.data.HubConfig
 import io.github.nikitau.spruthubhelper.data.HubPasswordUpdate
 import io.github.nikitau.spruthubhelper.data.HealthMetric
+import io.github.nikitau.spruthubhelper.data.PanelItem
+import io.github.nikitau.spruthubhelper.data.PanelItemSize
 import io.github.nikitau.spruthubhelper.data.PhonePollInterval
 import io.github.nikitau.spruthubhelper.data.PhoneSensor
 import io.github.nikitau.spruthubhelper.data.PhoneSyncMode
@@ -32,6 +34,7 @@ class MainViewModel : ViewModel() {
     private val _busy = MutableStateFlow(false)
     private val _notice = MutableStateFlow<String?>(null)
     private val _tileAddRequests = MutableSharedFlow<TileAddRequest>(extraBufferCapacity = 1)
+    private val _panelAddRequests = MutableSharedFlow<String>(extraBufferCapacity = 1)
     private val _coordinateResults = MutableSharedFlow<Pair<Double, Double>>(extraBufferCapacity = 1)
 
     val busy: StateFlow<Boolean> = _busy.asStateFlow()
@@ -40,16 +43,17 @@ class MainViewModel : ViewModel() {
     val phoneState = phone.state
     val presenceState = presence.state
     val tileAddRequests = _tileAddRequests
+    val panelAddRequests = _panelAddRequests
     val coordinateResults = _coordinateResults
     val healthPermissionRequests = health.permissionRequests
     val uiState: StateFlow<MainUiState> = combine(
         settings.config,
         repository.catalog,
         repository.connectionStatus,
-        repository.tileAssignments,
+        combine(repository.tileAssignments, repository.panelItems) { tiles, panel -> tiles to panel },
         repository.diagnostics,
-    ) { config, catalog, connection, assignments, diagnostics ->
-        MainUiState(config, catalog, connection, assignments, diagnostics)
+    ) { config, catalog, connection, androidItems, diagnostics ->
+        MainUiState(config, catalog, connection, androidItems.first, androidItems.second, diagnostics)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), MainUiState())
 
     init {
@@ -125,6 +129,28 @@ class MainViewModel : ViewModel() {
 
     fun clearAllTiles() = launchWork("Все плитки удалены из приложения и списка Android") {
         repository.clearAllTiles().getOrThrow()
+    }
+
+    fun addPanelItem(controlId: String) = launchWork(null) {
+        repository.addPanelItem(controlId).getOrThrow()
+        _panelAddRequests.emit(controlId)
+        _notice.value = "Добавлено в крупную панель"
+    }
+
+    fun removePanelItem(controlId: String) = launchWork("Удалено из крупной панели") {
+        repository.removePanelItem(controlId).getOrThrow()
+    }
+
+    fun setPanelItemSize(controlId: String, size: PanelItemSize) = launchWork(null) {
+        repository.setPanelItemSize(controlId, size).getOrThrow()
+    }
+
+    fun movePanelItem(controlId: String, offset: Int) = launchWork(null) {
+        repository.movePanelItem(controlId, offset).getOrThrow()
+    }
+
+    fun clearPanelItems() = launchWork("Крупная панель очищена") {
+        repository.clearPanelItems().getOrThrow()
     }
 
     fun requestHealthPermissions() = health.requestPermissions()
@@ -270,5 +296,6 @@ data class MainUiState(
     val catalog: SprutCatalog = SprutCatalog(),
     val connection: ConnectionStatus = ConnectionStatus(),
     val assignments: List<TileAssignment> = emptyList(),
+    val panelItems: List<PanelItem> = emptyList(),
     val diagnostics: List<DiagnosticEvent> = emptyList(),
 )

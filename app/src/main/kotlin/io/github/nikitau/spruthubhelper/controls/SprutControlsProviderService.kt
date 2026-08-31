@@ -14,6 +14,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.jdk9.asPublisher
 import kotlinx.coroutines.launch
 
@@ -28,7 +29,12 @@ class SprutControlsProviderService : ControlsProviderService() {
 
     override fun createPublisherForSuggested(): Publisher<Control> = flow {
         val catalog = repository.refreshIfStale().getOrElse { repository.catalog.value }
-        catalog.controls.take(6).forEach { emit(ControlFactory.stateless(this@SprutControlsProviderService, it)) }
+        val selectedIds = AppGraph.settings.panelItems.first().map { it.controlId }
+        val byId = catalog.controls.associateBy { it.id }
+        val suggestions = (
+            selectedIds.mapNotNull(byId::get) + catalog.controls.filterNot { it.id in selectedIds }
+            ).distinctBy { it.id }.take(6)
+        suggestions.forEach { emit(ControlFactory.stateless(this@SprutControlsProviderService, it)) }
     }.asPublisher(scope.coroutineContext)
 
     override fun createPublisherFor(controlIds: MutableList<String>): Publisher<Control> = flow {

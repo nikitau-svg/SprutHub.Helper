@@ -32,6 +32,8 @@ class SettingsRepository(private val context: Context) {
             .sortedBy { it.slot }
     }
 
+    val panelItems: Flow<List<PanelItem>> = context.settingsDataStore.data.map(::decodePanelItems)
+
     val selectedHealthMetrics: Flow<Set<HealthMetric>> = context.settingsDataStore.data.map { preferences ->
         preferences[Keys.HEALTH_METRICS]
             ?.split(',')
@@ -146,6 +148,59 @@ class SettingsRepository(private val context: Context) {
         }
     }
 
+    suspend fun addPanelItem(controlId: String) {
+        require(controlId.isNotBlank()) { "Устройство для панели не выбрано" }
+        context.settingsDataStore.edit { preferences ->
+            val current = decodePanelItems(preferences)
+            if (current.none { it.controlId == controlId }) {
+                require(current.size < MAX_PANEL_ITEMS) { "В крупной панели уже $MAX_PANEL_ITEMS элемента" }
+                val defaultSize = if (current.isEmpty()) PanelItemSize.LARGE else PanelItemSize.COMPACT
+                preferences[Keys.PANEL_ITEMS] = json.encodeToString(
+                    current + PanelItem(controlId = controlId, size = defaultSize),
+                )
+            }
+        }
+    }
+
+    suspend fun removePanelItem(controlId: String) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[Keys.PANEL_ITEMS] = json.encodeToString(
+                decodePanelItems(preferences).filterNot { it.controlId == controlId },
+            )
+        }
+    }
+
+    suspend fun setPanelItemSize(controlId: String, size: PanelItemSize) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[Keys.PANEL_ITEMS] = json.encodeToString(
+                decodePanelItems(preferences).map { item ->
+                    if (item.controlId == controlId) item.copy(size = size) else item
+                },
+            )
+        }
+    }
+
+    suspend fun movePanelItem(controlId: String, offset: Int) {
+        require(offset == -1 || offset == 1)
+        context.settingsDataStore.edit { preferences ->
+            val current = decodePanelItems(preferences).toMutableList()
+            val from = current.indexOfFirst { it.controlId == controlId }
+            if (from < 0) return@edit
+            val to = (from + offset).coerceIn(0, current.lastIndex)
+            if (from != to) {
+                val moved = current.removeAt(from)
+                current.add(to, moved)
+                preferences[Keys.PANEL_ITEMS] = json.encodeToString(current)
+            }
+        }
+    }
+
+    suspend fun clearPanelItems() {
+        context.settingsDataStore.edit { preferences ->
+            preferences[Keys.PANEL_ITEMS] = json.encodeToString(emptyList<PanelItem>())
+        }
+    }
+
     suspend fun reconcileTileAssignments(
         validControlIds: Set<String>,
         replacements: Map<String, String>,
@@ -163,6 +218,19 @@ class SettingsRepository(private val context: Context) {
             }.distinctBy(TileAssignment::slot).sortedBy(TileAssignment::slot)
             if (reconciled != current) {
                 preferences[Keys.TILE_ASSIGNMENTS] = json.encodeToString(reconciled)
+            }
+        }
+    }
+
+    suspend fun reconcilePanelItems(
+        validControlIds: Set<String>,
+        replacements: Map<String, String>,
+    ) {
+        context.settingsDataStore.edit { preferences ->
+            val current = decodePanelItems(preferences)
+            val reconciled = reconcilePanelSelection(current, validControlIds, replacements)
+            if (reconciled != current) {
+                preferences[Keys.PANEL_ITEMS] = json.encodeToString(reconciled)
             }
         }
     }
@@ -269,6 +337,14 @@ class SettingsRepository(private val context: Context) {
             ?.let { runCatching { json.decodeFromString<List<TileAssignment>>(it) }.getOrNull() }
             .orEmpty()
 
+    private fun decodePanelItems(preferences: Preferences): List<PanelItem> =
+        preferences[Keys.PANEL_ITEMS]
+            ?.let { runCatching { json.decodeFromString<List<PanelItem>>(it) }.getOrNull() }
+            .orEmpty()
+            .filter { it.controlId.isNotBlank() }
+            .distinctBy(PanelItem::controlId)
+            .take(MAX_PANEL_ITEMS)
+
     private fun validate(config: HubConfig) {
         require(config.serial.isNotBlank()) { "Укажите серийный номер SprutHub" }
         when (config.mode) {
@@ -300,6 +376,7 @@ class SettingsRepository(private val context: Context) {
         val SERIAL = stringPreferencesKey("serial")
         val EMAIL = stringPreferencesKey("email")
         val TILE_ASSIGNMENTS = stringPreferencesKey("tile_assignments")
+        val PANEL_ITEMS = stringPreferencesKey("panel_items")
         val HEALTH_METRICS = stringPreferencesKey("health_metrics")
         val HEALTH_BINDING = stringPreferencesKey("health_binding")
         val HEALTH_ENABLED = booleanPreferencesKey("health_enabled")
@@ -315,6 +392,7 @@ class SettingsRepository(private val context: Context) {
 
     companion object {
         const val MAX_TILE_SLOTS = 12
+        const val MAX_PANEL_ITEMS = 24
         val DEFAULT_HEALTH_METRICS = setOf(
             HealthMetric.STEPS,
             HealthMetric.HEART_RATE,

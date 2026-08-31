@@ -43,6 +43,11 @@ class SprutRepository(
         SharingStarted.Eagerly,
         emptyList(),
     )
+    val panelItems: StateFlow<List<PanelItem>> = settings.panelItems.stateIn(
+        scope,
+        SharingStarted.Eagerly,
+        emptyList(),
+    )
 
     init {
         scope.launch {
@@ -90,7 +95,7 @@ class SprutRepository(
             check(parsed.controls.isNotEmpty()) {
                 "SprutHub ответил, но управляемые устройства не найдены"
             }
-            reconcileTileAssignments(_catalog.value.controls, parsed.controls)
+            reconcileAssignments(_catalog.value.controls, parsed.controls)
             _catalog.value = parsed
             cache.write(parsed)
             _connectionStatus.value = ConnectionStatus(
@@ -179,6 +184,32 @@ class SprutRepository(
         log("Все плитки удалены")
     }
 
+    suspend fun addPanelItem(controlId: String): Result<Unit> = runCatching {
+        val control = _catalog.value.controls.firstOrNull { it.id == controlId }
+            ?: error("Устройство не найдено")
+        settings.addPanelItem(controlId)
+        log("${control.title} добавлено в крупную панель")
+    }
+
+    suspend fun removePanelItem(controlId: String): Result<Unit> = runCatching {
+        settings.removePanelItem(controlId)
+        log("Элемент удалён из крупной панели")
+    }
+
+    suspend fun setPanelItemSize(controlId: String, size: PanelItemSize): Result<Unit> = runCatching {
+        settings.setPanelItemSize(controlId, size)
+        log("Размер элемента крупной панели изменён")
+    }
+
+    suspend fun movePanelItem(controlId: String, offset: Int): Result<Unit> = runCatching {
+        settings.movePanelItem(controlId, offset)
+    }
+
+    suspend fun clearPanelItems(): Result<Unit> = runCatching {
+        settings.clearPanelItems()
+        log("Крупная панель очищена")
+    }
+
     suspend fun reconnectAfterSettingsChange() {
         client.disconnect()
         _connectionStatus.value = ConnectionStatus(message = "Настройки сохранены — выполните проверку")
@@ -232,12 +263,15 @@ class SprutRepository(
         else -> JsonPrimitive(value)
     }
 
-    private suspend fun reconcileTileAssignments(
+    private suspend fun reconcileAssignments(
         previousControls: List<SprutControl>,
         currentControls: List<SprutControl>,
     ) {
         val validIds = currentControls.mapTo(mutableSetOf(), SprutControl::id)
-        val assignedIds = settings.tileAssignments.first().map(TileAssignment::controlId)
+        val assignedIds = (
+            settings.tileAssignments.first().map(TileAssignment::controlId) +
+                settings.panelItems.first().map(PanelItem::controlId)
+            ).distinct()
         val replacements = assignedIds
             .filterNot(validIds::contains)
             .mapNotNull { oldId ->
@@ -256,8 +290,9 @@ class SprutRepository(
             }
             .toMap()
         settings.reconcileTileAssignments(validIds, replacements)
+        settings.reconcilePanelItems(validIds, replacements)
         replacements.forEach { (oldId, newId) ->
-            Log.i(LOG_TAG, "Tile assignment migrated: $oldId -> $newId")
+            Log.i(LOG_TAG, "Android assignment migrated: $oldId -> $newId")
         }
     }
 

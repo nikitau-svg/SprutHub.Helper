@@ -172,6 +172,31 @@ data class TileAssignment(
     val controlId: String,
 )
 
+@Serializable
+enum class PanelItemSize {
+    COMPACT,
+    LARGE,
+}
+
+/** One user-selected item in the app-owned Device Controls panel. */
+@Serializable
+data class PanelItem(
+    val controlId: String,
+    val size: PanelItemSize = PanelItemSize.COMPACT,
+)
+
+internal fun reconcilePanelSelection(
+    current: List<PanelItem>,
+    validControlIds: Set<String>,
+    replacements: Map<String, String>,
+): List<PanelItem> = current.mapNotNull { item ->
+    when {
+        item.controlId in validControlIds -> item
+        replacements[item.controlId] != null -> item.copy(controlId = replacements.getValue(item.controlId))
+        else -> null
+    }
+}.distinctBy(PanelItem::controlId)
+
 enum class ConnectionPhase {
     IDLE,
     CONNECTING,

@@ -3,6 +3,7 @@ package io.github.nikitau.spruthubhelper.controls
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import android.service.controls.Control
 import android.service.controls.DeviceTypes
 import android.service.controls.templates.ControlButton
@@ -39,6 +40,9 @@ object ControlFactory {
             .setStatus(Control.STATUS_OK)
             .setStatusText(item.displayValue)
             .setControlTemplate(item.template())
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            builder.setAuthRequired(item.requiresAuthentication())
+        }
         CustomIconManager(context).loadIcon(item.id)?.let(builder::setCustomIcon)
         return builder.build()
     }
@@ -101,4 +105,12 @@ object ControlFactory {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
     }
+}
+
+/** Locks and perimeter controls are never considered safe lock-screen actions. */
+internal fun SprutControl.requiresAuthentication(): Boolean = when (kind) {
+    DeviceKind.LOCK,
+    DeviceKind.SECURITY,
+    DeviceKind.GARAGE -> true
+    else -> false
 }
