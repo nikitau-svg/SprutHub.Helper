@@ -442,6 +442,8 @@ private fun HealthCard(health: HealthUiState, ui: MainUiState, viewModel: MainVi
     }
     var selectedMetrics by remember(health.selectedMetrics) { mutableStateOf(health.selectedMetrics) }
     val selectedRoom = ui.catalog.rooms.firstOrNull { it.id == selectedRoomId }
+    val selectionMatchesDevice = health.binding == null ||
+        health.binding.targets.map { it.key }.toSet() == selectedMetrics.map(HealthMetric::name).toSet()
 
     OutlinedCard(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
@@ -474,7 +476,7 @@ private fun HealthCard(health: HealthUiState, ui: MainUiState, viewModel: MainVi
                 style = MaterialTheme.typography.bodySmall,
                 color = SprutGreen,
             )
-            if (health.binding != null && !health.configurationMatches) {
+            if (health.binding != null && !selectionMatchesDevice) {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text(
                         "Состав изменён. Чтобы снятые показатели исчезли из SprutHub, виртуальный аксессуар нужно пересоздать.",
@@ -612,11 +614,22 @@ private fun HealthCard(health: HealthUiState, ui: MainUiState, viewModel: MainVi
                         }
                     } else {
                         Button(
-                            onClick = viewModel::syncHealth,
+                            onClick = {
+                                if (selectionMatchesDevice) viewModel.syncHealth()
+                                else confirmRecreate = true
+                            },
                             modifier = Modifier.fillMaxWidth(),
                             enabled = !health.syncing,
-                        ) { Text(if (health.syncing) "Синхронизация…" else "Синхронизировать сейчас") }
-                        if (health.configurationMatches) {
+                        ) {
+                            Text(
+                                when {
+                                    health.syncing -> "Синхронизация…"
+                                    !selectionMatchesDevice -> "Применить состав и синхронизировать"
+                                    else -> "Синхронизировать сейчас"
+                                },
+                            )
+                        }
+                        if (selectionMatchesDevice) {
                             TextButton(
                                 onClick = { confirmRecreate = true },
                                 modifier = Modifier.fillMaxWidth(),
@@ -648,7 +661,7 @@ private fun HealthCard(health: HealthUiState, ui: MainUiState, viewModel: MainVi
             confirmButton = {
                 TextButton(onClick = {
                     confirmRecreate = false
-                    viewModel.recreateHealthDevice()
+                    viewModel.recreateHealthDevice(selectedMetrics)
                 }) { Text("Пересоздать") }
             },
             dismissButton = { TextButton(onClick = { confirmRecreate = false }) { Text("Отмена") } },
@@ -688,6 +701,8 @@ private fun PhoneCard(
     }
     var selectedSensors by remember(phone.selectedSensors) { mutableStateOf(phone.selectedSensors) }
     val selectedRoom = ui.catalog.rooms.firstOrNull { it.id == selectedRoomId }
+    val selectionMatchesDevice = phone.binding == null ||
+        phone.binding.targets.map { it.key }.toSet() == selectedSensors.map(PhoneSensor::name).toSet()
 
     OutlinedCard(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
@@ -718,7 +733,7 @@ private fun PhoneCard(
                 color = SprutGreen,
             )
 
-            if (phone.binding != null && !phone.configurationMatches) {
+            if (phone.binding != null && !selectionMatchesDevice) {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text(
                         "Выбор изменён. Для полного удаления снятых показателей примените новый состав устройства.",
@@ -918,10 +933,21 @@ private fun PhoneCard(
                         }
                     } else {
                         Button(
-                            onClick = viewModel::syncPhone,
+                            onClick = {
+                                if (selectionMatchesDevice) viewModel.syncPhone()
+                                else confirmRecreate = true
+                            },
                             modifier = Modifier.fillMaxWidth(),
                             enabled = !phone.syncing,
-                        ) { Text(if (phone.syncing) "Синхронизация…" else "Синхронизировать сейчас") }
+                        ) {
+                            Text(
+                                when {
+                                    phone.syncing -> "Синхронизация…"
+                                    !selectionMatchesDevice -> "Применить состав и синхронизировать"
+                                    else -> "Синхронизировать сейчас"
+                                },
+                            )
+                        }
                     }
                 }
             }
@@ -939,7 +965,7 @@ private fun PhoneCard(
             confirmButton = {
                 TextButton(onClick = {
                     confirmRecreate = false
-                    viewModel.recreatePhoneDevice()
+                    viewModel.recreatePhoneDevice(selectedSensors)
                 }) { Text("Пересоздать") }
             },
             dismissButton = { TextButton(onClick = { confirmRecreate = false }) { Text("Отмена") } },
@@ -1172,6 +1198,7 @@ private fun TileSummaryCard(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val names = controls.associateBy(SprutControl::id)
+    var confirmClearAll by remember { mutableStateOf(false) }
     OutlinedCard(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
         shape = RoundedCornerShape(20.dp),
@@ -1220,17 +1247,37 @@ private fun TileSummaryCard(
                                     }
                                 }) { Text("Добавить") }
                             }
-                            TextButton(onClick = { viewModel.clearTile(assignment.slot) }) { Text("Освободить") }
+                            TextButton(onClick = { viewModel.clearTile(assignment.slot) }) { Text("Удалить") }
                         }
                     }
                 }
+                OutlinedButton(
+                    onClick = { confirmClearAll = true },
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("Удалить все плитки") }
             }
             Text(
-                "Назначение и добавление в Android — два отдельных шага. После системного подтверждения статус станет зелёным.",
+                "Удаление снимает назначение и отключает системный слот, поэтому он исчезает и из списка выбора Android.",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
+    }
+    if (confirmClearAll) {
+        AlertDialog(
+            onDismissRequest = { confirmClearAll = false },
+            title = { Text("Удалить все плитки?") },
+            text = {
+                Text("Все плитки SprutHub Helper будут убраны из шторки и из списка доступных плиток Android. Устройства SprutHub не затрагиваются.")
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmClearAll = false
+                    viewModel.clearAllTiles()
+                }) { Text("Удалить все") }
+            },
+            dismissButton = { TextButton(onClick = { confirmClearAll = false }) { Text("Отмена") } },
+        )
     }
 }
 

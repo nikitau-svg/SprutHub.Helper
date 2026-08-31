@@ -1,5 +1,7 @@
 package io.github.nikitau.spruthubhelper.sprut
 
+import io.github.nikitau.spruthubhelper.data.HealthDeviceBinding
+import io.github.nikitau.spruthubhelper.data.HealthTarget
 import io.github.nikitau.spruthubhelper.data.HealthValueKind
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -30,5 +32,34 @@ class VirtualHealthDeviceManagerTest {
         assertTrue(isSprutNameTypeIdentifier("C_Name"))
         assertTrue(isSprutNameTypeIdentifier("characteristic.name"))
         assertFalse(isSprutNameTypeIdentifier("C_GenericString"))
+    }
+
+    @Test
+    fun detectsChangedVirtualDeviceSchemaByFieldKeys() {
+        val binding = HealthDeviceBinding(
+            accessoryId = "10",
+            name = "Телефон",
+            roomId = "1",
+            targets = listOf(
+                HealthTarget("BATTERY", "1", "1", "doubleValue"),
+                HealthTarget("MODEL", "2", "2", "stringValue"),
+            ),
+        )
+
+        assertTrue(
+            bindingMatchesFields(
+                binding,
+                listOf(
+                    VirtualFieldSpec("MODEL", "Модель", HealthValueKind.STRING),
+                    VirtualFieldSpec("BATTERY", "Заряд", HealthValueKind.DOUBLE),
+                ),
+            ),
+        )
+        assertFalse(
+            bindingMatchesFields(
+                binding,
+                listOf(VirtualFieldSpec("BATTERY", "Заряд", HealthValueKind.DOUBLE)),
+            ),
+        )
     }
 }

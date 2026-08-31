@@ -174,6 +174,11 @@ class SprutRepository(
         log("Плитка $slot освобождена")
     }
 
+    suspend fun clearAllTiles(): Result<Unit> = runCatching {
+        settings.clearAllTiles()
+        log("Все плитки удалены")
+    }
+
     suspend fun reconnectAfterSettingsChange() {
         client.disconnect()
         _connectionStatus.value = ConnectionStatus(message = "Настройки сохранены — выполните проверку")

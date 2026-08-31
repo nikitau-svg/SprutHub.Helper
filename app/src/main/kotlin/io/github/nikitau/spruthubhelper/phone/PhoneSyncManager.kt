@@ -20,6 +20,8 @@ import io.github.nikitau.spruthubhelper.data.PhoneSyncMode
 import io.github.nikitau.spruthubhelper.data.PhoneSyncSettings
 import io.github.nikitau.spruthubhelper.data.SettingsRepository
 import io.github.nikitau.spruthubhelper.sprut.VirtualHealthDeviceManager
+import io.github.nikitau.spruthubhelper.sprut.VirtualFieldSpec
+import io.github.nikitau.spruthubhelper.sprut.bindingMatchesFields
 import io.github.nikitau.spruthubhelper.sprut.phoneVirtualFields
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CoroutineScope
@@ -141,8 +143,16 @@ class PhoneSyncManager(
                 val binding = stored
                     ?: virtualDevice.recoverExisting(phoneVirtualFields(recoverySensors))
                     ?: error("Сначала создайте устройство телефона в SprutHub")
+                val selectedFields = phoneVirtualFields(selected)
+                check(bindingMatchesFields(binding, selectedFields)) {
+                    "Выбор показателей изменён. Примените новый состав устройства телефона в SprutHub"
+                }
                 runtime.update { it.copy(syncing = true, message = "Собираю данные телефона…") }
-                val published = publishAndPersist(binding)
+                val published = publishAndPersist(
+                    initialBinding = binding,
+                    fields = selectedFields,
+                    createIfMissing = !fromBackground,
+                )
                 runtime.update {
                     it.copy(
                         syncing = false,
@@ -158,10 +168,11 @@ class PhoneSyncManager(
         }
     }
 
-    suspend fun recreateDevice(): Result<HealthDeviceBinding> = runCatching {
+    suspend fun recreateDevice(selectedOverride: Set<PhoneSensor>? = null): Result<HealthDeviceBinding> = runCatching {
         val current = settings.phoneBinding.first()
             ?: error("Сначала создайте устройство телефона в SprutHub")
-        val selected = settings.selectedPhoneSensors.first()
+        val selected = selectedOverride ?: settings.selectedPhoneSensors.first()
+        if (selectedOverride != null) settings.savePhoneSensors(selectedOverride)
         runtime.update { it.copy(syncing = true, message = "Пересоздаю устройство телефона…") }
         val binding = virtualDevice.recreate(
             binding = current,
@@ -260,20 +271,20 @@ class PhoneSyncManager(
         runtime.update { it.copy(statusRevision = it.statusRevision + 1) }
     }
 
-    private suspend fun publishAndPersist(initialBinding: HealthDeviceBinding): Int {
+    private suspend fun publishAndPersist(
+        initialBinding: HealthDeviceBinding,
+        fields: List<VirtualFieldSpec>? = null,
+        createIfMissing: Boolean = false,
+    ): Int {
         val selected = settings.selectedPhoneSensors.first()
-        val configured = initialBinding.targets
-            .mapNotNull { target -> runCatching { PhoneSensor.valueOf(target.key) }.getOrNull() }
-            .toSet()
-            .ifEmpty { selected }
-        val fields = phoneVirtualFields(configured)
+        val publishFields = fields ?: phoneVirtualFields(selected)
         val readings = reader.read(selected)
         check(readings.isNotEmpty()) { "Android не вернул выбранные данные телефона" }
         val verifiedBinding = runCatching {
-            virtualDevice.publish(initialBinding, readings, fields)
+            virtualDevice.publish(initialBinding, readings, publishFields, createIfMissing)
         }.recoverCatching { firstError ->
-            val recovered = virtualDevice.recoverExisting(fields) ?: throw firstError
-            runCatching { virtualDevice.publish(recovered, readings, fields) }
+            val recovered = virtualDevice.ensureBinding(initialBinding, publishFields, createIfMissing)
+            runCatching { virtualDevice.publish(recovered, readings, publishFields) }
                 .getOrElse { secondError ->
                     secondError.addSuppressed(firstError)
                     throw secondError

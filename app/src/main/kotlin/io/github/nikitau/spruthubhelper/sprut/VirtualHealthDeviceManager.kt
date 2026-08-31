@@ -40,6 +40,11 @@ data class VirtualFieldSpec(
     val required: Boolean = true,
 )
 
+class VirtualDeviceMissingException(message: String) : IllegalStateException(message)
+
+internal fun bindingMatchesFields(binding: HealthDeviceBinding, fields: List<VirtualFieldSpec>): Boolean =
+    binding.targets.map(HealthTarget::key).toSet() == fields.map(VirtualFieldSpec::key).toSet()
+
 class VirtualHealthDeviceManager(
     private val settings: SettingsRepository,
     private val client: SprutRpcClient,
@@ -143,21 +148,17 @@ class VirtualHealthDeviceManager(
         binding: HealthDeviceBinding,
         readings: Map<String, HealthReading>,
         fields: List<VirtualFieldSpec> = defaultVirtualFields(),
+        createIfMissing: Boolean = false,
     ): HealthDeviceBinding {
         require(fields.isNotEmpty()) { "Нет настроенных полей для публикации" }
         val config = deviceConfig()
         client.connect(config)
-        val liveBinding = awaitCompleteBinding(
+        val liveBinding = ensureBinding(
             config = config,
-            accessoryId = binding.accessoryId,
-            name = binding.name,
-            fallbackRoomId = binding.roomId,
-            expectedTypes = null,
-            existing = true,
-            createdAtEpochMs = binding.createdAtEpochMs,
+            binding = binding,
             fields = fields,
+            createIfMissing = createIfMissing,
         )
-        validateBinding(liveBinding, fields, existing = true)
 
         var published = 0
         val failures = mutableListOf<String>()
@@ -192,6 +193,22 @@ class VirtualHealthDeviceManager(
         return liveBinding
     }
 
+    /**
+     * Reconciles a persisted binding with the accessory currently returned by
+     * SprutHub. A foreground, user-requested sync may opt into recreating a
+     * missing app-owned virtual accessory; background sync never does that.
+     */
+    suspend fun ensureBinding(
+        binding: HealthDeviceBinding,
+        fields: List<VirtualFieldSpec>,
+        createIfMissing: Boolean = false,
+    ): HealthDeviceBinding {
+        require(fields.isNotEmpty()) { "Нет настроенных полей устройства" }
+        val config = deviceConfig()
+        client.connect(config)
+        return ensureBinding(config, binding, fields, createIfMissing)
+    }
+
     suspend fun recreate(
         binding: HealthDeviceBinding,
         roomId: String,
@@ -203,13 +220,18 @@ class VirtualHealthDeviceManager(
         val expectedName = deviceName()
         val accessory = listExpandedAccessories(config).firstOrNull { candidate ->
             candidate.scalar("id", "aId") == binding.accessoryId
-        } ?: error("Устройство «${binding.name}» больше не найдено в SprutHub")
+        }
+        if (accessory == null) {
+            Log.i(profile.logTag, "Stored virtual accessory is already absent; creating the selected schema")
+            return createOrRecover(roomId, fields)
+        }
         check(sameSprutLabel(accessory.scalar("name", "title", "displayName"), expectedName)) {
             "Защитная проверка остановила удаление: имя устройства изменилось"
         }
         check(accessory.boolean("virtual") != false) {
             "Защитная проверка остановила удаление: устройство больше не виртуальное"
         }
+        val replacementRoomId = accessory.scalar("roomId", "rId").ifBlank { roomId }
 
         client.call(
             config,
@@ -223,10 +245,45 @@ class VirtualHealthDeviceManager(
             val stillExists = listExpandedAccessories(config).any { candidate ->
                 candidate.scalar("id", "aId") == binding.accessoryId
             }
-            if (!stillExists) return createOrRecover(roomId, fields)
+            if (!stillExists) return createOrRecover(replacementRoomId, fields)
             if (attempt < DELETE_VERIFY_ATTEMPTS - 1) delay(DELETE_VERIFY_RETRY_MS)
         }
         error("SprutHub принял удаление, но устройство всё ещё отображается")
+    }
+
+    private suspend fun ensureBinding(
+        config: HubConfig,
+        binding: HealthDeviceBinding,
+        fields: List<VirtualFieldSpec>,
+        createIfMissing: Boolean,
+    ): HealthDeviceBinding {
+        val accessories = listExpandedAccessories(config)
+        val accessory = accessories.firstOrNull { candidate ->
+            candidate.scalar("id", "aId") == binding.accessoryId
+        } ?: accessories.firstOrNull { candidate ->
+            sameSprutLabel(candidate.scalar("name", "title", "displayName"), binding.name)
+        }
+        if (accessory == null) {
+            if (createIfMissing) {
+                Log.i(profile.logTag, "Virtual accessory was removed outside the app; recreating after explicit sync")
+                return createOrRecover(binding.roomId, fields)
+            }
+            throw VirtualDeviceMissingException(
+                "Устройство «${binding.name}» удалено из SprutHub. Откройте приложение и нажмите синхронизацию, чтобы создать его заново",
+            )
+        }
+        val live = awaitCompleteBinding(
+            config = config,
+            accessoryId = accessory.scalar("id", "aId"),
+            name = binding.name,
+            fallbackRoomId = accessory.scalar("roomId", "rId").ifBlank { binding.roomId },
+            expectedTypes = null,
+            existing = true,
+            createdAtEpochMs = binding.createdAtEpochMs,
+            fields = fields,
+        )
+        validateBinding(live, fields, existing = true)
+        return live
     }
 
     private suspend fun awaitCompleteBinding(

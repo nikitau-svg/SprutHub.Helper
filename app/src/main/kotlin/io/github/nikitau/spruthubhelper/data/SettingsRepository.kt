@@ -140,6 +140,12 @@ class SettingsRepository(private val context: Context) {
         }
     }
 
+    suspend fun clearAllTiles() {
+        context.settingsDataStore.edit { preferences ->
+            preferences[Keys.TILE_ASSIGNMENTS] = json.encodeToString(emptyList<TileAssignment>())
+        }
+    }
+
     suspend fun reconcileTileAssignments(
         validControlIds: Set<String>,
         replacements: Map<String, String>,

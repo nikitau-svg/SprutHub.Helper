@@ -14,6 +14,8 @@ import io.github.nikitau.spruthubhelper.data.HealthDeviceBinding
 import io.github.nikitau.spruthubhelper.data.HealthMetric
 import io.github.nikitau.spruthubhelper.data.SettingsRepository
 import io.github.nikitau.spruthubhelper.sprut.VirtualHealthDeviceManager
+import io.github.nikitau.spruthubhelper.sprut.VirtualFieldSpec
+import io.github.nikitau.spruthubhelper.sprut.bindingMatchesFields
 import io.github.nikitau.spruthubhelper.sprut.healthVirtualFields
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CoroutineScope
@@ -167,11 +169,19 @@ class HealthSyncManager(
         if (fromBackground && !settings.healthEnabled.first()) return Result.success(Unit)
         return runCatching {
             val selected = settings.selectedHealthMetrics.first()
+            val selectedFields = healthVirtualFields(selected)
             val binding = settings.healthBinding.first()
-                ?: virtualDevice.recoverExisting(healthVirtualFields(selected))
+                ?: virtualDevice.recoverExisting(selectedFields)
                 ?: error("Сначала создайте устройство здоровья в SprutHub")
+            check(bindingMatchesFields(binding, selectedFields)) {
+                "Выбор показателей изменён. Примените новый состав устройства здоровья в SprutHub"
+            }
             runtime.value = runtime.value.copy(syncing = true, message = "Читаю Health Connect…")
-            val published = publishAndPersist(binding)
+            val published = publishAndPersist(
+                initialBinding = binding,
+                fields = selectedFields,
+                createIfMissing = !fromBackground,
+            )
             runtime.value = runtime.value.copy(
                 syncing = false,
                 message = if (published > 0) {
@@ -188,10 +198,11 @@ class HealthSyncManager(
         }
     }
 
-    suspend fun recreateDevice(): Result<HealthDeviceBinding> = runCatching {
+    suspend fun recreateDevice(selectedOverride: Set<HealthMetric>? = null): Result<HealthDeviceBinding> = runCatching {
         val current = settings.healthBinding.first()
             ?: error("Сначала создайте устройство здоровья в SprutHub")
-        val selected = settings.selectedHealthMetrics.first()
+        val selected = selectedOverride ?: settings.selectedHealthMetrics.first()
+        if (selectedOverride != null) settings.saveHealthMetrics(selectedOverride)
         runtime.value = runtime.value.copy(syncing = true, message = "Пересоздаю устройство здоровья…")
         val binding = virtualDevice.recreate(
             binding = current,
@@ -277,26 +288,31 @@ class HealthSyncManager(
         WorkManager.getInstance(context).cancelUniqueWork(WORK_NAME)
     }
 
-    private suspend fun publishAndPersist(initialBinding: HealthDeviceBinding): Int {
+    private suspend fun publishAndPersist(
+        initialBinding: HealthDeviceBinding,
+        fields: List<VirtualFieldSpec>? = null,
+        createIfMissing: Boolean = false,
+    ): Int {
         val selected = settings.selectedHealthMetrics.first()
+        val publishFields = fields ?: healthVirtualFields(selected)
         val readings = reader.read(selected)
-        val boundMetrics = initialBinding.targets
-            .mapNotNull { target -> runCatching { HealthMetric.valueOf(target.key) }.getOrNull() }
-            .toSet()
-            .ifEmpty { selected }
-        val fields = healthVirtualFields(boundMetrics)
         if (readings.isEmpty()) {
-            settings.saveHealthBinding(initialBinding)
+            val verifiedBinding = virtualDevice.ensureBinding(
+                binding = initialBinding,
+                fields = publishFields,
+                createIfMissing = createIfMissing,
+            )
+            settings.saveHealthBinding(verifiedBinding)
             settings.markHealthSynced()
             return 0
         }
         // Health traffic is intentionally pinned to the exact LAN endpoint. If IDs changed,
         // rebuild the binding by the virtual accessory name and retry once.
         val verifiedBinding = runCatching {
-            virtualDevice.publish(initialBinding, readings, fields)
+            virtualDevice.publish(initialBinding, readings, publishFields, createIfMissing)
         }.recoverCatching { firstError ->
-            val recovered = virtualDevice.recoverExisting(fields) ?: throw firstError
-            runCatching { virtualDevice.publish(recovered, readings, fields) }
+            val recovered = virtualDevice.ensureBinding(initialBinding, publishFields, createIfMissing)
+            runCatching { virtualDevice.publish(recovered, readings, publishFields) }
                 .getOrElse { secondError ->
                     secondError.addSuppressed(firstError)
                     throw secondError

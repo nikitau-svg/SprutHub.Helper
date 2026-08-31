@@ -119,8 +119,12 @@ class MainViewModel : ViewModel() {
         _tileAddRequests.emit(TileAddRequest(slot, controlId))
     }
 
-    fun clearTile(slot: Int) = launchWork("Плитка $slot освобождена") {
+    fun clearTile(slot: Int) = launchWork("Плитка $slot удалена из приложения и списка Android") {
         repository.clearTile(slot).getOrThrow()
+    }
+
+    fun clearAllTiles() = launchWork("Все плитки удалены из приложения и списка Android") {
+        repository.clearAllTiles().getOrThrow()
     }
 
     fun requestHealthPermissions() = health.requestPermissions()
@@ -141,8 +145,8 @@ class MainViewModel : ViewModel() {
         health.syncNow().getOrThrow()
     }
 
-    fun recreateHealthDevice() = launchWork("Состав устройства здоровья обновлён") {
-        health.recreateDevice().getOrThrow()
+    fun recreateHealthDevice(metrics: Set<HealthMetric>? = null) = launchWork("Состав устройства здоровья обновлён") {
+        health.recreateDevice(metrics).getOrThrow()
     }
 
     fun revokeAllHealthPermissions() = launchWork("Доступ Health Connect отозван") {
@@ -165,8 +169,8 @@ class MainViewModel : ViewModel() {
         phone.syncNow().getOrThrow()
     }
 
-    fun recreatePhoneDevice() = launchWork("Состав устройства телефона обновлён") {
-        phone.recreateDevice().getOrThrow()
+    fun recreatePhoneDevice(sensors: Set<PhoneSensor>? = null) = launchWork("Состав устройства телефона обновлён") {
+        phone.recreateDevice(sensors).getOrThrow()
     }
 
     fun setPhoneEnabled(enabled: Boolean) = launchWork(
