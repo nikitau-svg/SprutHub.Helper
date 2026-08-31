@@ -98,6 +98,7 @@
             android:exported="true"
             android:permission="android.permission.BIND_CONTROLS"
             android:resizeableActivity="true"
+            android:taskAffinity="${applicationId}.controls"
             android:theme="@style/Theme.SprutHubHelper" />
 
         <activity

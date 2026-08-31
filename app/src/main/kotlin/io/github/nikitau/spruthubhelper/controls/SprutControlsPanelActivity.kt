@@ -133,10 +133,15 @@ class SprutPanelPreviewActivity : ComponentActivity() {
                     allowTrivialOnLockScreen = false,
                     showBack = true,
                     onBack = ::finish,
-                    onOpenApp = ::finish,
+                    onOpenApp = ::closePreview,
                 )
             }
         }
+    }
+
+    private fun closePreview() {
+        moveTaskToBack(true)
+        finish()
     }
 }
 
