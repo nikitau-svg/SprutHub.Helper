@@ -19,11 +19,13 @@ import io.github.nikitau.spruthubhelper.AppGraph
 import io.github.nikitau.spruthubhelper.data.HealthDeviceBinding
 import io.github.nikitau.spruthubhelper.data.PhonePollInterval
 import io.github.nikitau.spruthubhelper.data.PhoneSensor
+import io.github.nikitau.spruthubhelper.data.PhoneSensorAccess
 import io.github.nikitau.spruthubhelper.data.PhoneSyncMode
 import io.github.nikitau.spruthubhelper.data.PhoneSyncSettings
 import io.github.nikitau.spruthubhelper.data.SettingsRepository
 import io.github.nikitau.spruthubhelper.diagnostics.DiagnosticCategory
 import io.github.nikitau.spruthubhelper.diagnostics.DiagnosticOutcome
+import io.github.nikitau.spruthubhelper.health.HealthReading
 import io.github.nikitau.spruthubhelper.sprut.HeartbeatProtectionReport
 import io.github.nikitau.spruthubhelper.sprut.HeartbeatProtectionStatus
 import io.github.nikitau.spruthubhelper.sprut.SprutHeartbeatScenarioManager
@@ -66,8 +68,18 @@ class PhoneSyncManager(
         settings.lastPhoneSync,
         runtime,
     ) { sensors, binding, syncSettings, lastSync, live ->
+        val currentReadings = runCatching { reader.read(sensors) }.getOrDefault(emptyMap())
         PhoneUiState(
             selectedSensors = sensors,
+            currentReadings = sensors.mapNotNull { sensor ->
+                currentReadings[sensor.name]?.let { reading -> sensor to reading }
+            }.toMap(),
+            missingSensorAccesses = missingPhoneSensorAccesses(context, sensors),
+            unsupportedSensors = unsupportedPhoneSensors(sensors),
+            notificationPolicyAccessGranted = phoneSensorAccessGranted(
+                context,
+                PhoneSensorAccess.NOTIFICATION_POLICY,
+            ),
             binding = binding,
             configurationMatches = binding == null ||
                 binding.targets.map { it.key }.toSet() == sensors.map(PhoneSensor::name).toSet(),
@@ -156,6 +168,7 @@ class PhoneSyncManager(
     ) {
         check(roomId.isNotBlank()) { "Выберите комнату SprutHub" }
         val selected = settings.selectedPhoneSensors.first()
+        ensurePhoneSensorsReady(selected)
         val binding = virtualDevice.createOrRecover(roomId, phoneVirtualFields(selected))
         refreshReliabilityInternal(binding, repair = true, force = true)
         val publishResult = publishAndPersist(binding)
@@ -194,6 +207,7 @@ class PhoneSyncManager(
         return syncMutex.withLock {
             runCatching {
                 val selected = settings.selectedPhoneSensors.first()
+                ensurePhoneSensorsReady(selected)
                 val stored = settings.phoneBinding.first()
                 val recoverySensors = stored?.targets
                     ?.mapNotNull { target -> runCatching { PhoneSensor.valueOf(target.key) }.getOrNull() }
@@ -263,6 +277,7 @@ class PhoneSyncManager(
             val current = settings.phoneBinding.first()
                 ?: error("Сначала создайте устройство телефона в SprutHub")
             val selected = selectedOverride ?: settings.selectedPhoneSensors.first()
+            ensurePhoneSensorsReady(selected)
             if (selectedOverride != null) settings.savePhoneSensors(selectedOverride)
             val binding = virtualDevice.recreate(
                 binding = current,
@@ -297,6 +312,7 @@ class PhoneSyncManager(
         val binding = settings.phoneBinding.first()
         if (enabled) {
             check(binding != null) { "Сначала создайте устройство телефона в SprutHub" }
+            ensurePhoneSensorsReady(settings.selectedPhoneSensors.first())
             val syncSettings = settings.phoneSyncSettings.first()
             if (syncSettings.mode == PhoneSyncMode.LIVE) {
                 check(notificationPermissionGranted()) {
@@ -539,6 +555,7 @@ class PhoneSyncManager(
         createIfMissing: Boolean = false,
     ): PhonePublishResult {
         val selected = settings.selectedPhoneSensors.first()
+        ensurePhoneSensorsReady(selected)
         val publishFields = fields ?: phoneVirtualFields(selected)
         val readings = reader.read(selected)
         check(readings.isNotEmpty()) { "Android не вернул выбранные данные телефона" }
@@ -583,6 +600,13 @@ class PhoneSyncManager(
             PackageManager.PERMISSION_GRANTED) &&
             context.getSystemService(NotificationManager::class.java).areNotificationsEnabled()
 
+    private fun ensurePhoneSensorsReady(sensors: Set<PhoneSensor>) {
+        phoneSensorReadinessError(
+            missingAccesses = missingPhoneSensorAccesses(context, sensors),
+            unsupportedSensors = unsupportedPhoneSensors(sensors),
+        )?.let(::error)
+    }
+
     private fun batteryOptimizationIgnored(): Boolean =
         context.getSystemService(PowerManager::class.java)?.isIgnoringBatteryOptimizations(context.packageName) == true
 
@@ -609,6 +633,10 @@ internal fun heartbeatBindingChanged(first: HealthDeviceBinding, second: HealthD
 
 data class PhoneUiState(
     val selectedSensors: Set<PhoneSensor> = SettingsRepository.DEFAULT_PHONE_SENSORS,
+    val currentReadings: Map<PhoneSensor, HealthReading> = emptyMap(),
+    val missingSensorAccesses: Set<PhoneSensorAccess> = emptySet(),
+    val unsupportedSensors: Set<PhoneSensor> = emptySet(),
+    val notificationPolicyAccessGranted: Boolean = false,
     val binding: HealthDeviceBinding? = null,
     val configurationMatches: Boolean = true,
     val syncSettings: PhoneSyncSettings = PhoneSyncSettings(),

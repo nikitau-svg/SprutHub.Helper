@@ -5,20 +5,40 @@ import io.github.nikitau.spruthubhelper.data.PhoneSensor
 private val BATTERY_EVENT_SENSORS = eventSensors(
     PhoneSensor.BATTERY_LEVEL,
     PhoneSensor.IS_CHARGING,
+    PhoneSensor.BATTERY_STATE,
     PhoneSensor.CHARGER_TYPE,
     PhoneSensor.BATTERY_TEMPERATURE,
     PhoneSensor.BATTERY_HEALTH,
     PhoneSensor.BATTERY_VOLTAGE,
+    PhoneSensor.BATTERY_CURRENT,
+    PhoneSensor.BATTERY_POWER,
+    PhoneSensor.CHARGE_TIME_REMAINING,
+    PhoneSensor.BATTERY_CYCLE_COUNT,
 )
 private val CHARGING_EVENT_SENSORS = eventSensors(
     PhoneSensor.IS_CHARGING,
+    PhoneSensor.BATTERY_STATE,
     PhoneSensor.CHARGER_TYPE,
+    PhoneSensor.BATTERY_CURRENT,
+    PhoneSensor.BATTERY_POWER,
+    PhoneSensor.CHARGE_TIME_REMAINING,
 )
 private val NETWORK_EVENT_SENSORS = eventSensors(
     PhoneSensor.CONNECTION_TYPE,
     PhoneSensor.NETWORK_METERED,
     PhoneSensor.NETWORK_VALIDATED,
     PhoneSensor.LOCAL_IP,
+)
+private val DISPLAY_EVENT_SENSORS = eventSensors(
+    PhoneSensor.SCREEN_BRIGHTNESS,
+    PhoneSensor.SCREEN_BRIGHTNESS_AUTO,
+    PhoneSensor.SCREEN_TIMEOUT,
+    PhoneSensor.SCREEN_ORIENTATION,
+    PhoneSensor.SCREEN_ROTATION,
+)
+private val AUDIO_EVENT_SENSORS = eventSensors(
+    PhoneSensor.RINGER_MODE,
+    PhoneSensor.DND_MODE,
 )
 
 private fun eventSensors(vararg sensors: PhoneSensor): Set<PhoneSensor> =
@@ -51,6 +71,15 @@ internal enum class PhoneSyncTrigger(
         "device-idle-mode-changed",
         PhoneSyncCadence.IMMEDIATE,
         eventSensors(PhoneSensor.DEVICE_IDLE),
+    ),
+    DISPLAY_SETTINGS_CHANGED("display-settings-changed", PhoneSyncCadence.IMMEDIATE, DISPLAY_EVENT_SENSORS),
+    CONFIGURATION_CHANGED("configuration-changed", PhoneSyncCadence.IMMEDIATE, DISPLAY_EVENT_SENSORS),
+    RINGER_MODE_CHANGED("ringer-mode-changed", PhoneSyncCadence.IMMEDIATE, AUDIO_EVENT_SENSORS),
+    DND_MODE_CHANGED("dnd-mode-changed", PhoneSyncCadence.IMMEDIATE, AUDIO_EVENT_SENSORS),
+    NEXT_ALARM_CHANGED(
+        "next-alarm-changed",
+        PhoneSyncCadence.IMMEDIATE,
+        eventSensors(PhoneSensor.NEXT_ALARM),
     ),
     NETWORK_AVAILABLE("network-available", PhoneSyncCadence.IMMEDIATE, NETWORK_EVENT_SENSORS),
     NETWORK_LOST("network-lost", PhoneSyncCadence.IMMEDIATE, NETWORK_EVENT_SENSORS),
@@ -88,6 +117,10 @@ internal object PhoneEventSyncPolicy {
         ACTION_TIMEZONE_CHANGED -> PhoneSyncTrigger.TIME_ZONE_CHANGED
         ACTION_POWER_SAVE_MODE_CHANGED -> PhoneSyncTrigger.POWER_SAVE_MODE_CHANGED
         ACTION_DEVICE_IDLE_MODE_CHANGED -> PhoneSyncTrigger.DEVICE_IDLE_MODE_CHANGED
+        ACTION_CONFIGURATION_CHANGED -> PhoneSyncTrigger.CONFIGURATION_CHANGED
+        ACTION_RINGER_MODE_CHANGED -> PhoneSyncTrigger.RINGER_MODE_CHANGED
+        ACTION_INTERRUPTION_FILTER_CHANGED -> PhoneSyncTrigger.DND_MODE_CHANGED
+        ACTION_NEXT_ALARM_CLOCK_CHANGED -> PhoneSyncTrigger.NEXT_ALARM_CHANGED
         else -> null
     }
 
@@ -126,4 +159,8 @@ internal object PhoneEventSyncPolicy {
     private const val ACTION_TIMEZONE_CHANGED = "android.intent.action.TIMEZONE_CHANGED"
     private const val ACTION_POWER_SAVE_MODE_CHANGED = "android.os.action.POWER_SAVE_MODE_CHANGED"
     private const val ACTION_DEVICE_IDLE_MODE_CHANGED = "android.os.action.DEVICE_IDLE_MODE_CHANGED"
+    private const val ACTION_CONFIGURATION_CHANGED = "android.intent.action.CONFIGURATION_CHANGED"
+    private const val ACTION_RINGER_MODE_CHANGED = "android.media.RINGER_MODE_CHANGED"
+    private const val ACTION_INTERRUPTION_FILTER_CHANGED = "android.app.action.INTERRUPTION_FILTER_CHANGED"
+    private const val ACTION_NEXT_ALARM_CLOCK_CHANGED = "android.app.action.NEXT_ALARM_CLOCK_CHANGED"
 }

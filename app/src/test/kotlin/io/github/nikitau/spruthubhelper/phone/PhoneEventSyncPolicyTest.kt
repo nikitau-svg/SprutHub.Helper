@@ -19,6 +19,10 @@ class PhoneEventSyncPolicyTest {
             "android.intent.action.TIMEZONE_CHANGED" to PhoneSyncTrigger.TIME_ZONE_CHANGED,
             "android.os.action.POWER_SAVE_MODE_CHANGED" to PhoneSyncTrigger.POWER_SAVE_MODE_CHANGED,
             "android.os.action.DEVICE_IDLE_MODE_CHANGED" to PhoneSyncTrigger.DEVICE_IDLE_MODE_CHANGED,
+            "android.intent.action.CONFIGURATION_CHANGED" to PhoneSyncTrigger.CONFIGURATION_CHANGED,
+            "android.media.RINGER_MODE_CHANGED" to PhoneSyncTrigger.RINGER_MODE_CHANGED,
+            "android.app.action.INTERRUPTION_FILTER_CHANGED" to PhoneSyncTrigger.DND_MODE_CHANGED,
+            "android.app.action.NEXT_ALARM_CLOCK_CHANGED" to PhoneSyncTrigger.NEXT_ALARM_CHANGED,
         )
 
         expected.forEach { (action, trigger) ->
@@ -82,6 +86,23 @@ class PhoneEventSyncPolicyTest {
             PhoneSyncTrigger.DEVICE_IDLE_MODE_CHANGED,
         ).forEach { trigger ->
             assertFalse(trigger.reason, PhoneEventSyncPolicy.decide(setOf(trigger), selected).shouldSync)
+        }
+    }
+
+    @Test
+    fun `display audio and alarm events target their own selected fields`() {
+        val cases = mapOf(
+            PhoneSyncTrigger.DISPLAY_SETTINGS_CHANGED to PhoneSensor.SCREEN_BRIGHTNESS,
+            PhoneSyncTrigger.CONFIGURATION_CHANGED to PhoneSensor.SCREEN_ROTATION,
+            PhoneSyncTrigger.RINGER_MODE_CHANGED to PhoneSensor.RINGER_MODE,
+            PhoneSyncTrigger.DND_MODE_CHANGED to PhoneSensor.DND_MODE,
+            PhoneSyncTrigger.NEXT_ALARM_CHANGED to PhoneSensor.NEXT_ALARM,
+        )
+
+        cases.forEach { (trigger, sensor) ->
+            val decision = PhoneEventSyncPolicy.decide(setOf(trigger), setOf(sensor))
+            assertTrue(trigger.reason, decision.shouldSync)
+            assertEquals(setOf(sensor), decision.matchedSensors)
         }
     }
 

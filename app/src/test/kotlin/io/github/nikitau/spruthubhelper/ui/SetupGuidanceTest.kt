@@ -3,6 +3,7 @@ package io.github.nikitau.spruthubhelper.ui
 import io.github.nikitau.spruthubhelper.data.ConnectionPhase
 import io.github.nikitau.spruthubhelper.data.ConnectionStatus
 import io.github.nikitau.spruthubhelper.data.HealthDeviceBinding
+import io.github.nikitau.spruthubhelper.data.PhoneSensorAccess
 import io.github.nikitau.spruthubhelper.data.PhoneSyncMode
 import io.github.nikitau.spruthubhelper.data.PhoneSyncSettings
 import io.github.nikitau.spruthubhelper.health.HealthUiState
@@ -99,6 +100,19 @@ class SetupGuidanceTest {
         )
 
         assertEquals(GuidanceAction.REQUEST_PHONE_LIVE_MODE, guidance.action)
+        assertEquals(SetupTone.ATTENTION, guidance.tone)
+    }
+
+    @Test
+    fun `phone requests selected sensor access before creating an accessory`() {
+        val guidance = phoneGuidance(
+            PhoneUiState(
+                binding = null,
+                missingSensorAccesses = setOf(PhoneSensorAccess.NOTIFICATION_POLICY),
+            ),
+        )
+
+        assertEquals(GuidanceAction.OPEN_PHONE_SENSOR_ACCESS, guidance.action)
         assertEquals(SetupTone.ATTENTION, guidance.tone)
     }
 

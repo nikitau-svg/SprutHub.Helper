@@ -127,6 +127,7 @@ import io.github.nikitau.spruthubhelper.data.PanelItemSize
 import io.github.nikitau.spruthubhelper.data.PhonePollInterval
 import io.github.nikitau.spruthubhelper.data.REQUIRED_PHONE_SENSORS
 import io.github.nikitau.spruthubhelper.data.PhoneSensor
+import io.github.nikitau.spruthubhelper.data.PhoneSensorAccess
 import io.github.nikitau.spruthubhelper.data.PhoneSensorCategory
 import io.github.nikitau.spruthubhelper.data.PhoneSyncMode
 import io.github.nikitau.spruthubhelper.data.SprutControl
@@ -139,6 +140,7 @@ import io.github.nikitau.spruthubhelper.tiles.TileIconResolver
 import io.github.nikitau.spruthubhelper.health.HealthUiState
 import io.github.nikitau.spruthubhelper.icons.CustomIconManager
 import io.github.nikitau.spruthubhelper.phone.PhoneUiState
+import io.github.nikitau.spruthubhelper.phone.phoneReadingLabel
 import io.github.nikitau.spruthubhelper.presence.PresenceUiState
 import io.github.nikitau.spruthubhelper.sprut.HeartbeatProtectionStatus
 import io.github.nikitau.spruthubhelper.tiles.TileInstallStateStore
@@ -1181,6 +1183,9 @@ private fun PhoneCard(
                     when (action) {
                         GuidanceAction.CREATE_PHONE_DEVICE -> viewModel.createPhoneDevice(selectedRoomId)
                         GuidanceAction.RECREATE_PHONE_DEVICE -> confirmRecreate = true
+                        GuidanceAction.OPEN_PHONE_SENSOR_ACCESS -> {
+                            context.startActivity(Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS))
+                        }
                         GuidanceAction.ENABLE_PHONE_BACKGROUND -> viewModel.setPhoneEnabled(true)
                         GuidanceAction.REQUEST_PHONE_LIVE_MODE -> onRequestLiveMode()
                         GuidanceAction.REQUEST_PHONE_WATCHDOG -> onRequestWatchdog()
@@ -1283,7 +1288,7 @@ private fun PhoneCard(
                             }
                         }
                         Text(
-                            "Зарядка, экран, энергосбережение и смена сети отправляются по событию; интервал нужен как страховочный опрос.",
+                            "Зарядка, экран, режим звука, будильник и смена сети отправляются по событию; интервал нужен как страховочный опрос.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -1295,6 +1300,9 @@ private fun PhoneCard(
                         Text(category.title, color = SprutGreen, fontWeight = FontWeight.SemiBold)
                         PhoneSensor.entries.filter { it.category == category }.forEach { sensor ->
                             val required = sensor in REQUIRED_PHONE_SENSORS
+                            val supported = Build.VERSION.SDK_INT >= sensor.minimumApi
+                            val accessMissing = sensor.access == PhoneSensorAccess.NOTIFICATION_POLICY &&
+                                !phone.notificationPolicyAccessGranted
                             Row(verticalAlignment = Alignment.Top) {
                                 Checkbox(
                                     checked = required || sensor in selectedSensors,
@@ -1304,10 +1312,15 @@ private fun PhoneCard(
                                             if (next.isNotEmpty()) {
                                                 selectedSensors = next
                                                 viewModel.savePhoneSensors(next)
+                                                if (checked && accessMissing) {
+                                                    context.startActivity(
+                                                        Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS),
+                                                    )
+                                                }
                                             }
                                         }
                                     },
-                                    enabled = !phone.syncing && !required,
+                                    enabled = !phone.syncing && !required && supported,
                                 )
                                 Column(Modifier.weight(1f).padding(top = 9.dp)) {
                                     Text(if (required) "${sensor.title} · всегда включён" else sensor.title)
@@ -1316,10 +1329,37 @@ private fun PhoneCard(
                                             append(sensor.description)
                                             if (sensor.unit.isNotBlank()) append(" · ").append(sensor.unit)
                                             append(" · ").append(sensor.updateKind.title)
+                                            if (sensor.minimumApi > 30) {
+                                                append(" · Android ").append(sensor.minimumApi).append("+")
+                                            }
+                                            if (sensor.access != PhoneSensorAccess.NONE) {
+                                                append(" · ")
+                                                append(if (accessMissing) "доступ не выдан" else "доступ выдан")
+                                            }
                                         },
                                         style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        color = if (!supported || accessMissing) {
+                                            MaterialTheme.colorScheme.error
+                                        } else {
+                                            MaterialTheme.colorScheme.onSurfaceVariant
+                                        },
                                     )
+                                    if (required || sensor in selectedSensors) {
+                                        val current = phoneReadingLabel(sensor, phone.currentReadings[sensor])
+                                        Text(
+                                            current?.let { "Сейчас: $it" } ?: when {
+                                                accessMissing -> "Сейчас недоступно без разрешения"
+                                                !supported -> "Не поддерживается этой версией Android"
+                                                else -> "Android сейчас не вернул значение"
+                                            },
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = if (current != null) {
+                                                MaterialTheme.colorScheme.primary
+                                            } else {
+                                                MaterialTheme.colorScheme.onSurfaceVariant
+                                            },
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -1327,6 +1367,25 @@ private fun PhoneCard(
 
                     HorizontalDivider()
                     Text("Разрешения и надёжность", fontWeight = FontWeight.SemiBold)
+                    if (selectedSensors.any { it.access == PhoneSensorAccess.NOTIFICATION_POLICY }) {
+                        val granted = phone.notificationPolicyAccessGranted
+                        ReliabilityRow(
+                            title = "Доступ к режиму «Не беспокоить»",
+                            ready = granted,
+                            readyText = "выдан",
+                            missingText = "нужен для выбранного показателя",
+                        )
+                        if (!granted) {
+                            OutlinedButton(
+                                onClick = {
+                                    context.startActivity(
+                                        Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS),
+                                    )
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) { Text("Разрешить доступ к режимам") }
+                        }
+                    }
                     ReliabilityRow(
                         title = "Защита на стороне SprutHub",
                         ready = phone.heartbeatProtection.ready ||

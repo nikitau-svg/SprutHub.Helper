@@ -19,6 +19,7 @@ internal enum class GuidanceAction {
     SYNC_HEALTH,
     CREATE_PHONE_DEVICE,
     RECREATE_PHONE_DEVICE,
+    OPEN_PHONE_SENSOR_ACCESS,
     ENABLE_PHONE_BACKGROUND,
     REQUEST_PHONE_LIVE_MODE,
     REQUEST_PHONE_WATCHDOG,
@@ -144,6 +145,22 @@ internal fun phoneGuidance(
     phone: PhoneUiState,
     configurationMatches: Boolean = phone.configurationMatches,
 ): SectionGuidance = when {
+    phone.unsupportedSensors.isNotEmpty() -> SectionGuidance(
+        progress = "Недоступно на этом телефоне",
+        title = "Снимите неподдерживаемые показатели",
+        detail = phone.unsupportedSensors.joinToString { sensor ->
+            "${sensor.title} требует Android ${sensor.minimumApi}+"
+        },
+        tone = SetupTone.ATTENTION,
+    )
+    phone.missingSensorAccesses.isNotEmpty() -> SectionGuidance(
+        progress = "Нужно специальное разрешение",
+        title = "Разрешите выбранные показатели",
+        detail = phone.missingSensorAccesses.joinToString { access -> access.description },
+        tone = SetupTone.ATTENTION,
+        action = GuidanceAction.OPEN_PHONE_SENSOR_ACCESS,
+        actionLabel = "Открыть доступ Android",
+    )
     phone.binding == null -> SectionGuidance(
         progress = "Шаг 1 из 2",
         title = "Создайте устройство телефона",
@@ -216,7 +233,7 @@ internal fun phoneGuidance(
         progress = "Телефон настроен",
         title = if (phone.syncSettings.mode == PhoneSyncMode.LIVE) "Событийная синхронизация работает" else "Периодическая синхронизация работает",
         detail = if (phone.syncSettings.mode == PhoneSyncMode.LIVE) {
-            "Зарядка, сеть, экран и энергосбережение отправляются по событию; опрос остаётся страховкой."
+            "Зарядка, сеть, экран, режим звука и будильник отправляются по событию; опрос остаётся страховкой."
         } else {
             "Android запускает контрольную задачу примерно раз в 15 минут."
         },
