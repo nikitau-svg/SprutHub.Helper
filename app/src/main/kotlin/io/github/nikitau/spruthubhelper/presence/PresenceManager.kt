@@ -22,7 +22,10 @@ import com.google.android.gms.location.GeofencingRequest
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import com.google.android.gms.tasks.CancellationTokenSource
+import io.github.nikitau.spruthubhelper.AppGraph
 import io.github.nikitau.spruthubhelper.data.SettingsRepository
+import io.github.nikitau.spruthubhelper.diagnostics.DiagnosticCategory
+import io.github.nikitau.spruthubhelper.diagnostics.DiagnosticOutcome
 import io.github.nikitau.spruthubhelper.sprut.VirtualPresenceDeviceManager
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CoroutineScope
@@ -155,16 +158,43 @@ class PresenceManager(
     }
 
     suspend fun syncNow(fromBackground: Boolean = false): Result<Unit> = mutationMutex.withLock {
+        val event = if (fromBackground) "Фоновая синхронизация геозон" else "Ручная синхронизация геозон"
+        val enabled = settings.presenceZones.first().filter(PresenceZone::enabled)
+        if (enabled.isEmpty()) {
+            AppGraph.diagnostics.record(
+                category = DiagnosticCategory.SYNC,
+                event = event,
+                outcome = DiagnosticOutcome.SKIPPED,
+                reason = "Нет включённых геозон",
+            )
+            return@withLock Result.success(Unit)
+        }
+        AppGraph.diagnostics.record(
+            category = DiagnosticCategory.SYNC,
+            event = event,
+            outcome = DiagnosticOutcome.STARTED,
+            details = mapOf("источник" to if (fromBackground) "фон" else "экран приложения"),
+        )
         runCatching {
-            val enabled = settings.presenceZones.first().filter(PresenceZone::enabled)
-            if (enabled.isEmpty()) return@runCatching
             check(permissionState().preciseGranted) { "Нет разрешения на точную геопозицию" }
             val location = currentLocation(allowCached = true)
                 ?: error("Android пока не вернул геопозицию")
             if (!fromBackground) runtime.update { it.copy(busy = true, message = "Обновляю зоны…") }
             enabled.forEach { zone -> publishAtLocation(zone, location, insideOverride = null) }
             runtime.update { it.copy(busy = false, message = "Зоны синхронизированы") }
+        }.onSuccess {
+            AppGraph.diagnostics.record(
+                category = DiagnosticCategory.SYNC,
+                event = event,
+                outcome = DiagnosticOutcome.SUCCESS,
+            )
         }.onFailure { error ->
+            AppGraph.diagnostics.record(
+                category = DiagnosticCategory.SYNC,
+                event = event,
+                outcome = DiagnosticOutcome.FAILED,
+                reason = error.message,
+            )
             runtime.update { it.copy(busy = false, message = error.message ?: "Ошибка синхронизации зон") }
         }
     }
@@ -192,6 +222,12 @@ class PresenceManager(
             runCatching {
                 publishAtLocation(eventState, location, insideOverride = entered)
             }.onFailure { error ->
+                AppGraph.diagnostics.record(
+                    category = DiagnosticCategory.SYNC,
+                    event = "Событие геозоны",
+                    outcome = DiagnosticOutcome.FAILED,
+                    reason = "Событие сохранено локально; отправка отложена: ${error.message.orEmpty()}",
+                )
                 runtime.update { it.copy(message = error.message ?: "Не удалось отправить событие зоны") }
                 enqueueImmediateSync()
             }

@@ -217,6 +217,10 @@ class MainViewModel : ViewModel() {
         phone.setPollInterval(interval)
     }
 
+    fun setPhoneWatchdogEnabled(enabled: Boolean) = launchWork(null) {
+        phone.setWatchdogEnabled(enabled)
+    }
+
     fun refreshPhoneStatus() = phone.refreshRuntimeStatus()
 
     fun requestCurrentCoordinates() = launchWork(null) {

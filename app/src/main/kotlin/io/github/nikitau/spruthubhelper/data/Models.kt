@@ -492,6 +492,7 @@ data class PhoneSyncSettings(
     val enabled: Boolean = false,
     val mode: PhoneSyncMode = PhoneSyncMode.BALANCED,
     val pollInterval: PhonePollInterval = PhonePollInterval.FIVE_MINUTES,
+    val watchdogEnabled: Boolean = true,
 )
 
 @Serializable

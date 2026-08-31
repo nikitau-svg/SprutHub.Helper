@@ -89,6 +89,8 @@ import io.github.nikitau.spruthubhelper.data.PanelItemSize
 import io.github.nikitau.spruthubhelper.data.ServiceControlCard
 import io.github.nikitau.spruthubhelper.data.SprutControl
 import io.github.nikitau.spruthubhelper.data.buildServiceControlCards
+import io.github.nikitau.spruthubhelper.diagnostics.DiagnosticCategory
+import io.github.nikitau.spruthubhelper.diagnostics.DiagnosticOutcome
 import io.github.nikitau.spruthubhelper.icons.CustomIconManager
 import io.github.nikitau.spruthubhelper.tiles.TileIconResolver
 import io.github.nikitau.spruthubhelper.ui.MainActivity
@@ -212,8 +214,24 @@ private fun SprutDevicePanel(
             activity,
             object : KeyguardManager.KeyguardDismissCallback() {
                 override fun onDismissSucceeded() = action()
-                override fun onDismissError() = showMessage("Разблокируйте телефон для управления")
-                override fun onDismissCancelled() = showMessage("Действие отменено")
+                override fun onDismissError() {
+                    AppGraph.diagnostics.record(
+                        category = DiagnosticCategory.COMMAND,
+                        event = "Команда крупной панели",
+                        outcome = DiagnosticOutcome.SKIPPED,
+                        reason = "Android не разрешил выполнить команду на заблокированном экране",
+                    )
+                    showMessage("Разблокируйте телефон для управления")
+                }
+                override fun onDismissCancelled() {
+                    AppGraph.diagnostics.record(
+                        category = DiagnosticCategory.COMMAND,
+                        event = "Команда крупной панели",
+                        outcome = DiagnosticOutcome.SKIPPED,
+                        reason = "Разблокировка отменена пользователем",
+                    )
+                    showMessage("Действие отменено")
+                }
             },
         )
     }
@@ -221,9 +239,21 @@ private fun SprutDevicePanel(
     fun runCommand(card: ServiceControlCard, control: SprutControl, command: suspend () -> Result<Unit>) {
         authorize(control) {
             scope.launch {
+                val event = "Команда крупной панели"
+                AppGraph.diagnostics.record(
+                    category = DiagnosticCategory.COMMAND,
+                    event = event,
+                    outcome = DiagnosticOutcome.STARTED,
+                )
                 busyCardId = card.id
                 val result = command()
                 busyCardId = null
+                AppGraph.diagnostics.record(
+                    category = DiagnosticCategory.COMMAND,
+                    event = event,
+                    outcome = if (result.isSuccess) DiagnosticOutcome.SUCCESS else DiagnosticOutcome.FAILED,
+                    reason = result.exceptionOrNull()?.message,
+                )
                 result.onSuccess {
                     sentCardId = card.id
                     showMessage("${card.title}: команда отправлена")

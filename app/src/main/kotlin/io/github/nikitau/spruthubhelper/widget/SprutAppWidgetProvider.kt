@@ -16,6 +16,8 @@ import io.github.nikitau.spruthubhelper.AppGraph
 import io.github.nikitau.spruthubhelper.R
 import io.github.nikitau.spruthubhelper.data.ControlBehavior
 import io.github.nikitau.spruthubhelper.data.SprutControl
+import io.github.nikitau.spruthubhelper.diagnostics.DiagnosticCategory
+import io.github.nikitau.spruthubhelper.diagnostics.DiagnosticOutcome
 import io.github.nikitau.spruthubhelper.icons.CustomIconManager
 import io.github.nikitau.spruthubhelper.tiles.TileIconResolver
 import io.github.nikitau.spruthubhelper.ui.MainActivity
@@ -70,8 +72,23 @@ class SprutAppWidgetProvider : AppWidgetProvider() {
             AppWidgetManager.EXTRA_APPWIDGET_ID,
             AppWidgetManager.INVALID_APPWIDGET_ID,
         )
-        val controlId = WidgetAssignmentStore.controlId(context, appWidgetId) ?: return
         AppGraph.initialize(context.applicationContext)
+        val event = "Команда виджета"
+        val controlId = WidgetAssignmentStore.controlId(context, appWidgetId)
+        if (controlId == null) {
+            AppGraph.diagnostics.record(
+                category = DiagnosticCategory.COMMAND,
+                event = event,
+                outcome = DiagnosticOutcome.SKIPPED,
+                reason = "Виджет не настроен",
+            )
+            return
+        }
+        AppGraph.diagnostics.record(
+            category = DiagnosticCategory.COMMAND,
+            event = event,
+            outcome = DiagnosticOutcome.STARTED,
+        )
         val pendingResult = goAsync()
         AppGraph.applicationScope.launch {
             try {
@@ -89,8 +106,19 @@ class SprutAppWidgetProvider : AppWidgetProvider() {
                     WidgetPrimaryAction.OPEN_APP -> Result.success(Unit)
                 }
                 result.getOrThrow()
+                AppGraph.diagnostics.record(
+                    category = DiagnosticCategory.COMMAND,
+                    event = event,
+                    outcome = DiagnosticOutcome.SUCCESS,
+                )
                 updateAll(context)
             } catch (error: Throwable) {
+                AppGraph.diagnostics.record(
+                    category = DiagnosticCategory.COMMAND,
+                    event = event,
+                    outcome = DiagnosticOutcome.FAILED,
+                    reason = error.message,
+                )
                 showToast(context, error.message ?: "Не удалось выполнить команду")
                 updateAll(context)
             } finally {
@@ -101,12 +129,29 @@ class SprutAppWidgetProvider : AppWidgetProvider() {
 
     private fun handleRefresh(context: Context) {
         AppGraph.initialize(context.applicationContext)
+        val event = "Обновление виджета"
+        AppGraph.diagnostics.record(
+            category = DiagnosticCategory.COMMAND,
+            event = event,
+            outcome = DiagnosticOutcome.STARTED,
+        )
         val pendingResult = goAsync()
         AppGraph.applicationScope.launch {
             try {
                 AppGraph.repository.refresh(forceConnection = true).getOrThrow()
+                AppGraph.diagnostics.record(
+                    category = DiagnosticCategory.COMMAND,
+                    event = event,
+                    outcome = DiagnosticOutcome.SUCCESS,
+                )
                 updateAll(context)
             } catch (error: Throwable) {
+                AppGraph.diagnostics.record(
+                    category = DiagnosticCategory.COMMAND,
+                    event = event,
+                    outcome = DiagnosticOutcome.FAILED,
+                    reason = error.message,
+                )
                 showToast(context, error.message ?: "Не удалось обновить SprutHub")
             } finally {
                 pendingResult.finish()

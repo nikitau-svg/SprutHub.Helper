@@ -1,6 +1,7 @@
 package io.github.nikitau.spruthubhelper.phone
 
 import android.Manifest
+import android.app.NotificationManager
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
@@ -13,12 +14,15 @@ import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
+import io.github.nikitau.spruthubhelper.AppGraph
 import io.github.nikitau.spruthubhelper.data.HealthDeviceBinding
 import io.github.nikitau.spruthubhelper.data.PhonePollInterval
 import io.github.nikitau.spruthubhelper.data.PhoneSensor
 import io.github.nikitau.spruthubhelper.data.PhoneSyncMode
 import io.github.nikitau.spruthubhelper.data.PhoneSyncSettings
 import io.github.nikitau.spruthubhelper.data.SettingsRepository
+import io.github.nikitau.spruthubhelper.diagnostics.DiagnosticCategory
+import io.github.nikitau.spruthubhelper.diagnostics.DiagnosticOutcome
 import io.github.nikitau.spruthubhelper.sprut.VirtualHealthDeviceManager
 import io.github.nikitau.spruthubhelper.sprut.VirtualFieldSpec
 import io.github.nikitau.spruthubhelper.sprut.bindingMatchesFields
@@ -29,6 +33,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -88,8 +93,20 @@ class PhoneSyncManager(
                         Log.i(LOG_TAG, "No recoverable phone accessory on startup: ${error.message}")
                     }
             }
-            settings.phoneSyncSettings.collect { syncSettings ->
-                if (syncSettings.enabled) schedule() else cancel()
+            settings.phoneSyncSettings.distinctUntilChanged().collect { syncSettings ->
+                if (syncSettings.enabled) {
+                    if (settings.phoneMonitoringStarted.first() == null) {
+                        settings.ensurePhoneMonitoringStarted()
+                    }
+                    schedule()
+                } else {
+                    cancel()
+                }
+                if (syncSettings.enabled && syncSettings.watchdogEnabled) {
+                    PhoneSyncWatchdog.schedule(context)
+                } else {
+                    PhoneSyncWatchdog.cancel(context)
+                }
                 if (!syncSettings.enabled || syncSettings.mode != PhoneSyncMode.LIVE) {
                     PhoneMonitorService.stop(context)
                 }
@@ -130,7 +147,21 @@ class PhoneSyncManager(
     }
 
     suspend fun syncNow(fromBackground: Boolean = false): Result<Unit> {
-        if (fromBackground && !settings.phoneSyncSettings.first().enabled) return Result.success(Unit)
+        if (fromBackground && !settings.phoneSyncSettings.first().enabled) {
+            AppGraph.diagnostics.record(
+                category = DiagnosticCategory.SYNC,
+                event = "Синхронизация телефона",
+                outcome = DiagnosticOutcome.SKIPPED,
+                reason = "фоновая синхронизация выключена",
+            )
+            return Result.success(Unit)
+        }
+        AppGraph.diagnostics.record(
+            category = DiagnosticCategory.SYNC,
+            event = "Синхронизация телефона",
+            outcome = DiagnosticOutcome.STARTED,
+            details = mapOf("источник" to if (fromBackground) "фон" else "действие пользователя"),
+        )
         return syncMutex.withLock {
             runCatching {
                 val selected = settings.selectedPhoneSensors.first()
@@ -161,9 +192,23 @@ class PhoneSyncManager(
                 }
                 Log.i(LOG_TAG, "Phone sync completed with $published fields")
                 Unit
+            }.onSuccess {
+                AppGraph.diagnostics.record(
+                    category = DiagnosticCategory.SYNC,
+                    event = "Синхронизация телефона",
+                    outcome = DiagnosticOutcome.SUCCESS,
+                    details = mapOf("источник" to if (fromBackground) "фон" else "действие пользователя"),
+                )
             }.onFailure { error ->
                 runtime.update { it.copy(syncing = false, message = error.message ?: "Ошибка синхронизации телефона") }
                 Log.e(LOG_TAG, "Phone sync failed", error)
+                AppGraph.diagnostics.record(
+                    category = DiagnosticCategory.SYNC,
+                    event = "Синхронизация телефона",
+                    outcome = DiagnosticOutcome.FAILED,
+                    reason = error.message ?: "неизвестная ошибка",
+                    details = mapOf("источник" to if (fromBackground) "фон" else "действие пользователя"),
+                )
             }
         }
     }
@@ -206,11 +251,14 @@ class PhoneSyncManager(
         settings.setPhoneEnabled(enabled)
         if (enabled) {
             schedule()
-            if (settings.phoneSyncSettings.first().mode == PhoneSyncMode.LIVE) {
+            val syncSettings = settings.phoneSyncSettings.first()
+            if (syncSettings.watchdogEnabled) PhoneSyncWatchdog.schedule(context)
+            if (syncSettings.mode == PhoneSyncMode.LIVE) {
                 PhoneMonitorService.start(context)
             }
         } else {
             cancel()
+            PhoneSyncWatchdog.cancel(context)
             PhoneMonitorService.stop(context)
         }
         runtime.update {
@@ -246,6 +294,30 @@ class PhoneSyncManager(
         settings.setPhonePollInterval(interval)
         PhoneMonitorService.refresh(context)
         runtime.update { it.copy(message = "Опрос в постоянном режиме: ${interval.title}") }
+    }
+
+    suspend fun setWatchdogEnabled(enabled: Boolean) {
+        if (enabled) {
+            check(notificationPermissionGranted()) {
+                "Для локального предупреждения разрешите уведомления"
+            }
+        }
+        settings.setPhoneWatchdogEnabled(enabled)
+        val backgroundEnabled = settings.phoneSyncSettings.first().enabled
+        if (enabled && backgroundEnabled) {
+            PhoneSyncWatchdog.schedule(context)
+        } else {
+            PhoneSyncWatchdog.cancel(context)
+        }
+        runtime.update {
+            it.copy(
+                message = if (enabled) {
+                    "Локальное предупреждение о застывшей синхронизации включено"
+                } else {
+                    "Локальное предупреждение выключено"
+                },
+            )
+        }
     }
 
     fun ensureLiveMonitor() {
@@ -292,6 +364,7 @@ class PhoneSyncManager(
         }.getOrThrow()
         settings.savePhoneBinding(verifiedBinding)
         settings.markPhoneSynced()
+        PhoneSyncWatchdog.onSyncSucceeded(context)
         return readings.keys.count { key -> verifiedBinding.targets.any { it.key == key } }
     }
 
@@ -312,9 +385,10 @@ class PhoneSyncManager(
     }
 
     private fun notificationPermissionGranted(): Boolean =
-        Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+        (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
             ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
-            PackageManager.PERMISSION_GRANTED
+            PackageManager.PERMISSION_GRANTED) &&
+            context.getSystemService(NotificationManager::class.java).areNotificationsEnabled()
 
     private fun batteryOptimizationIgnored(): Boolean =
         context.getSystemService(PowerManager::class.java)?.isIgnoringBatteryOptimizations(context.packageName) == true

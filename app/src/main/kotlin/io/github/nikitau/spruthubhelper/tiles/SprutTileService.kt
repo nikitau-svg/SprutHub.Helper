@@ -11,6 +11,8 @@ import io.github.nikitau.spruthubhelper.AppGraph
 import io.github.nikitau.spruthubhelper.data.ControlBehavior
 import io.github.nikitau.spruthubhelper.data.DeviceKind
 import io.github.nikitau.spruthubhelper.data.SprutControl
+import io.github.nikitau.spruthubhelper.diagnostics.DiagnosticCategory
+import io.github.nikitau.spruthubhelper.diagnostics.DiagnosticOutcome
 import io.github.nikitau.spruthubhelper.icons.CustomIconManager
 import io.github.nikitau.spruthubhelper.ui.MainActivity
 import kotlinx.coroutines.CoroutineScope
@@ -52,9 +54,23 @@ abstract class SprutTileService(private val slot: Int) : TileService() {
     }
 
     private suspend fun performAssignedAction() {
+        val event = "Команда плитки быстрых настроек"
+        AppGraph.diagnostics.record(
+            category = DiagnosticCategory.COMMAND,
+            event = event,
+            outcome = DiagnosticOutcome.STARTED,
+            details = mapOf("слот" to slot.toString()),
+        )
         repository.refreshIfStale(maxAgeMs = 10_000)
         val control = assignedControl()
         if (control == null) {
+            AppGraph.diagnostics.record(
+                category = DiagnosticCategory.COMMAND,
+                event = event,
+                outcome = DiagnosticOutcome.SKIPPED,
+                reason = "Плитке не назначено устройство или назначение устарело",
+                details = mapOf("слот" to slot.toString()),
+            )
             updateTile("Обновите назначение")
             return
         }
@@ -69,13 +85,28 @@ abstract class SprutTileService(private val slot: Int) : TileService() {
                         if (control.value.asDouble() > midpoint) control.minimum else control.maximum,
                     )
                 } else {
+                    AppGraph.diagnostics.record(
+                        category = DiagnosticCategory.COMMAND,
+                        event = event,
+                        outcome = DiagnosticOutcome.SKIPPED,
+                        reason = "Для регулировки требуется открыть приложение",
+                        details = mapOf("слот" to slot.toString()),
+                    )
                     openControl(control)
-                    Result.success(Unit)
+                    updateTile()
+                    return
                 }
             }
             ControlBehavior.BUTTON -> repository.execute(control.id)
             ControlBehavior.SENSOR -> Result.failure(IllegalStateException("Только чтение"))
         }
+        AppGraph.diagnostics.record(
+            category = DiagnosticCategory.COMMAND,
+            event = event,
+            outcome = if (result.isSuccess) DiagnosticOutcome.SUCCESS else DiagnosticOutcome.FAILED,
+            reason = result.exceptionOrNull()?.message,
+            details = mapOf("слот" to slot.toString()),
+        )
         result.onFailure { error -> Log.e(LOG_TAG, "Tile $slot action failed", error) }
         updateTile(result.exceptionOrNull()?.message)
     }

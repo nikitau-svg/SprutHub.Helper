@@ -74,10 +74,17 @@ class SettingsRepository(private val context: Context) {
             pollInterval = preferences[Keys.PHONE_POLL_INTERVAL]
                 ?.let { runCatching { PhonePollInterval.valueOf(it) }.getOrNull() }
                 ?: PhonePollInterval.FIVE_MINUTES,
+            watchdogEnabled = preferences[Keys.PHONE_WATCHDOG_ENABLED] ?: true,
         )
     }
 
     val lastPhoneSync: Flow<Long?> = context.settingsDataStore.data.map { it[Keys.LAST_PHONE_SYNC] }
+    val phoneMonitoringStarted: Flow<Long?> = context.settingsDataStore.data.map {
+        it[Keys.PHONE_MONITORING_STARTED]
+    }
+    val phoneWatchdogNotifiedReference: Flow<Long?> = context.settingsDataStore.data.map {
+        it[Keys.PHONE_WATCHDOG_NOTIFIED_REFERENCE]
+    }
 
     val presenceZones: Flow<List<PresenceZone>> = context.settingsDataStore.data.map { preferences ->
         preferences[Keys.PRESENCE_ZONES]
@@ -281,11 +288,23 @@ class SettingsRepository(private val context: Context) {
         context.settingsDataStore.edit { preferences ->
             preferences.remove(Keys.PHONE_BINDING)
             preferences[Keys.PHONE_ENABLED] = false
+            preferences.remove(Keys.PHONE_MONITORING_STARTED)
+            preferences.remove(Keys.PHONE_WATCHDOG_NOTIFIED_REFERENCE)
         }
     }
 
-    suspend fun setPhoneEnabled(enabled: Boolean) {
-        context.settingsDataStore.edit { it[Keys.PHONE_ENABLED] = enabled }
+    suspend fun setPhoneEnabled(enabled: Boolean, epochMs: Long = System.currentTimeMillis()) {
+        context.settingsDataStore.edit { preferences ->
+            val wasEnabled = preferences[Keys.PHONE_ENABLED] ?: false
+            preferences[Keys.PHONE_ENABLED] = enabled
+            if (enabled && !wasEnabled) {
+                preferences[Keys.PHONE_MONITORING_STARTED] = epochMs
+                preferences.remove(Keys.PHONE_WATCHDOG_NOTIFIED_REFERENCE)
+            } else if (!enabled) {
+                preferences.remove(Keys.PHONE_MONITORING_STARTED)
+                preferences.remove(Keys.PHONE_WATCHDOG_NOTIFIED_REFERENCE)
+            }
+        }
     }
 
     suspend fun setPhoneSyncMode(mode: PhoneSyncMode) {
@@ -296,8 +315,38 @@ class SettingsRepository(private val context: Context) {
         context.settingsDataStore.edit { it[Keys.PHONE_POLL_INTERVAL] = interval.name }
     }
 
+    suspend fun setPhoneWatchdogEnabled(enabled: Boolean, epochMs: Long = System.currentTimeMillis()) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[Keys.PHONE_WATCHDOG_ENABLED] = enabled
+            preferences.remove(Keys.PHONE_WATCHDOG_NOTIFIED_REFERENCE)
+            if (enabled && preferences[Keys.PHONE_ENABLED] == true) {
+                preferences[Keys.PHONE_MONITORING_STARTED] = epochMs
+            }
+        }
+    }
+
+    suspend fun ensurePhoneMonitoringStarted(epochMs: Long = System.currentTimeMillis()) {
+        context.settingsDataStore.edit { preferences ->
+            if (
+                preferences[Keys.PHONE_ENABLED] == true &&
+                preferences[Keys.PHONE_MONITORING_STARTED] == null
+            ) {
+                preferences[Keys.PHONE_MONITORING_STARTED] = epochMs
+            }
+        }
+    }
+
     suspend fun markPhoneSynced(epochMs: Long = System.currentTimeMillis()) {
-        context.settingsDataStore.edit { it[Keys.LAST_PHONE_SYNC] = epochMs }
+        context.settingsDataStore.edit { preferences ->
+            preferences[Keys.LAST_PHONE_SYNC] = epochMs
+            preferences.remove(Keys.PHONE_WATCHDOG_NOTIFIED_REFERENCE)
+        }
+    }
+
+    suspend fun markPhoneWatchdogNotified(referenceEpochMs: Long) {
+        context.settingsDataStore.edit {
+            it[Keys.PHONE_WATCHDOG_NOTIFIED_REFERENCE] = referenceEpochMs
+        }
     }
 
     suspend fun savePresenceZones(zones: List<PresenceZone>) {
@@ -404,7 +453,10 @@ class SettingsRepository(private val context: Context) {
         val PHONE_ENABLED = booleanPreferencesKey("phone_enabled")
         val PHONE_SYNC_MODE = stringPreferencesKey("phone_sync_mode")
         val PHONE_POLL_INTERVAL = stringPreferencesKey("phone_poll_interval")
+        val PHONE_WATCHDOG_ENABLED = booleanPreferencesKey("phone_watchdog_enabled")
         val LAST_PHONE_SYNC = longPreferencesKey("last_phone_sync")
+        val PHONE_MONITORING_STARTED = longPreferencesKey("phone_monitoring_started")
+        val PHONE_WATCHDOG_NOTIFIED_REFERENCE = longPreferencesKey("phone_watchdog_notified_reference")
         val PRESENCE_ZONES = stringPreferencesKey("presence_zones")
     }
 

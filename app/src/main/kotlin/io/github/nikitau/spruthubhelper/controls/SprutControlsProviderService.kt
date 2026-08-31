@@ -8,6 +8,8 @@ import android.service.controls.actions.ControlAction
 import android.service.controls.actions.FloatAction
 import io.github.nikitau.spruthubhelper.AppGraph
 import io.github.nikitau.spruthubhelper.data.buildServiceControlCards
+import io.github.nikitau.spruthubhelper.diagnostics.DiagnosticCategory
+import io.github.nikitau.spruthubhelper.diagnostics.DiagnosticOutcome
 import java.util.concurrent.Flow.Publisher
 import java.util.function.Consumer
 import kotlinx.coroutines.CoroutineScope
@@ -60,12 +62,25 @@ class SprutControlsProviderService : ControlsProviderService() {
         consumer: Consumer<Int>,
     ) {
         scope.launch {
+            val event = "Команда системной панели Android"
+            AppGraph.diagnostics.record(
+                category = DiagnosticCategory.COMMAND,
+                event = event,
+                outcome = DiagnosticOutcome.STARTED,
+                details = mapOf("тип" to action.javaClass.simpleName),
+            )
             val result = when (action) {
                 is BooleanAction -> repository.setBoolean(controlId, action.newState)
                 is FloatAction -> repository.setRange(controlId, action.newValue.toDouble())
                 is CommandAction -> repository.execute(controlId)
                 else -> Result.failure(IllegalArgumentException("Неподдерживаемая команда"))
             }
+            AppGraph.diagnostics.record(
+                category = DiagnosticCategory.COMMAND,
+                event = event,
+                outcome = if (result.isSuccess) DiagnosticOutcome.SUCCESS else DiagnosticOutcome.FAILED,
+                reason = result.exceptionOrNull()?.message,
+            )
             consumer.accept(if (result.isSuccess) ControlAction.RESPONSE_OK else ControlAction.RESPONSE_FAIL)
         }
     }

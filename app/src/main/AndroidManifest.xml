@@ -93,6 +93,11 @@
         </activity>
 
         <activity
+            android:name=".ui.DiagnosticsActivity"
+            android:exported="false"
+            android:theme="@style/Theme.SprutHubHelper" />
+
+        <activity
             android:name=".controls.SprutControlsPanelActivity"
             android:excludeFromRecents="true"
             android:exported="true"
@@ -282,6 +287,16 @@
                 <action android:name="android.service.quicksettings.action.QS_TILE" />
             </intent-filter>
         </service>
+
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.diagnostics.files"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/diagnostic_file_paths" />
+        </provider>
 
     </application>
 

@@ -260,6 +260,13 @@ private fun MainScreen(viewModel: MainViewModel = viewModel()) {
         if (granted) viewModel.setPhoneSyncMode(PhoneSyncMode.LIVE)
         else viewModel.showNotice("Без разрешения на уведомления постоянный режим недоступен")
     }
+    val watchdogNotificationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        viewModel.refreshPhoneStatus()
+        if (granted) viewModel.setPhoneWatchdogEnabled(true)
+        else viewModel.showNotice("Без разрешения Android не покажет предупреждение о синхронизации")
+    }
     val locationPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
     ) {
@@ -375,6 +382,19 @@ private fun MainScreen(viewModel: MainViewModel = viewModel()) {
                             viewModel.setPhoneSyncMode(PhoneSyncMode.LIVE)
                         } else {
                             notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                        }
+                    },
+                    onRequestWatchdog = {
+                        if (
+                            Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+                            ContextCompat.checkSelfPermission(
+                                context,
+                                Manifest.permission.POST_NOTIFICATIONS,
+                            ) == PackageManager.PERMISSION_GRANTED
+                        ) {
+                            viewModel.setPhoneWatchdogEnabled(true)
+                        } else {
+                            watchdogNotificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
                         }
                     },
                 )
@@ -726,6 +746,7 @@ private fun PhoneCard(
     ui: MainUiState,
     viewModel: MainViewModel,
     onRequestLiveMode: () -> Unit,
+    onRequestWatchdog: () -> Unit,
 ) {
     val context = LocalContext.current
     var expanded by rememberSaveable { mutableStateOf(false) }
@@ -884,6 +905,29 @@ private fun PhoneCard(
 
                     HorizontalDivider()
                     Text("Разрешения и надёжность", fontWeight = FontWeight.SemiBold)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Предупреждать о застывшей синхронизации")
+                            Text(
+                                "Локальная проверка примерно каждые 15 минут; предупреждение после 45 минут без успеха",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Switch(
+                            checked = phone.syncSettings.watchdogEnabled,
+                            onCheckedChange = { enabled ->
+                                if (enabled) onRequestWatchdog()
+                                else viewModel.setPhoneWatchdogEnabled(false)
+                            },
+                            enabled = !phone.syncing,
+                        )
+                    }
+                    Text(
+                        "Это локальная страховка без внешнего сервера. Android может отложить проверку; после force-stop в настройках или полной заморозки приложения прошивкой уведомления не будет.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                     Text(
                         "Текущий набор показателей не требует геолокации, доступа к звонкам, Bluetooth или файлам. Такие датчики будут добавляться отдельными выключенными группами.",
                         style = MaterialTheme.typography.bodySmall,
@@ -893,7 +937,7 @@ private fun PhoneCard(
                         title = "Уведомления",
                         ready = phone.notificationPermissionGranted,
                         readyText = "разрешены",
-                        missingText = "нужны для постоянного режима",
+                        missingText = "нужны для постоянного режима и watchdog",
                     )
                     ReliabilityRow(
                         title = "Оптимизация батареи",
@@ -1729,6 +1773,8 @@ private fun EmptyCatalogCard(hasCache: Boolean, onRefresh: () -> Unit) {
 
 @Composable
 private fun DiagnosticsCard(ui: MainUiState) {
+    val context = LocalContext.current
+    val events by AppGraph.diagnostics.events.collectAsState()
     var expanded by rememberSaveable { mutableStateOf(false) }
     OutlinedCard(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
@@ -1747,8 +1793,14 @@ private fun DiagnosticsCard(ui: MainUiState) {
             }
             AnimatedVisibility(expanded) {
                 Column(Modifier.padding(start = 14.dp, end = 14.dp, bottom = 14.dp)) {
-                    if (ui.diagnostics.isEmpty()) Text("Событий пока нет", style = MaterialTheme.typography.bodySmall)
-                    ui.diagnostics.take(12).forEachIndexed { index, event ->
+                    Text(
+                        "Структурированный ограниченный журнал без raw logcat. Секреты и персональные значения скрываются.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    if (events.isEmpty()) Text("Событий пока нет", style = MaterialTheme.typography.bodySmall)
+                    events.take(3).forEachIndexed { index, event ->
                         if (index > 0) HorizontalDivider(Modifier.padding(vertical = 7.dp))
                         Text(
                             DateFormat.getTimeInstance(DateFormat.MEDIUM).format(Date(event.epochMs)),
@@ -1756,10 +1808,21 @@ private fun DiagnosticsCard(ui: MainUiState) {
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                         Text(
-                            event.message,
+                            "${event.event}: ${event.outcome.title}",
                             style = MaterialTheme.typography.bodySmall,
-                            color = if (event.isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
+                            color = if (event.outcome == io.github.nikitau.spruthubhelper.diagnostics.DiagnosticOutcome.FAILED) {
+                                MaterialTheme.colorScheme.error
+                            } else {
+                                MaterialTheme.colorScheme.onSurface
+                            },
                         )
+                    }
+                    Spacer(Modifier.height(10.dp))
+                    OutlinedButton(
+                        onClick = { context.startActivity(Intent(context, DiagnosticsActivity::class.java)) },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text("Открыть диагностику")
                     }
                 }
             }

@@ -21,6 +21,8 @@ import androidx.core.content.ContextCompat
 import io.github.nikitau.spruthubhelper.AppGraph
 import io.github.nikitau.spruthubhelper.R
 import io.github.nikitau.spruthubhelper.data.PhonePollInterval
+import io.github.nikitau.spruthubhelper.diagnostics.DiagnosticCategory
+import io.github.nikitau.spruthubhelper.diagnostics.DiagnosticOutcome
 import io.github.nikitau.spruthubhelper.ui.MainActivity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -31,36 +33,56 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 class PhoneMonitorService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private var eventJob: Job? = null
     private var pollingJob: Job? = null
+    private lateinit var eventSync: PhoneEventSyncCoalescer
     private var receiverRegistered = false
     private var networkCallbackRegistered = false
 
     private val eventReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            triggerSync("broadcast:${intent?.action.orEmpty().substringAfterLast('.')}")
+            val trigger = PhoneEventSyncPolicy.fromBroadcastAction(intent?.action)
+            if (trigger == null) {
+                Log.d(LOG_TAG, "Phone event skipped: unsupported broadcast")
+            } else {
+                triggerSync(trigger)
+            }
         }
     }
 
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
-        override fun onAvailable(network: Network) = triggerSync("network-available")
-        override fun onLost(network: Network) = triggerSync("network-lost")
+        override fun onAvailable(network: Network) = triggerSync(PhoneSyncTrigger.NETWORK_AVAILABLE)
+        override fun onLost(network: Network) = triggerSync(PhoneSyncTrigger.NETWORK_LOST)
         override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) =
-            triggerSync("network-capabilities")
+            triggerSync(PhoneSyncTrigger.NETWORK_CAPABILITIES_CHANGED)
 
         override fun onLinkPropertiesChanged(network: Network, linkProperties: LinkProperties) =
-            triggerSync("network-address")
+            triggerSync(PhoneSyncTrigger.NETWORK_ADDRESS_CHANGED)
     }
 
     override fun onCreate() {
         super.onCreate()
         AppGraph.initialize(applicationContext)
+        eventSync = PhoneEventSyncCoalescer(
+            scope = scope,
+            debounceMs = EVENT_DEBOUNCE_MS,
+            retryDelayMs = EVENT_RETRY_MS,
+            sync = ::syncEventBatch,
+            onAttemptFinished = { triggers, attempt, result ->
+                val reasons = triggers.joinToString(",", transform = PhoneSyncTrigger::reason)
+                if (result.isSuccess) {
+                    Log.d(LOG_TAG, "Phone event batch completed: reasons=$reasons attempt=$attempt")
+                } else {
+                    Log.w(LOG_TAG, "Phone event batch failed: reasons=$reasons attempt=$attempt")
+                }
+            },
+        )
         createNotificationChannel()
         startForeground(
             NOTIFICATION_ID,
@@ -70,7 +92,12 @@ class PhoneMonitorService : Service() {
         registerEvents()
         observePollingInterval()
         running.value = true
-        triggerSync("monitor-started")
+        AppGraph.diagnostics.record(
+            category = DiagnosticCategory.FOREGROUND_SERVICE,
+            event = "Постоянная синхронизация телефона",
+            outcome = DiagnosticOutcome.STARTED,
+        )
+        triggerSync(PhoneSyncTrigger.MONITOR_STARTED)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -83,7 +110,7 @@ class PhoneMonitorService : Service() {
             }
             ACTION_REFRESH -> {
                 observePollingInterval()
-                triggerSync("settings-changed")
+                triggerSync(PhoneSyncTrigger.SETTINGS_CHANGED)
             }
         }
         return START_STICKY
@@ -93,7 +120,12 @@ class PhoneMonitorService : Service() {
 
     override fun onDestroy() {
         running.value = false
-        eventJob?.cancel()
+        AppGraph.diagnostics.record(
+            category = DiagnosticCategory.FOREGROUND_SERVICE,
+            event = "Постоянная синхронизация телефона остановлена",
+            outcome = DiagnosticOutcome.STATE,
+        )
+        if (::eventSync.isInitialized) eventSync.cancel()
         pollingJob?.cancel()
         if (receiverRegistered) runCatching { unregisterReceiver(eventReceiver) }
         if (networkCallbackRegistered) {
@@ -124,7 +156,15 @@ class PhoneMonitorService : Service() {
         runCatching {
             getSystemService(ConnectivityManager::class.java).registerDefaultNetworkCallback(networkCallback)
             networkCallbackRegistered = true
-        }.onFailure { error -> Log.w(LOG_TAG, "Network callback is unavailable", error) }
+        }.onFailure { error ->
+            Log.w(LOG_TAG, "Network callback is unavailable", error)
+            AppGraph.diagnostics.record(
+                category = DiagnosticCategory.NETWORK,
+                event = "Подписка на изменения сети",
+                outcome = DiagnosticOutcome.FAILED,
+                reason = error.message ?: "Android не предоставил callback сети",
+            )
+        }
     }
 
     private fun observePollingInterval() {
@@ -137,23 +177,59 @@ class PhoneMonitorService : Service() {
                     updateNotification()
                     while (isActive) {
                         delay(interval.minutes * 60_000L)
-                        AppGraph.phone.syncNow(fromBackground = true)
+                        triggerSync(PhoneSyncTrigger.FOREGROUND_POLL)
                     }
                 }
         }
     }
 
-    private fun triggerSync(reason: String) {
-        eventJob?.cancel()
-        eventJob = scope.launch {
-            delay(EVENT_DEBOUNCE_MS)
-            Log.d(LOG_TAG, "Phone event sync: $reason")
-            val first = AppGraph.phone.syncNow(fromBackground = true)
-            if (first.isFailure) {
-                delay(EVENT_RETRY_MS)
-                Log.d(LOG_TAG, "Phone event retry: $reason")
-                AppGraph.phone.syncNow(fromBackground = true)
+    private fun triggerSync(trigger: PhoneSyncTrigger) {
+        if (trigger in NETWORK_TRIGGERS) {
+            AppGraph.diagnostics.record(
+                category = DiagnosticCategory.NETWORK,
+                event = "Изменение сети телефона",
+                outcome = DiagnosticOutcome.STATE,
+                details = mapOf("событие" to trigger.reason),
+            )
+        }
+        if (::eventSync.isInitialized) eventSync.submit(trigger)
+    }
+
+    private suspend fun syncEventBatch(triggers: Set<PhoneSyncTrigger>): Result<Unit> {
+        val selected = AppGraph.settings.selectedPhoneSensors.first()
+        val decision = PhoneEventSyncPolicy.decide(triggers, selected)
+        val reasons = triggers.joinToString(",", transform = PhoneSyncTrigger::reason)
+        if (!decision.shouldSync) {
+            Log.d(LOG_TAG, "Phone event batch skipped: reasons=$reasons cause=${decision.skipReason}")
+            val diagnosticReason = when (decision.skipReason) {
+                "no-selected-phone-sensors" -> "не выбраны показатели телефона"
+                "selected-phone-sensors-unaffected" -> "событие не влияет на выбранные показатели"
+                else -> "событие не требует синхронизации"
             }
+            AppGraph.diagnostics.record(
+                category = DiagnosticCategory.SYNC,
+                event = "Событийная синхронизация телефона",
+                outcome = DiagnosticOutcome.SKIPPED,
+                reason = diagnosticReason,
+                details = mapOf("события" to reasons),
+            )
+            return Result.success(Unit)
+        }
+        Log.d(LOG_TAG, "Phone event batch started: reasons=$reasons")
+        AppGraph.diagnostics.record(
+            category = DiagnosticCategory.SYNC,
+            event = "Событийная синхронизация телефона",
+            outcome = DiagnosticOutcome.STARTED,
+            details = mapOf("события" to reasons),
+        )
+        return AppGraph.phone.syncNow(fromBackground = true).also { result ->
+            AppGraph.diagnostics.record(
+                category = DiagnosticCategory.SYNC,
+                event = "Событийная синхронизация телефона",
+                outcome = if (result.isSuccess) DiagnosticOutcome.SUCCESS else DiagnosticOutcome.FAILED,
+                reason = result.exceptionOrNull()?.message,
+                details = mapOf("события" to reasons),
+            )
         }
     }
 
@@ -211,6 +287,12 @@ class PhoneMonitorService : Service() {
         private const val ACTION_STOP = "io.github.nikitau.spruthubhelper.phone.STOP"
         private const val ACTION_REFRESH = "io.github.nikitau.spruthubhelper.phone.REFRESH"
         private const val LOG_TAG = "SprutHubPhone"
+        private val NETWORK_TRIGGERS = setOf(
+            PhoneSyncTrigger.NETWORK_AVAILABLE,
+            PhoneSyncTrigger.NETWORK_LOST,
+            PhoneSyncTrigger.NETWORK_CAPABILITIES_CHANGED,
+            PhoneSyncTrigger.NETWORK_ADDRESS_CHANGED,
+        )
 
         fun start(context: Context) {
             ContextCompat.startForegroundService(
@@ -220,7 +302,8 @@ class PhoneMonitorService : Service() {
         }
 
         fun stop(context: Context) {
-            context.stopService(Intent(context, PhoneMonitorService::class.java))
+            val serviceIntent = Intent(context, PhoneMonitorService::class.java)
+            context.stopService(serviceIntent)
         }
 
         fun refresh(context: Context) {

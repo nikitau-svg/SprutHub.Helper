@@ -10,9 +10,12 @@ import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
+import io.github.nikitau.spruthubhelper.AppGraph
 import io.github.nikitau.spruthubhelper.data.HealthDeviceBinding
 import io.github.nikitau.spruthubhelper.data.HealthMetric
 import io.github.nikitau.spruthubhelper.data.SettingsRepository
+import io.github.nikitau.spruthubhelper.diagnostics.DiagnosticCategory
+import io.github.nikitau.spruthubhelper.diagnostics.DiagnosticOutcome
 import io.github.nikitau.spruthubhelper.sprut.VirtualHealthDeviceManager
 import io.github.nikitau.spruthubhelper.sprut.VirtualFieldSpec
 import io.github.nikitau.spruthubhelper.sprut.bindingMatchesFields
@@ -24,6 +27,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -99,7 +103,7 @@ class HealthSyncManager(
                         Log.i(LOG_TAG, "No recoverable health accessory on startup: ${error.message}")
                     }
             }
-            settings.healthEnabled.collect { enabled ->
+            settings.healthEnabled.distinctUntilChanged().collect { enabled ->
                 if (enabled) schedule() else cancel()
             }
         }
@@ -166,7 +170,22 @@ class HealthSyncManager(
     }
 
     suspend fun syncNow(fromBackground: Boolean = false): Result<Unit> {
-        if (fromBackground && !settings.healthEnabled.first()) return Result.success(Unit)
+        val event = if (fromBackground) "Фоновая синхронизация здоровья" else "Ручная синхронизация здоровья"
+        if (fromBackground && !settings.healthEnabled.first()) {
+            AppGraph.diagnostics.record(
+                category = DiagnosticCategory.SYNC,
+                event = event,
+                outcome = DiagnosticOutcome.SKIPPED,
+                reason = "Фоновое чтение здоровья выключено или разрешение отозвано",
+            )
+            return Result.success(Unit)
+        }
+        AppGraph.diagnostics.record(
+            category = DiagnosticCategory.SYNC,
+            event = event,
+            outcome = DiagnosticOutcome.STARTED,
+            details = mapOf("источник" to if (fromBackground) "фон" else "экран приложения"),
+        )
         return runCatching {
             val selected = settings.selectedHealthMetrics.first()
             val selectedFields = healthVirtualFields(selected)
@@ -192,7 +211,19 @@ class HealthSyncManager(
             )
             Log.i(LOG_TAG, "Health sync completed")
             Unit
+        }.onSuccess {
+            AppGraph.diagnostics.record(
+                category = DiagnosticCategory.SYNC,
+                event = event,
+                outcome = DiagnosticOutcome.SUCCESS,
+            )
         }.onFailure {
+            AppGraph.diagnostics.record(
+                category = DiagnosticCategory.SYNC,
+                event = event,
+                outcome = DiagnosticOutcome.FAILED,
+                reason = it.message,
+            )
             runtime.value = runtime.value.copy(syncing = false, message = it.message ?: "Ошибка синхронизации здоровья")
             Log.e(LOG_TAG, "Health sync failed", it)
         }
