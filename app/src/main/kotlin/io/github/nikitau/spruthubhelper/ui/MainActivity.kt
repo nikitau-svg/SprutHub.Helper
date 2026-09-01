@@ -1870,8 +1870,16 @@ private fun PanelSummaryCard(
     viewModel: MainViewModel,
 ) {
     val context = LocalContext.current
-    val cards = remember(controls) { buildServiceControlCards(controls) }
+    val groups = remember(controls) { groupControlsByAccessory(controls) }
+    val cards = remember(groups) { groups.flatMap(AccessoryControlGroup::serviceCards) }
     val cardsById = remember(cards) { cards.associateBy(ServiceControlCard::id) }
+    val groupsByCardId = remember(groups) {
+        buildMap {
+            groups.forEach { group ->
+                group.serviceCards.forEach { card -> put(card.id, group) }
+            }
+        }
+    }
     val controlsById = remember(controls) { controls.associateBy(SprutControl::id) }
     fun resolveCard(item: PanelItem): ServiceControlCard? = cardsById[item.controlId]
         ?: controlsById[item.controlId]?.let { oldControl ->
@@ -1958,7 +1966,9 @@ private fun PanelSummaryCard(
                                 )
                                 Text(
                                     listOfNotNull(
-                                        card?.serviceName?.takeIf(String::isNotBlank) ?: card?.serviceType,
+                                        card?.let { resolved ->
+                                            groupsByCardId[resolved.id]?.serviceLabel(resolved)
+                                        },
                                         card?.room,
                                         if (item.size == PanelItemSize.LARGE) "широкая" else "компактная",
                                     ).filter(String::isNotBlank).joinToString(" · "),
