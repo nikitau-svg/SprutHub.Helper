@@ -70,7 +70,7 @@ class SprutCatalogParser {
         val serviceId = characteristic.scalar("sId", "serviceId")
         val characteristicId = characteristic.scalar("cId", "characteristicId", "id")
         if (accessoryId.isBlank() || serviceId.isBlank() || characteristicId.isBlank()) return null
-        if (findValueObject(characteristic) == null) return null
+        if (!hasCurrentValue(characteristic)) return null
         return CharacteristicUpdate(
             accessoryId = accessoryId,
             serviceId = serviceId,
@@ -84,7 +84,7 @@ class SprutCatalogParser {
             val hasIds = element.scalar("aId", "accessoryId").isNotBlank() &&
                 element.scalar("sId", "serviceId").isNotBlank() &&
                 element.scalar("cId", "characteristicId", "id").isNotBlank()
-            if (hasIds && findValueObject(element) != null) add(element)
+            if (hasIds && hasCurrentValue(element)) add(element)
             element.values.forEach { addAll(findCharacteristicUpdates(it)) }
         }
         is JsonArray -> element.flatMap(::findCharacteristicUpdates)
@@ -349,7 +349,7 @@ class SprutCatalogParser {
             .orEmpty()
             .ifBlank { inferCharacteristicType(descriptor) }
         val value = extractValue(characteristic)
-        val hasValue = findValueObject(characteristic) != null
+        val hasValue = hasCurrentValue(characteristic)
         val field = extractValueField(characteristic)
         val readOnly = findBoolean(characteristic, "readOnly") == true
         val explicitWrite = findBoolean(characteristic, "write")
@@ -402,14 +402,22 @@ class SprutCatalogParser {
         }
     }
 
-    private fun parseValueOptions(characteristic: JsonElement, valueField: String): List<SprutValueOption> =
-        findArray(characteristic, "validValues")
+    private fun parseValueOptions(characteristic: JsonElement, valueField: String): List<SprutValueOption> {
+        val arrayOptions = (
+            findArray(characteristic, "validValues")
+                ?: findArray(characteristic, "values")
+            )
             .orEmpty()
             .mapNotNull { option ->
                 when (option) {
                     is JsonObject -> {
-                        val value = findValueObject(option)?.let(::extractValue)
-                            ?: option["value"]?.let { primitiveValue(it, valueField) }
+                        val value = option["value"]?.let { rawValue ->
+                            when (rawValue) {
+                                is JsonPrimitive -> primitiveValue(rawValue, valueField)
+                                else -> extractValue(rawValue).takeIf { hasCurrentValue(rawValue) }
+                            }
+                        }
+                            ?: findValueObject(option)?.let(::extractValue)
                             ?: return@mapNotNull null
                         SprutValueOption(
                             value = value,
@@ -421,9 +429,30 @@ class SprutCatalogParser {
                     else -> null
                 }
             }
+
+        val compactOptions = (characteristic as? JsonObject)
+            ?.entries
+            ?.firstOrNull { (key, _) -> key.equals("validValues", ignoreCase = true) }
+            ?.value
+            ?.let { it as? JsonPrimitive }
+            ?.takeIf { it.isString }
+            ?.content
+            ?.split(',')
+            .orEmpty()
+            .map(String::trim)
+            .filter(String::isNotBlank)
+            .map { rawValue ->
+                SprutValueOption(
+                    value = primitiveValue(JsonPrimitive(rawValue), valueField),
+                    key = rawValue,
+                )
+            }
+
+        return (arrayOptions + compactOptions)
             .distinctBy { option ->
                 listOf(option.value.boolValue, option.value.numberValue, option.value.stringValue, option.key)
             }
+    }
 
     private fun primitiveValue(element: JsonElement, valueField: String): SprutValue {
         val primitive = element as? JsonPrimitive ?: return SprutValue()
@@ -499,29 +528,77 @@ class SprutCatalogParser {
         .filter(Char::isLetterOrDigit)
 
     private fun extractValue(element: JsonElement): SprutValue {
-        val valueObject = findValueObject(element) ?: return SprutValue()
-        val bool = valueObject["boolValue"]?.jsonPrimitive?.booleanOrNull
-        val number = NUMBER_FIELDS.firstNotNullOfOrNull { key -> valueObject[key]?.jsonPrimitive?.doubleOrNull }
-        val text = listOf("stringValue", "enumValue").firstNotNullOfOrNull { key ->
-            valueObject[key]?.jsonPrimitive?.content
+        findValueObject(element)?.let { valueObject ->
+            val bool = valueObject["boolValue"]?.jsonPrimitive?.booleanOrNull
+            val number = NUMBER_FIELDS.firstNotNullOfOrNull { key -> valueObject[key]?.jsonPrimitive?.doubleOrNull }
+            val text = listOf("stringValue", "enumValue").firstNotNullOfOrNull { key ->
+                valueObject[key]?.jsonPrimitive?.content
+            }
+            return SprutValue(boolValue = bool, numberValue = number, stringValue = text)
         }
-        return SprutValue(boolValue = bool, numberValue = number, stringValue = text)
+        val primitive = findDirectValue(element) ?: return SprutValue()
+        return primitiveValue(primitive, inferDirectValueField(element, primitive))
     }
 
     private fun extractValueField(element: JsonElement): String {
-        val valueObject = findValueObject(element) ?: return "boolValue"
-        return VALUE_FIELDS.firstOrNull(valueObject::containsKey) ?: "boolValue"
+        findValueObject(element)?.let { valueObject ->
+            return VALUE_FIELDS.firstOrNull(valueObject::containsKey) ?: "boolValue"
+        }
+        val primitive = findDirectValue(element) ?: return "boolValue"
+        return inferDirectValueField(element, primitive)
     }
+
+    private fun hasCurrentValue(element: JsonElement): Boolean =
+        findValueObject(element) != null || findDirectValue(element) != null
 
     private fun findValueObject(element: JsonElement): JsonObject? = when (element) {
         is JsonObject -> {
             if (VALUE_FIELDS.any(element::containsKey)) element
             else element["value"]?.let(::findValueObject)
                 ?: element["control"]?.let(::findValueObject)
-                ?: element.values.firstNotNullOfOrNull(::findValueObject)
+                ?: element.entries
+                    .asSequence()
+                    .filterNot { (key, _) -> key.lowercase() in VALUE_METADATA_KEYS }
+                    .mapNotNull { (_, value) -> findValueObject(value) }
+                    .firstOrNull()
         }
         is JsonArray -> element.firstNotNullOfOrNull(::findValueObject)
         else -> null
+    }
+
+    private fun findDirectValue(element: JsonElement): JsonPrimitive? = when (element) {
+        is JsonObject -> {
+            element.entries
+                .firstOrNull { (key, value) -> key.equals("value", ignoreCase = true) && value is JsonPrimitive }
+                ?.value
+                ?.let { it as JsonPrimitive }
+                ?: element["control"]?.let(::findDirectValue)
+                ?: element.entries
+                    .asSequence()
+                    .filterNot { (key, _) -> key.lowercase() in VALUE_METADATA_KEYS }
+                    .mapNotNull { (_, value) -> findDirectValue(value) }
+                    .firstOrNull()
+        }
+        is JsonArray -> element.firstNotNullOfOrNull(::findDirectValue)
+        else -> null
+    }
+
+    private fun inferDirectValueField(element: JsonElement, primitive: JsonPrimitive): String {
+        if (primitive.isString) return "stringValue"
+        if (primitive.booleanOrNull != null) return "boolValue"
+
+        val declaredType = (element as? JsonObject)
+            ?.scalar("valueType", "format", "type")
+            ?.lowercase()
+            .orEmpty()
+        return when {
+            "long" in declaredType -> "longValue"
+            "integer" in declaredType || declaredType == "int" -> "intValue"
+            "float" in declaredType -> "floatValue"
+            "double" in declaredType -> "doubleValue"
+            primitive.content.matches(INTEGER_VALUE_PATTERN) -> "intValue"
+            else -> "doubleValue"
+        }
     }
 
     private fun findArray(element: JsonElement, key: String): JsonArray? = when (element) {
@@ -756,6 +833,8 @@ class SprutCatalogParser {
     private companion object {
         val NUMBER_FIELDS = listOf("intValue", "longValue", "floatValue", "doubleValue", "uintValue")
         val VALUE_FIELDS = listOf("boolValue") + NUMBER_FIELDS + listOf("stringValue", "enumValue")
+        val VALUE_METADATA_KEYS = setOf("validvalues", "values", "options", "link")
+        val INTEGER_VALUE_PATTERN = Regex("[-+]?\\d+")
         val DESCRIPTOR_KEYS = setOf("type", "name", "title", "description", "characteristicType", "serviceType", "typeName")
         val READ_ONLY_SERVICE_MARKERS = listOf(
             "accessoryinformation",

@@ -239,6 +239,65 @@ class SprutCatalogParserTest {
     }
 
     @Test
+    fun keepsDirectPrimitiveValuesFromCatalogShape() {
+        val rooms = json.parseToJsonElement("""{"rooms":[{"id":1,"name":"Дом"}]}""")
+        val accessories = json.parseToJsonElement(
+            """
+            {"accessories":[{
+              "id":121,"name":"Редкий датчик","roomId":1,"services":[
+                {"id":1,"type":"C_AtmosphericPressureSensor","name":"Атмосфера","characteristics":[
+                  {"id":1,"type":"C_CurrentAtmosphericPressure","name":"Давление","read":true,
+                   "write":false,"value":1008.4,"unit":"@unit_hpa"},
+                  {"id":2,"type":"C_Online","name":"На связи","read":true,
+                   "write":false,"value":true},
+                  {"id":3,"type":"C_String","name":"Состояние","read":true,
+                   "write":false,"value":"Стабильно"}
+                ]}
+              ]
+            }]}
+            """.trimIndent(),
+        )
+
+        val controls = parser.parse(rooms, accessories).controls
+
+        assertEquals(3, controls.size)
+        assertEquals(1008.4, controls.single { it.characteristicId == "1" }.value.numberValue!!, 0.0)
+        assertEquals(true, controls.single { it.characteristicId == "2" }.value.boolValue)
+        assertEquals("Стабильно", controls.single { it.characteristicId == "3" }.value.stringValue)
+    }
+
+    @Test
+    fun readsCatalogValuesArrayWithoutMistakingItForCurrentState() {
+        val rooms = json.parseToJsonElement("""{"rooms":[{"id":1,"name":"Дом"}]}""")
+        val accessories = json.parseToJsonElement(
+            """
+            {"accessories":[{
+              "id":122,"name":"Очиститель","roomId":1,"services":[
+                {"id":1,"type":"AirPurifier","characteristics":[
+                  {"id":1,"type":"TargetAirPurifierState","name":"Режим","read":true,"write":true,
+                   "value":1,"values":[
+                     {"value":0,"name":"Ручной"},
+                     {"value":1,"name":"Авто"}
+                   ]},
+                  {"id":2,"type":"C_Integer","name":"Только варианты","read":true,"write":false,
+                   "values":[{"value":10,"name":"Десять"},{"value":20,"name":"Двадцать"}]}
+                ]}
+              ]
+            }]}
+            """.trimIndent(),
+        )
+
+        val controls = parser.parse(rooms, accessories).controls
+        val mode = controls.single()
+
+        assertEquals(ControlBehavior.OPTIONS, mode.behavior)
+        assertEquals(listOf("Ручной", "Авто"), mode.valueOptions.map { it.name })
+        assertEquals(1.0, mode.value.numberValue!!, 0.0)
+        assertEquals("intValue", mode.valueField)
+        assertEquals("Авто", buildServiceControlCards(controls).single().headlineValue())
+    }
+
+    @Test
     fun keepsServiceAndCharacteristicNamesForMultiServiceAccessory() {
         val rooms = json.parseToJsonElement("""{"rooms":[{"id":1,"name":"Дом"}]}""")
         val accessories = json.parseToJsonElement(
@@ -431,6 +490,23 @@ class SprutCatalogParserTest {
         assertEquals("11", update?.serviceId)
         assertEquals("1", update?.characteristicId)
         assertEquals(false, update?.value?.boolValue)
+    }
+
+    @Test
+    fun readsDirectPrimitiveCharacteristicEvent() {
+        val event = json.parseToJsonElement(
+            """
+            {"event":{"characteristic":{"event":"EVENT_UPDATE","characteristics":[
+              {"aId":7,"sId":11,"cId":9,"type":"Double","value":456.5}
+            ]}}}
+            """.trimIndent(),
+        )
+
+        val update = parser.parseUpdate(event)
+
+        assertNotNull(update)
+        assertEquals("9", update?.characteristicId)
+        assertEquals(456.5, update?.value?.numberValue!!, 0.0)
     }
 
     @Test
