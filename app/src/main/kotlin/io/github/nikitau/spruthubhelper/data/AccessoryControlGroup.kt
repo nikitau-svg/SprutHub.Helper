@@ -691,10 +691,12 @@ private fun normalizeType(value: String): String = value
 
 private fun localizedServiceLabel(value: String): String? = when (normalizeType(value)) {
     "light", "lightbulb", "lighting" -> "Свет"
-    "fan", "fanv2" -> "Вентилятор"
+    "fan", "fanv2", "fanbasic" -> "Вентилятор"
+    "airpurifier" -> "Очиститель воздуха"
     "switch" -> "Выключатель"
     "outlet" -> "Розетка"
-    "thermostat", "heatercooler", "airconditioner", "airconditioning" -> "Климат"
+    "thermostat", "heatercooler", "humidifierdehumidifier", "temperaturecontrol",
+    "airconditioner", "airconditioning" -> "Климат"
     "battery", "batteryservice" -> "Батарея"
     "temperaturesensor" -> "Температура"
     "humiditysensor" -> "Влажность"
@@ -703,8 +705,22 @@ private fun localizedServiceLabel(value: String): String? = when (normalizeType(
     "motionsensor" -> "Движение"
     "occupancysensor" -> "Присутствие"
     "lightsensor" -> "Освещённость"
+    "leaksensor" -> "Протечка"
+    "smokesensor" -> "Дым"
+    "carbondioxidesensor" -> "CO₂"
+    "carbonmonoxidesensor" -> "CO"
+    "gassensor" -> "Газ"
+    "noisesensor" -> "Шум"
     "lock", "lockmechanism" -> "Замок"
-    "windowcovering", "blinds", "curtain" -> "Шторы"
+    "windowcovering", "blinds", "curtain", "slat" -> "Шторы"
+    "door", "window" -> "Привод"
+    "garagedooropener" -> "Ворота"
+    "valve", "faucet" -> "Клапан"
+    "irrigationsystem" -> "Полив"
+    "securitysystem" -> "Охрана"
+    "vacuumcleaner" -> "Пылесос"
+    "television", "televisionspeaker", "speaker", "microphone", "inputsource" -> "Медиа"
+    "petfeeder" -> "Кормушка"
     "button", "statelessprogrammableswitch" -> "Кнопка"
     else -> null
 }

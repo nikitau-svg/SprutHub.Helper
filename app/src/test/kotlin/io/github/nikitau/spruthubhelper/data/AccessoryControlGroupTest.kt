@@ -301,6 +301,29 @@ class AccessoryControlGroupTest {
         assertEquals("Климат", card.displayServiceName())
     }
 
+    @Test
+    fun localizesRawNamesForSecurityCoverAndMediaTemplates() {
+        val cases = listOf(
+            Triple(DeviceKind.GARAGE, "GarageDoorOpener", "Ворота"),
+            Triple(DeviceKind.SECURITY, "SecuritySystem", "Охрана"),
+            Triple(DeviceKind.TELEVISION, "Television", "Медиа"),
+        )
+
+        cases.forEachIndexed { index, (kind, rawType, expected) ->
+            val card = buildServiceControlCards(
+                listOf(
+                    control(id = "${100 + index}:1:1", serviceId = "1", subtitle = rawType).copy(
+                        kind = kind,
+                        serviceName = rawType,
+                        sourceType = rawType,
+                    ),
+                ),
+            ).single()
+
+            assertEquals(expected, card.displayServiceName())
+        }
+    }
+
     private fun control(id: String, serviceId: String, subtitle: String) = SprutControl(
         id = id,
         accessoryId = id.substringBefore(':'),
