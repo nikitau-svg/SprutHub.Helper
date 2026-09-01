@@ -14,7 +14,7 @@ val stableSigningAvailable = listOf(
     signingStorePassword,
     signingKeyAlias,
     signingKeyPassword,
-).all(String::isNotBlank)
+).all(String::isNotBlank) && file(signingStoreFilePath).isFile
 
 android {
     namespace = "io.github.nikitau.spruthubhelper"
