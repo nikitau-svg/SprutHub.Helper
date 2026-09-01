@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.Context
 import io.github.nikitau.spruthubhelper.data.CatalogCache
 import io.github.nikitau.spruthubhelper.data.CatalogFreshnessPolicy
+import io.github.nikitau.spruthubhelper.data.CatalogNetworkRecoveryMonitor
 import io.github.nikitau.spruthubhelper.data.SettingsRepository
 import io.github.nikitau.spruthubhelper.data.SprutRepository
 import io.github.nikitau.spruthubhelper.data.ConnectionPhase
@@ -59,6 +60,7 @@ object AppGraph {
         private set
     lateinit var diagnostics: DiagnosticJournal
         private set
+    private lateinit var catalogNetworkRecovery: CatalogNetworkRecoveryMonitor
 
     @Synchronized
     fun initialize(context: Context) {
@@ -79,6 +81,24 @@ object AppGraph {
             cache = CatalogCache(appContext),
             scope = applicationScope,
         )
+        catalogNetworkRecovery = CatalogNetworkRecoveryMonitor(
+            context = appContext,
+            repository = repository,
+            scope = applicationScope,
+            onAttemptFinished = { attempt, result ->
+                diagnostics.record(
+                    category = DiagnosticCategory.NETWORK,
+                    event = "Восстановление каталога после возврата сети",
+                    outcome = if (result.isSuccess) {
+                        DiagnosticOutcome.SUCCESS
+                    } else {
+                        DiagnosticOutcome.FAILED
+                    },
+                    reason = result.exceptionOrNull()?.let { "SprutHub пока недоступен" },
+                    details = mapOf("попытка" to attempt.toString()),
+                )
+            },
+        ).also(CatalogNetworkRecoveryMonitor::start)
         health = HealthSyncManager(
             context = appContext,
             settings = settings,

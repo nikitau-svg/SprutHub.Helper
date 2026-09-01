@@ -174,6 +174,27 @@ class SprutRepository(
     }
 
     /**
+     * Reconnects the shared Android-interface catalog after the default
+     * network returns. A tile or panel refresh that already completed after
+     * [networkAvailableAtEpochMs] wins, avoiding a second queued catalog read.
+     */
+    internal suspend fun refreshAfterNetworkRecovery(
+        networkAvailableAtEpochMs: Long,
+    ): Result<SprutCatalog> = refreshMutex.withLock {
+        val connection = _connectionStatus.value
+        val alreadyRecovered = catalogRecoveredAfter(
+            connection = connection,
+            catalog = _catalog.value,
+            networkAvailableAtEpochMs = networkAvailableAtEpochMs,
+        )
+        if (alreadyRecovered) {
+            Result.success(_catalog.value)
+        } else {
+            refreshLocked(settings.currentConfig(), forceConnection = true)
+        }
+    }
+
+    /**
      * Verifies a candidate configuration before it is persisted. A successful
      * verification persists it through [onVerified] before the live socket,
      * assignments and authoritative catalog are adopted. A failed persistence
