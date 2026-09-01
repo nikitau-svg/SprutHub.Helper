@@ -160,12 +160,12 @@ abstract class SprutTileService(private val slot: Int) : TileService() {
             tile.state = Tile.STATE_UNAVAILABLE
             tile.icon = TileIconResolver.icon(this, DeviceKind.OTHER)
         } else {
-            tile.label = control.title
             val presentation = quickSettingsPresentation(
                 control = control,
                 surface = freshness.presentationFor(control),
                 error = error,
             )
+            tile.label = presentation.label
             tile.subtitle = presentation.subtitle
             tile.stateDescription = presentation.stateDescription
             tile.icon = CustomIconManager(this).loadIcon(control.id)

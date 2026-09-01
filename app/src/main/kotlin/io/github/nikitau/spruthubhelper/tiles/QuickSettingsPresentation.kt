@@ -3,6 +3,7 @@ package io.github.nikitau.spruthubhelper.tiles
 import io.github.nikitau.spruthubhelper.data.ControlBehavior
 import io.github.nikitau.spruthubhelper.data.ControlSurfacePresentation
 import io.github.nikitau.spruthubhelper.data.SprutControl
+import io.github.nikitau.spruthubhelper.data.buildServiceControlCards
 import io.github.nikitau.spruthubhelper.data.surfaceValue
 
 internal enum class QuickSettingsVisualState {
@@ -12,6 +13,7 @@ internal enum class QuickSettingsVisualState {
 }
 
 internal data class QuickSettingsPresentation(
+    val label: String,
     val subtitle: String,
     val stateDescription: String,
     val contentDescription: String,
@@ -37,6 +39,15 @@ internal fun quickSettingsPresentation(
         .takeUnless { it.isBlank() || it == "—" }
         ?: "Нет данных"
     val subtitle = unavailableReason ?: value
+    val label = if (control.behavior == ControlBehavior.SENSOR) {
+        val subject = buildServiceControlCards(listOf(control)).single().displayServiceName()
+        // Some OEM SystemUI implementations hide Tile.subtitle even in the
+        // expanded shade. Keep a sensor's state visible in the primary label
+        // while leaving actionable tile names stable.
+        "$subject · $subtitle"
+    } else {
+        control.title
+    }
     val visualState = when {
         unavailableReason != null -> QuickSettingsVisualState.UNAVAILABLE
         control.behavior == ControlBehavior.TOGGLE ||
@@ -46,6 +57,7 @@ internal fun quickSettingsPresentation(
         else -> QuickSettingsVisualState.INACTIVE
     }
     return QuickSettingsPresentation(
+        label = label,
         subtitle = subtitle,
         stateDescription = subtitle,
         contentDescription = listOf(

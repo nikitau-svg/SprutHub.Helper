@@ -19,6 +19,7 @@ class QuickSettingsPresentationTest {
             surface = live(active = false),
         )
 
+        assertEquals("Качество воздуха · Отличное", result.label)
         assertEquals("Отличное", result.subtitle)
         assertEquals("Отличное", result.stateDescription)
         assertEquals(QuickSettingsVisualState.INACTIVE, result.visualState)
@@ -35,6 +36,7 @@ class QuickSettingsPresentationTest {
             surface = live(active = false),
         )
 
+        assertEquals("Qingping Air Monitor Lite", result.label)
         assertEquals("Выключено", result.subtitle)
         assertEquals(QuickSettingsVisualState.INACTIVE, result.visualState)
     }
@@ -54,6 +56,7 @@ class QuickSettingsPresentationTest {
             ),
         )
 
+        assertEquals("Качество воздуха · Нет связи", result.label)
         assertEquals("Нет связи", result.subtitle)
         assertEquals(QuickSettingsVisualState.UNAVAILABLE, result.visualState)
     }
