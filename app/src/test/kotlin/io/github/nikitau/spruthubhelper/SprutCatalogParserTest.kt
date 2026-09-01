@@ -277,6 +277,33 @@ class SprutCatalogParserTest {
     }
 
     @Test
+    fun hidesUnsupportedCameraManagementServicesInsteadOfCreatingGenericCards() {
+        val rooms = json.parseToJsonElement("""{"rooms":[{"id":1,"name":"Дом"}]}""")
+        val accessories = json.parseToJsonElement(
+            """
+            {"accessories":[{
+              "id":81,"name":"Камера с прожектором","roomId":1,"services":[
+                {"id":1,"type":"CameraControl","characteristics":[
+                  {"id":1,"type":"Active","control":{"write":true,"value":{"intValue":1}}}
+                ]},
+                {"id":2,"type":"CameraRecordingManagement","characteristics":[
+                  {"id":1,"type":"Active","control":{"write":true,"value":{"intValue":1}}}
+                ]},
+                {"id":3,"type":"Lightbulb","name":"Прожектор","characteristics":[
+                  {"id":1,"type":"On","control":{"write":true,"value":{"boolValue":false}}}
+                ]}
+              ]
+            }]}
+            """.trimIndent(),
+        )
+
+        val controls = parser.parse(rooms, accessories).controls
+
+        assertEquals(listOf("3"), controls.map(SprutControl::serviceId))
+        assertEquals(DeviceKind.LIGHT, controls.single().kind)
+    }
+
+    @Test
     fun keepsServerValueLabelsForUnknownEnumerations() {
         val rooms = json.parseToJsonElement("""{"rooms":[{"id":1,"name":"Дом"}]}""")
         val accessories = json.parseToJsonElement(

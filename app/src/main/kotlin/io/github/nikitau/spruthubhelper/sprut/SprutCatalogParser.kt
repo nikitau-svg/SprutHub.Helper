@@ -134,6 +134,7 @@ class SprutCatalogParser {
             .lowercase()
         if (
             normalizedSourceType in IGNORED_SERVICE_TYPES ||
+            normalizedSourceType.startsWith("camera") ||
             READ_ONLY_SERVICE_MARKERS.any(descriptor::contains)
         ) return emptyList()
         val kind = detectKind(normalizedSourceType, descriptor)
@@ -449,7 +450,8 @@ class SprutCatalogParser {
         sourceType in setOf("valve", "faucet", "irrigationsystem") -> DeviceKind.VALVE
         sourceType == "securitysystem" -> DeviceKind.SECURITY
         sourceType == "vacuumcleaner" -> DeviceKind.VACUUM
-        sourceType in setOf("television", "televisionspeaker", "speaker", "inputsource") -> DeviceKind.TELEVISION
+        sourceType in setOf("television", "televisionspeaker", "speaker", "microphone", "inputsource") ->
+            DeviceKind.TELEVISION
         sourceType in setOf(
             "switch",
             "statelessprogrammableswitch",
@@ -458,6 +460,7 @@ class SprutCatalogParser {
             "option",
             "massage",
             "petfeeder",
+            "powermanagement",
         ) -> DeviceKind.SWITCH
         descriptor.containsAny("light", "bulb", "lamp", "свет", "ламп") -> DeviceKind.LIGHT
         descriptor.containsAny("outlet", "socket", "розет") -> DeviceKind.OUTLET
@@ -760,14 +763,20 @@ class SprutCatalogParser {
             "s_accessory_information",
         )
         val IGNORED_SERVICE_TYPES = setOf(
+            "accesscontrol",
             "accessoryinformation",
             "audiostreammanagement",
             "camerartpstreammanagement",
+            "cloudrelay",
             "datastreamtransportmanagement",
+            "diagnostics",
             "happrotocolinformation",
             "servicelabel",
+            "siri",
             "targetcontrolmanagement",
+            "threadtransport",
             "transfertransportmanagement",
+            "wifitransport",
         )
         val SENSOR_SERVICE_TYPES = setOf(
             "airqualitysensor",
