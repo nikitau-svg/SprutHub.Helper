@@ -23,7 +23,6 @@ import android.view.Surface
 import io.github.nikitau.spruthubhelper.BuildConfig
 import io.github.nikitau.spruthubhelper.data.PhoneSensor
 import io.github.nikitau.spruthubhelper.health.HealthReading
-import java.net.Inet4Address
 import java.time.Instant
 import java.time.OffsetDateTime
 import java.time.ZoneId
@@ -66,13 +65,7 @@ class PhoneReader(private val context: Context) {
                     alarm = alarm,
                     memory = memory,
                     rotation = rotation,
-                    localAddress = linkProperties?.linkAddresses
-                        ?.map { it.address }
-                        ?.filterNot { it.isLoopbackAddress || it.isLinkLocalAddress }
-                        ?.sortedByDescending { it is Inet4Address }
-                        ?.firstOrNull()
-                        ?.hostAddress
-                        ?.substringBefore('%'),
+                    localAddress = phoneLocalAddress(linkProperties),
                     storage = storage,
                 )?.let { reading -> put(sensor.name, reading) }
             }
@@ -152,7 +145,7 @@ class PhoneReader(private val context: Context) {
             null
         }
         PhoneSensor.POWER_SAVE_MODE -> HealthReading(boolValue = power?.isPowerSaveMode == true)
-        PhoneSensor.CONNECTION_TYPE -> HealthReading(stringValue = connectionType(capabilities))
+        PhoneSensor.CONNECTION_TYPE -> HealthReading(stringValue = phoneConnectionType(capabilities))
         PhoneSensor.NETWORK_METERED -> HealthReading(boolValue = connectivity?.isActiveNetworkMetered == true)
         PhoneSensor.NETWORK_VALIDATED -> HealthReading(
             boolValue = capabilities?.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) == true,
@@ -229,17 +222,6 @@ class PhoneReader(private val context: Context) {
         PhoneSensor.LOW_MEMORY -> memory?.let { HealthReading(boolValue = it.lowMemory) }
         PhoneSensor.SYNC_HEARTBEAT -> HealthReading(numberValue = heartbeatMinute().toDouble())
         PhoneSensor.LAST_SYNC -> HealthReading(stringValue = OffsetDateTime.now().toString())
-    }
-
-    private fun connectionType(capabilities: NetworkCapabilities?): String {
-        if (capabilities == null) return "Нет сети"
-        return buildList {
-            if (capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) add("VPN")
-            if (capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) add("Wi‑Fi")
-            if (capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)) add("Мобильная сеть")
-            if (capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)) add("Ethernet")
-            if (capabilities.hasTransport(NetworkCapabilities.TRANSPORT_BLUETOOTH)) add("Bluetooth")
-        }.joinToString(" · ").ifBlank { "Другая сеть" }
     }
 
     private fun systemSetting(name: String): Int? = runCatching {

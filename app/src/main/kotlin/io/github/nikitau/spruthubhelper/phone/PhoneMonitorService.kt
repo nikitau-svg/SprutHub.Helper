@@ -51,6 +51,7 @@ class PhoneMonitorService : Service() {
     private var receiverRegistered = false
     private var networkCallbackRegistered = false
     private var displayObserverRegistered = false
+    private val networkChangeGate = PhoneNetworkChangeGate()
 
     private val displaySettingsObserver = object : ContentObserver(Handler(Looper.getMainLooper())) {
         override fun onChange(selfChange: Boolean) {
@@ -186,7 +187,9 @@ class PhoneMonitorService : Service() {
         }
         displayObserverRegistered = true
         runCatching {
-            getSystemService(ConnectivityManager::class.java).registerDefaultNetworkCallback(networkCallback)
+            val connectivity = getSystemService(ConnectivityManager::class.java)
+            connectivity.phoneNetworkFingerprint().let(networkChangeGate::prime)
+            connectivity.registerDefaultNetworkCallback(networkCallback)
             networkCallbackRegistered = true
         }.onFailure { error ->
             Log.w(LOG_TAG, "Network callback is unavailable", error)
@@ -216,22 +219,33 @@ class PhoneMonitorService : Service() {
     }
 
     private fun triggerSync(trigger: PhoneSyncTrigger) {
-        if (trigger in NETWORK_TRIGGERS) {
-            AppGraph.diagnostics.record(
-                category = DiagnosticCategory.NETWORK,
-                event = "Изменение сети телефона",
-                outcome = DiagnosticOutcome.STATE,
-                details = mapOf("событие" to trigger.reason),
-            )
-        }
         if (::eventSync.isInitialized) eventSync.submit(trigger)
     }
 
     private suspend fun syncEventBatch(triggers: Set<PhoneSyncTrigger>): Result<Unit> {
+        val originalReasons = triggers.joinToString(",", transform = PhoneSyncTrigger::reason)
+        val containsNetworkEvent = triggers.any(PHONE_NETWORK_TRIGGERS::contains)
+        val networkFingerprint = if (containsNetworkEvent) currentNetworkFingerprint() else null
+        val networkChanged = networkFingerprint?.let(networkChangeGate::hasChanged) ?: containsNetworkEvent
+        val effectiveTriggers = filterPhoneNetworkTriggers(triggers, networkChanged)
+        if (effectiveTriggers.isEmpty()) {
+            Log.d(LOG_TAG, "Phone event batch skipped: reasons=$originalReasons cause=unchanged-network-state")
+            return Result.success(Unit)
+        }
+
         val selected = AppGraph.settings.selectedPhoneSensors.first()
-        val decision = PhoneEventSyncPolicy.decide(triggers, selected)
-        val reasons = triggers.joinToString(",", transform = PhoneSyncTrigger::reason)
+        val decision = PhoneEventSyncPolicy.decide(effectiveTriggers, selected)
+        val reasons = effectiveTriggers.joinToString(",", transform = PhoneSyncTrigger::reason)
+        if (networkChanged && networkFingerprint != null) {
+            AppGraph.diagnostics.record(
+                category = DiagnosticCategory.NETWORK,
+                event = "Изменение сети телефона",
+                outcome = DiagnosticOutcome.STATE,
+                details = mapOf("события" to reasons),
+            )
+        }
         if (!decision.shouldSync) {
+            if (networkChanged && networkFingerprint != null) networkChangeGate.commit(networkFingerprint)
             Log.d(LOG_TAG, "Phone event batch skipped: reasons=$reasons cause=${decision.skipReason}")
             val diagnosticReason = when (decision.skipReason) {
                 "no-selected-phone-sensors" -> "не выбраны показатели телефона"
@@ -255,6 +269,9 @@ class PhoneMonitorService : Service() {
             details = mapOf("события" to reasons),
         )
         return AppGraph.phone.syncNow(fromBackground = true).also { result ->
+            if (result.isSuccess && networkChanged && networkFingerprint != null) {
+                networkChangeGate.commit(networkFingerprint)
+            }
             AppGraph.diagnostics.record(
                 category = DiagnosticCategory.SYNC,
                 event = "Событийная синхронизация телефона",
@@ -264,6 +281,12 @@ class PhoneMonitorService : Service() {
             )
         }
     }
+
+    private fun currentNetworkFingerprint(): PhoneNetworkFingerprint? = runCatching {
+        getSystemService(ConnectivityManager::class.java).phoneNetworkFingerprint()
+    }.onFailure { error ->
+        Log.w(LOG_TAG, "Cannot read the current network fingerprint", error)
+    }.getOrNull()
 
     private fun createNotificationChannel() {
         val channel = NotificationChannel(
@@ -319,13 +342,6 @@ class PhoneMonitorService : Service() {
         private const val ACTION_STOP = "io.github.nikitau.spruthubhelper.phone.STOP"
         private const val ACTION_REFRESH = "io.github.nikitau.spruthubhelper.phone.REFRESH"
         private const val LOG_TAG = "SprutHubPhone"
-        private val NETWORK_TRIGGERS = setOf(
-            PhoneSyncTrigger.NETWORK_AVAILABLE,
-            PhoneSyncTrigger.NETWORK_LOST,
-            PhoneSyncTrigger.NETWORK_CAPABILITIES_CHANGED,
-            PhoneSyncTrigger.NETWORK_ADDRESS_CHANGED,
-        )
-
         fun start(context: Context) {
             ContextCompat.startForegroundService(
                 context,
