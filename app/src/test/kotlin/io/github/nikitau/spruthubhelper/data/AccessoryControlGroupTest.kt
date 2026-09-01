@@ -30,6 +30,22 @@ class AccessoryControlGroupTest {
     }
 
     @Test
+    fun localizesRawServiceTypeNamesWithoutReplacingUserNames() {
+        val light = control(id = "8:1:1", serviceId = "1", subtitle = "Lightbulb").copy(
+            serviceName = "Lightbulb",
+            sourceType = "Lightbulb",
+        )
+        val fan = control(id = "8:2:1", serviceId = "2", subtitle = "Fan").copy(
+            serviceName = "Fan",
+            sourceType = "Fan",
+        )
+
+        val group = groupControlsByAccessory(listOf(light, fan)).single()
+
+        assertEquals(setOf("Свет", "Вентилятор"), group.serviceCards.map(group::serviceLabel).toSet())
+    }
+
+    @Test
     fun groupsCharacteristicsOfOneServiceIntoOneLogicalCard() {
         val main = control(id = "11:13:main", serviceId = "13", subtitle = "Кондиционер").copy(
             behavior = ControlBehavior.TOGGLE_RANGE,

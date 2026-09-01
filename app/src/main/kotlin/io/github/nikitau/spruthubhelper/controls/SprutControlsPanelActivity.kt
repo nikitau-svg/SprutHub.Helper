@@ -96,7 +96,6 @@ import io.github.nikitau.spruthubhelper.icons.CustomIconManager
 import io.github.nikitau.spruthubhelper.tiles.TileIconResolver
 import io.github.nikitau.spruthubhelper.ui.MainActivity
 import io.github.nikitau.spruthubhelper.ui.SprutAccent
-import io.github.nikitau.spruthubhelper.ui.SprutAccentDim
 import io.github.nikitau.spruthubhelper.ui.SprutBackdrop
 import io.github.nikitau.spruthubhelper.ui.SprutHeaderIconButton
 import io.github.nikitau.spruthubhelper.ui.SprutHelperTheme
@@ -173,7 +172,6 @@ internal object DevicePanelSupport {
 private val PanelText = SprutText
 private val PanelMutedText = SprutTextMuted
 private val PanelAccent = SprutAccent
-private val PanelAccentDark = SprutAccentDim
 private val PanelSurface = SprutSurface
 
 @Composable
@@ -491,7 +489,7 @@ private fun ServiceGlassCard(
                     modifier = Modifier
                         .size(40.dp)
                         .clip(RoundedCornerShape(12.dp))
-                        .background(if (active) PanelAccentDark.copy(alpha = 0.72f) else Color.White.copy(alpha = 0.08f)),
+                        .background(if (active) PanelAccent.copy(alpha = 0.14f) else Color.White.copy(alpha = 0.08f)),
                     contentAlignment = Alignment.Center,
                 ) {
                     if (customBitmap != null) {

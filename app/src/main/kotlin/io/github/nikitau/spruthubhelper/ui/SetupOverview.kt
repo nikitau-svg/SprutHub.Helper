@@ -34,6 +34,7 @@ internal enum class SettingsSection(
 internal enum class SetupTone {
     READY,
     ATTENTION,
+    ERROR,
     OPTIONAL,
 }
 
@@ -87,7 +88,7 @@ internal fun buildHomeReadiness(
             title = "Подключите SprutHub",
             detail = ui.connection.message.takeUnless { it.isBlank() || it == "Не проверено" }
                 ?: "Укажите адреса и отдельные локальный и облачный пароли, затем выполните проверку.",
-            tone = SetupTone.ATTENTION,
+            tone = if (ui.connection.phase == ConnectionPhase.ERROR) SetupTone.ERROR else SetupTone.ATTENTION,
             targetSection = SettingsSection.CONNECTION,
             actionLabel = "Настроить подключение",
         )
@@ -110,13 +111,15 @@ internal fun buildHomeReadiness(
             SettingsSection.PRESENCE to presenceGuidance(presence)
         },
     )
-    configuredIssues.firstOrNull { (_, guidance) -> guidance.tone == SetupTone.ATTENTION }
+    configuredIssues.firstOrNull { (_, guidance) ->
+        guidance.tone == SetupTone.ERROR || guidance.tone == SetupTone.ATTENTION
+    }
         ?.let { (section, guidance) ->
             return HomeReadiness(
                 status = "${section.title}: нужно действие",
                 title = guidance.title,
                 detail = guidance.detail,
-                tone = SetupTone.ATTENTION,
+                tone = guidance.tone,
                 targetSection = section,
                 actionLabel = "Открыть «${section.title}»",
             )
@@ -155,6 +158,7 @@ private fun connectionOverview(ui: MainUiState): SetupOverviewItem {
         tone = when {
             connected -> SetupTone.READY
             ui.connection.phase == ConnectionPhase.CONNECTING -> SetupTone.OPTIONAL
+            ui.connection.phase == ConnectionPhase.ERROR -> SetupTone.ERROR
             else -> SetupTone.ATTENTION
         },
     )

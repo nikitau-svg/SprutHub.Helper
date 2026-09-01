@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -342,6 +343,7 @@ private fun MainScreen(viewModel: MainViewModel = viewModel()) {
     SprutBackdrop {
         Scaffold(
             containerColor = Color.Transparent,
+            contentColor = SprutText,
             snackbarHost = { SnackbarHost(snackbar) },
             topBar = {
                 TopAppBar(
@@ -395,6 +397,8 @@ private fun MainScreen(viewModel: MainViewModel = viewModel()) {
                         containerColor = Color.Transparent,
                         scrolledContainerColor = SprutBackground.copy(alpha = 0.92f),
                         titleContentColor = SprutText,
+                        navigationIconContentColor = SprutText,
+                        actionIconContentColor = SprutText,
                     ),
                 )
             },
@@ -454,6 +458,7 @@ private fun HomeContent(
     }
     LazyColumn(
         modifier = modifier,
+        contentPadding = PaddingValues(top = 12.dp, bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item {
@@ -479,7 +484,12 @@ private fun HomeContent(
         }
         item {
             Column(Modifier.padding(horizontal = 16.dp)) {
-                Text("Устройства", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                Text(
+                    "Устройства",
+                    style = MaterialTheme.typography.headlineSmall,
+                    color = SprutText,
+                    fontWeight = FontWeight.Bold,
+                )
                 Text(
                     "Добавьте сервисы в панель устройств или назначьте отдельные плитки шторки.",
                     style = MaterialTheme.typography.bodyMedium,
@@ -517,7 +527,6 @@ private fun HomeContent(
                 )
             }
         }
-        item { Spacer(Modifier.height(24.dp)) }
     }
 }
 
@@ -551,6 +560,7 @@ private fun SettingsContent(
 
     LazyColumn(
         modifier = modifier,
+        contentPadding = PaddingValues(top = 12.dp, bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item {
@@ -576,7 +586,6 @@ private fun SettingsContent(
                 SettingsSection.DIAGNOSTICS -> DiagnosticsCard(ui, expandedByDefault = true)
             }
         }
-        item { Spacer(Modifier.height(24.dp)) }
     }
 }
 
@@ -588,6 +597,7 @@ private fun HomeReadinessCard(
     val accent = when (readiness.tone) {
         SetupTone.READY -> SprutAccent
         SetupTone.ATTENTION -> SprutWarning
+        SetupTone.ERROR -> SprutError
         SetupTone.OPTIONAL -> SprutInfo
     }
     Card(
@@ -655,6 +665,7 @@ private fun SettingsHub(
     val hasDiagnosticErrors = ui.diagnostics.any { it.isError }
     LazyColumn(
         modifier = modifier,
+        contentPadding = PaddingValues(top = 12.dp, bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         item {
@@ -686,11 +697,10 @@ private fun SettingsHub(
             SettingsEntryCard(
                 section = SettingsSection.DIAGNOSTICS,
                 status = if (hasDiagnosticErrors) "Есть ошибки в журнале" else "Журнал и проверка состояния",
-                statusTone = if (hasDiagnosticErrors) SetupTone.ATTENTION else SetupTone.READY,
+                statusTone = if (hasDiagnosticErrors) SetupTone.ERROR else SetupTone.READY,
                 onClick = { onSelectSection(SettingsSection.DIAGNOSTICS) },
             )
         }
-        item { Spacer(Modifier.height(24.dp)) }
     }
 }
 
@@ -732,18 +742,42 @@ private fun SettingsEntryCard(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                Text(status, style = MaterialTheme.typography.labelMedium, color = statusColor)
+                Spacer(Modifier.height(6.dp))
+                StatusBadge(status = status, color = statusColor)
             }
-            Icon(Icons.Rounded.ChevronRight, contentDescription = "Открыть")
+            Icon(
+                Icons.Rounded.ChevronRight,
+                contentDescription = "Открыть",
+                tint = SprutTextMuted,
+            )
+        }
+    }
+}
+
+@Composable
+private fun StatusBadge(status: String, color: Color) {
+    Surface(
+        shape = CircleShape,
+        color = color.copy(alpha = 0.11f),
+        border = BorderStroke(1.dp, color.copy(alpha = 0.20f)),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Surface(modifier = Modifier.size(7.dp), shape = CircleShape, color = color) {}
+            Text(status, style = MaterialTheme.typography.labelMedium, color = color)
         }
     }
 }
 
 @Composable
 private fun setupToneColor(tone: SetupTone): Color = when (tone) {
-    SetupTone.READY -> SprutAccent
-    SetupTone.ATTENTION -> MaterialTheme.colorScheme.error
-    SetupTone.OPTIONAL -> MaterialTheme.colorScheme.onSurfaceVariant
+    SetupTone.READY -> SprutSuccess
+    SetupTone.ATTENTION -> SprutWarning
+    SetupTone.ERROR -> SprutError
+    SetupTone.OPTIONAL -> SprutInfo
 }
 
 private fun SettingsSection.icon(): ImageVector = when (this) {
@@ -764,6 +798,7 @@ internal fun NextActionCard(
     val accent = when (guidance.tone) {
         SetupTone.READY -> SprutAccent
         SetupTone.ATTENTION -> SprutWarning
+        SetupTone.ERROR -> SprutError
         SetupTone.OPTIONAL -> MaterialTheme.colorScheme.onSurfaceVariant
     }
     Card(
@@ -986,22 +1021,44 @@ private fun HealthCard(
                         }
                     }
                     HorizontalDivider()
-                    Box {
-                        OutlinedButton(
-                            onClick = { roomMenu = true },
-                            modifier = Modifier.fillMaxWidth(),
-                            enabled = health.binding == null && ui.catalog.rooms.isNotEmpty(),
-                        ) {
-                            Text(selectedRoom?.name ?: "Сначала загрузите комнаты SprutHub")
+                    if (health.binding == null) {
+                        Box {
+                            OutlinedButton(
+                                onClick = { roomMenu = true },
+                                modifier = Modifier.fillMaxWidth(),
+                                enabled = ui.catalog.rooms.isNotEmpty(),
+                            ) {
+                                Text(selectedRoom?.name ?: "Сначала загрузите комнаты SprutHub")
+                            }
+                            DropdownMenu(expanded = roomMenu, onDismissRequest = { roomMenu = false }) {
+                                ui.catalog.rooms.forEach { room ->
+                                    DropdownMenuItem(
+                                        text = { Text(room.name) },
+                                        onClick = {
+                                            selectedRoomId = room.id
+                                            roomMenu = false
+                                        },
+                                    )
+                                }
+                            }
                         }
-                        DropdownMenu(expanded = roomMenu, onDismissRequest = { roomMenu = false }) {
-                            ui.catalog.rooms.forEach { room ->
-                                DropdownMenuItem(
-                                    text = { Text(room.name) },
-                                    onClick = {
-                                        selectedRoomId = room.id
-                                        roomMenu = false
-                                    },
+                    } else {
+                        Surface(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = SprutControlShape,
+                            color = Color.White.copy(alpha = 0.045f),
+                            border = BorderStroke(1.dp, SprutGlassBorder),
+                        ) {
+                            Column(Modifier.padding(horizontal = 13.dp, vertical = 10.dp)) {
+                                Text(
+                                    "Комната SprutHub",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = SprutTextMuted,
+                                )
+                                Text(
+                                    selectedRoom?.name ?: "Комната больше не найдена",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = SprutText,
                                 )
                             }
                         }
@@ -1234,6 +1291,7 @@ private fun PhoneCard(
                             },
                             label = { Text(mode.title) },
                             modifier = Modifier.fillMaxWidth(),
+                            colors = sprutFilterChipColors(),
                         )
                         Text(
                             mode.description,
@@ -1250,6 +1308,7 @@ private fun PhoneCard(
                                     selected = phone.syncSettings.pollInterval == interval,
                                     onClick = { viewModel.setPhonePollInterval(interval) },
                                     label = { Text(interval.title) },
+                                    colors = sprutFilterChipColors(),
                                 )
                             }
                         }
@@ -1626,6 +1685,7 @@ private fun ConnectionCard(
                             ConnectionMode.LOCAL -> "Дом"
                             ConnectionMode.CLOUD -> "Облако"
                         }) },
+                        colors = sprutFilterChipColors(),
                     )
                 }
             }
@@ -1691,6 +1751,7 @@ private fun ConnectionCard(
                                     onClick = { cloudUrl = preset.url },
                                     label = { Text(preset.label) },
                                     modifier = Modifier.weight(1f),
+                                    colors = sprutFilterChipColors(),
                                 )
                             }
                         }
@@ -1699,6 +1760,7 @@ private fun ConnectionCard(
                         selected = CloudEndpointPresets.none { cloudUrl.equals(it.url, ignoreCase = true) },
                         onClick = { if (CloudEndpointPresets.any { cloudUrl.equals(it.url, true) }) cloudUrl = "" },
                         label = { Text("Свой адрес") },
+                        colors = sprutFilterChipColors(),
                     )
                     OutlinedTextField(
                         value = cloudUrl,
@@ -1929,6 +1991,7 @@ private fun PanelSummaryCard(
                                             viewModel.setPanelItemAttributes(card.id, next)
                                         },
                                         label = { Text(card.attributeLabel(attribute)) },
+                                        colors = sprutFilterChipColors(),
                                     )
                                 }
                             }
@@ -2098,7 +2161,7 @@ private fun AccessoryCard(
         colors = CardDefaults.cardColors(containerColor = SprutSurfaceLow),
         border = BorderStroke(1.dp, SprutGlassBorder),
     ) {
-        Column(Modifier.padding(15.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Surface(
                     shape = RoundedCornerShape(14.dp),
@@ -2131,7 +2194,7 @@ private fun AccessoryCard(
                     card = card,
                     control = control,
                     serviceLabel = group.serviceLabel(card),
-                    showServiceLabel = group.serviceCards.size > 1 || card.serviceName.isNotBlank(),
+                    showServiceLabel = group.serviceCards.size > 1,
                     assignments = assignments,
                     panelItems = panelItems,
                     viewModel = viewModel,
@@ -2179,7 +2242,7 @@ private fun ControlActions(
         }
     }
 
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         if (showServiceLabel) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(serviceLabel, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
@@ -2319,15 +2382,15 @@ private fun PlacementAction(
         onClick = onClick,
         modifier = modifier,
         shape = SprutControlShape,
-        color = if (selected) SprutAccentDim.copy(alpha = 0.72f) else Color.White.copy(alpha = 0.055f),
+        color = if (selected) SprutAccent.copy(alpha = 0.11f) else Color.White.copy(alpha = 0.045f),
         contentColor = if (selected) SprutAccent else SprutTextMuted,
         border = BorderStroke(
             1.dp,
-            if (selected) SprutAccent.copy(alpha = 0.82f) else SprutGlassBorder,
+            if (selected) SprutAccent.copy(alpha = 0.66f) else SprutGlassBorder,
         ),
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 11.dp, vertical = 9.dp),
+            modifier = Modifier.padding(horizontal = 11.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.Center,
         ) {

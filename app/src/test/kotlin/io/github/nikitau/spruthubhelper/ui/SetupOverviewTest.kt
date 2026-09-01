@@ -62,7 +62,7 @@ class SetupOverviewTest {
     }
 
     @Test
-    fun `connection error is the only mandatory attention item`() {
+    fun `connection error is the only mandatory error item`() {
         val overview = buildSetupOverview(
             ui = MainUiState(
                 connection = ConnectionStatus(
@@ -75,9 +75,9 @@ class SetupOverviewTest {
             presence = PresenceUiState(),
         )
 
-        assertEquals(SetupTone.ATTENTION, overview.first().tone)
+        assertEquals(SetupTone.ERROR, overview.first().tone)
         assertEquals("Нужно исправить", overview.first().status)
-        assertEquals(1, overview.count { it.tone == SetupTone.ATTENTION })
+        assertEquals(1, overview.count { it.tone == SetupTone.ERROR })
     }
 
     @Test
@@ -124,7 +124,7 @@ class SetupOverviewTest {
         )
 
         assertEquals(SettingsSection.CONNECTION, readiness.targetSection)
-        assertEquals(SetupTone.ATTENTION, readiness.tone)
+        assertEquals(SetupTone.ERROR, readiness.tone)
     }
 
     @Test

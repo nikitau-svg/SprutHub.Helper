@@ -123,6 +123,7 @@ private fun WidgetConfigureScreen(
     SprutBackdrop {
         Scaffold(
             containerColor = Color.Transparent,
+            contentColor = SprutText,
             topBar = {
                 TopAppBar(
                     title = { Text("Виджет SprutHub") },
@@ -249,9 +250,12 @@ private fun WidgetControlChoice(
         modifier = Modifier.fillMaxWidth(),
         shape = SprutTileShape,
         colors = CardDefaults.cardColors(
-            containerColor = if (selected) SprutAccentDim.copy(alpha = 0.62f) else SprutSurfaceLow,
+            containerColor = if (selected) SprutAccent.copy(alpha = 0.11f) else SprutSurfaceLow,
         ),
-        border = BorderStroke(1.dp, if (selected) SprutAccent else SprutGlassBorder),
+        border = BorderStroke(
+            1.dp,
+            if (selected) SprutAccent.copy(alpha = 0.66f) else SprutGlassBorder,
+        ),
     ) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(14.dp),

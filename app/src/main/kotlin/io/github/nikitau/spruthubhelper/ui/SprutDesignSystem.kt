@@ -10,12 +10,15 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Shapes
 import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.geometry.Offset
@@ -35,20 +38,19 @@ import androidx.compose.ui.unit.sp
  * translucency, a single amber action accent and compact typography.
  */
 internal val SprutBackground = Color(0xFF0D1114)
-internal val SprutSurfaceLow = Color(0xD91B1D20)
-internal val SprutSurface = Color(0xE626292D)
+internal val SprutSurfaceLow = Color(0xC91B1D20)
+internal val SprutSurface = Color(0xD926292D)
 internal val SprutSurfaceHigh = Color(0xF0323539)
 internal val SprutSurfaceHighest = Color(0xFF3F3F3F)
 internal val SprutAccent = Color(0xFFFFA805)
-internal val SprutAccentDim = Color(0xFF774E00)
 internal val SprutText = Color(0xFFFFFFFF)
 internal val SprutTextMuted = Color(0x99FFFFFF)
 internal val SprutTextFaint = Color(0x66FFFFFF)
 internal val SprutOutline = Color(0xFF4B4B4B)
 internal val SprutGlassBorder = Color(0x1AFFFFFF)
-internal val SprutSuccess = Color(0xFF4CAF50)
-internal val SprutWarning = Color(0xFFFF9800)
-internal val SprutError = Color(0xFFDD3434)
+internal val SprutSuccess = Color(0xFF68C77A)
+internal val SprutWarning = Color(0xFFFFC247)
+internal val SprutError = Color(0xFFFF6B6B)
 internal val SprutInfo = Color(0xFF64B5F6)
 
 internal val SprutTileShape = RoundedCornerShape(16.dp)
@@ -57,11 +59,11 @@ internal val SprutControlShape = RoundedCornerShape(12.dp)
 private val SprutColorScheme = darkColorScheme(
     primary = SprutAccent,
     onPrimary = Color(0xFF211500),
-    primaryContainer = SprutAccentDim,
+    primaryContainer = SprutAccent.copy(alpha = 0.18f),
     onPrimaryContainer = SprutText,
     secondary = Color(0xFFFFC65C),
     onSecondary = Color(0xFF211500),
-    secondaryContainer = Color(0xFF4A3500),
+    secondaryContainer = SprutAccent.copy(alpha = 0.12f),
     onSecondaryContainer = SprutText,
     background = SprutBackground,
     surface = SprutSurfaceLow,
@@ -188,7 +190,9 @@ internal fun SprutBackdrop(
                     ),
                 ),
         )
-        content()
+        CompositionLocalProvider(LocalContentColor provides SprutText) {
+            content()
+        }
     }
 }
 
@@ -237,4 +241,20 @@ internal fun sprutTextFieldColors() = OutlinedTextFieldDefaults.colors(
     unfocusedSupportingTextColor = SprutTextMuted,
     disabledSupportingTextColor = SprutTextFaint,
     errorSupportingTextColor = SprutError,
+)
+
+@Composable
+internal fun sprutFilterChipColors() = FilterChipDefaults.filterChipColors(
+    containerColor = Color.White.copy(alpha = 0.045f),
+    labelColor = SprutTextMuted,
+    iconColor = SprutTextMuted,
+    disabledContainerColor = Color.White.copy(alpha = 0.025f),
+    disabledLabelColor = SprutTextFaint,
+    disabledLeadingIconColor = SprutTextFaint,
+    disabledTrailingIconColor = SprutTextFaint,
+    selectedContainerColor = SprutAccent.copy(alpha = 0.12f),
+    disabledSelectedContainerColor = SprutAccent.copy(alpha = 0.06f),
+    selectedLabelColor = SprutText,
+    selectedLeadingIconColor = SprutAccent,
+    selectedTrailingIconColor = SprutAccent,
 )

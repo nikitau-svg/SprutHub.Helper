@@ -129,6 +129,7 @@ private fun DiagnosticsScreen(onBack: () -> Unit) {
     SprutBackdrop {
         Scaffold(
             containerColor = Color.Transparent,
+            contentColor = SprutText,
             topBar = {
                 TopAppBar(
                     title = { Text("Диагностика", fontWeight = FontWeight.SemiBold) },

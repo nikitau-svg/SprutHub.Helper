@@ -313,6 +313,11 @@ data class AccessoryControlGroup(
 
     fun serviceLabel(card: ServiceControlCard): String = card.serviceName
         .takeIf { it.isNotBlank() && !it.equals(title, ignoreCase = true) }
+        ?.let(::localizedServiceLabel)
+        ?: localizedServiceLabel(card.serviceType)
+        ?: card.serviceName
+            .takeIf { it.isNotBlank() && !it.equals(title, ignoreCase = true) }
+            ?.let(::readableType)
         ?: readableType(card.serviceType)
         ?: if (serviceCards.size == 1) title else "Сервис ${serviceCards.indexOf(card) + 1}"
 
@@ -463,6 +468,26 @@ private fun normalizeType(value: String): String = value
     .replace(Regex("^(hs|hc)[.:_]"), "")
     .replace(Regex("^[sc][.:_]"), "")
     .filter(Char::isLetterOrDigit)
+
+private fun localizedServiceLabel(value: String): String? = when (normalizeType(value)) {
+    "light", "lightbulb", "lighting" -> "Свет"
+    "fan", "fanv2" -> "Вентилятор"
+    "switch" -> "Выключатель"
+    "outlet" -> "Розетка"
+    "thermostat", "heatercooler", "airconditioner", "airconditioning" -> "Климат"
+    "battery", "batteryservice" -> "Батарея"
+    "temperaturesensor" -> "Температура"
+    "humiditysensor" -> "Влажность"
+    "airquality", "airqualitysensor" -> "Качество воздуха"
+    "contactsensor" -> "Контакт"
+    "motionsensor" -> "Движение"
+    "occupancysensor" -> "Присутствие"
+    "lightsensor" -> "Освещённость"
+    "lock", "lockmechanism" -> "Замок"
+    "windowcovering", "blinds", "curtain" -> "Шторы"
+    "button", "statelessprogrammableswitch" -> "Кнопка"
+    else -> null
+}
 
 private fun readableType(value: String): String? = value
     .takeIf(String::isNotBlank)
