@@ -9,6 +9,8 @@
 
 > Проект не связан с разработчиками SprutHub. Приложение использует внутренний WebSocket/JSON-RPC-протокол, который может измениться без предупреждения. Текущая beta-версия — [`0.6.0-beta.7`](https://github.com/nikitau-svg/SprutHub.Helper/releases/tag/v0.6.0-beta.7).
 
+> Активная разработка идёт в ветке [`beta`](https://github.com/nikitau-svg/SprutHub.Helper/tree/beta). В `main` попадает только версия, прошедшая аппаратный E2E; готовые APK всегда публикуются отдельными подписанными [GitHub Releases](https://github.com/nikitau-svg/SprutHub.Helper/releases).
+
 [Скачать APK](https://github.com/nikitau-svg/SprutHub.Helper/releases/tag/v0.6.0-beta.7) · [Установка](docs/INSTALLATION.md) · [Возможности](docs/CAPABILITIES.md) · [FAQ](docs/FAQ.md) · [Диагностика](docs/DIAGNOSTICS.md) · [Поддержка](SUPPORT.md) · [Приватность](PRIVACY.md)
 
 ## Что уже работает
