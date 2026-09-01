@@ -111,12 +111,30 @@ abstract class SprutTileService(private val slot: Int) : TileService() {
                 }
             }
             ControlBehavior.OPTIONS -> {
+                AppGraph.diagnostics.record(
+                    category = DiagnosticCategory.COMMAND,
+                    event = event,
+                    outcome = DiagnosticOutcome.SKIPPED,
+                    reason = "Для выбора режима открыто приложение",
+                    details = mapOf("слот" to slot.toString()),
+                )
                 openControl(control)
                 updateTile()
                 return
             }
             ControlBehavior.BUTTON -> repository.execute(control.id)
-            ControlBehavior.SENSOR -> Result.failure(IllegalStateException("Только чтение"))
+            ControlBehavior.SENSOR -> {
+                AppGraph.diagnostics.record(
+                    category = DiagnosticCategory.COMMAND,
+                    event = event,
+                    outcome = DiagnosticOutcome.SKIPPED,
+                    reason = "Показатель доступен только для чтения; открыто приложение",
+                    details = mapOf("слот" to slot.toString()),
+                )
+                openControl(control)
+                updateTile()
+                return
+            }
         }
         AppGraph.diagnostics.record(
             category = DiagnosticCategory.COMMAND,
@@ -135,40 +153,29 @@ abstract class SprutTileService(private val slot: Int) : TileService() {
         val freshness = repository.freshness()
         if (control == null) {
             tile.label = "SprutHub $slot"
-            tile.subtitle = error?.take(30) ?: "Не настроено"
+            val subtitle = error?.take(30) ?: "Не настроено"
+            tile.subtitle = subtitle
+            tile.stateDescription = subtitle
+            tile.contentDescription = "SprutHub $slot, $subtitle"
             tile.state = Tile.STATE_UNAVAILABLE
             tile.icon = TileIconResolver.icon(this, DeviceKind.OTHER)
         } else {
             tile.label = control.title
-            val presentation = freshness.presentationFor(control)
-            val unavailableReason = when {
-                error != null -> error.take(30)
-                presentation.pending -> presentation.statusLabel
-                !presentation.stateIsAuthoritative -> presentation.statusLabel
-                else -> null
-            }
-            tile.subtitle = unavailableReason
-                ?: presentation.statusLabel
-                ?: control.subtitle.ifBlank { control.room }
+            val presentation = quickSettingsPresentation(
+                control = control,
+                surface = freshness.presentationFor(control),
+                error = error,
+            )
+            tile.subtitle = presentation.subtitle
+            tile.stateDescription = presentation.stateDescription
             tile.icon = CustomIconManager(this).loadIcon(control.id)
                 ?: TileIconResolver.icon(this, control.kind)
-            tile.state = if (unavailableReason != null) {
-                Tile.STATE_UNAVAILABLE
-            } else {
-                when (control.behavior) {
-                    ControlBehavior.TOGGLE, ControlBehavior.TOGGLE_RANGE ->
-                        if (presentation.active) Tile.STATE_ACTIVE else Tile.STATE_INACTIVE
-                    ControlBehavior.OPTIONS, ControlBehavior.BUTTON, ControlBehavior.RANGE -> Tile.STATE_INACTIVE
-                    ControlBehavior.SENSOR -> Tile.STATE_UNAVAILABLE
-                }
+            tile.state = when (presentation.visualState) {
+                QuickSettingsVisualState.ACTIVE -> Tile.STATE_ACTIVE
+                QuickSettingsVisualState.INACTIVE -> Tile.STATE_INACTIVE
+                QuickSettingsVisualState.UNAVAILABLE -> Tile.STATE_UNAVAILABLE
             }
-            tile.contentDescription = listOf(
-                control.title,
-                unavailableReason ?: presentation.statusLabel,
-                control.displayValue,
-            )
-                .filterNotNull()
-                .joinToString(", ")
+            tile.contentDescription = presentation.contentDescription
         }
         tile.updateTile()
     }

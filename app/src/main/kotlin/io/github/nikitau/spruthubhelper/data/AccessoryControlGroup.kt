@@ -25,6 +25,13 @@ enum class ServiceCardTemplate {
     GENERIC,
 }
 
+/** One human-readable characteristic exposed by a logical service card. */
+data class CharacteristicDisplayValue(
+    val key: String,
+    val label: String,
+    val value: String,
+)
+
 /**
  * One logical SprutHub service card. Characteristics remain addressable by
  * their own ids, but no longer become duplicate-looking cards in the panel.
@@ -140,6 +147,43 @@ data class ServiceControlCard(
         .sortedBy { attributeLabel(it).lowercase() }
         .toList()
 
+    /**
+     * Full, lossless value list for the in-app catalog disclosure. Compact
+     * Android surfaces may select only a couple of these rows, but the app
+     * must still let the user inspect every characteristic we parsed.
+     */
+    fun characteristicValues(): List<CharacteristicDisplayValue> = buildList {
+        val orderedControls = listOf(primaryControl) + controls.filterNot { it.id == primaryControl.id }
+        orderedControls.distinctBy(SprutControl::id).forEach { control ->
+            if (control.behavior != ControlBehavior.BUTTON) {
+                add(
+                    CharacteristicDisplayValue(
+                        key = control.id,
+                        label = attributeLabel(control),
+                        value = if (control.id == primaryControl.id) {
+                            headlineValue()
+                        } else {
+                            attributeValue(control)
+                        },
+                    ),
+                )
+            }
+            if (
+                control.id == primaryControl.id &&
+                control.behavior == ControlBehavior.TOGGLE_RANGE &&
+                !control.rangeCharacteristicId.isNullOrBlank()
+            ) {
+                add(
+                    CharacteristicDisplayValue(
+                        key = "${control.id}:range:${control.rangeCharacteristicId}",
+                        label = rangeLabel(),
+                        value = rangeValue(),
+                    ),
+                )
+            }
+        }
+    }.distinctBy(CharacteristicDisplayValue::key)
+
     fun defaultAttributes(limit: Int = recommendedAttributeCount): List<SprutControl> =
         availableAttributes().take(limit)
 
@@ -248,6 +292,11 @@ fun ServiceCardTemplate.categoryLabel(): String = when (this) {
     ServiceCardTemplate.RANGE -> "Регулятор"
     ServiceCardTemplate.GENERIC -> "Устройство"
 }
+
+/** Shared semantic value used by widgets, tiles and accessibility text. */
+fun SprutControl.surfaceValue(): String = buildServiceControlCards(listOf(this))
+    .single()
+    .headlineValue()
 
 /** Stable id persisted by the custom panel. */
 fun serviceCardId(control: SprutControl): String = if (control.accessoryId.isBlank()) {
@@ -536,6 +585,8 @@ private fun attributePriority(control: SprutControl): Int {
 }
 
 private fun characteristicLabel(control: SprutControl): String = when (normalizeType(control.characteristicType)) {
+    "active", "on" -> "Питание"
+    "brightness" -> "Яркость"
     "currenttemperature" -> "Сейчас"
     "targettemperature", "coolingthresholdtemperature", "heatingthresholdtemperature" -> "Задано"
     "currentheatercoolerstate", "currentheatingcoolingstate", "currentoperationalstate" -> "Режим"
@@ -556,11 +607,14 @@ private fun characteristicLabel(control: SprutControl): String = when (normalize
     "occupancydetected" -> "Присутствие"
     "leakdetected" -> "Протечка"
     "smokedetected" -> "Дым"
-    "carbondioxidedetected" -> "CO₂"
+    "carbondioxidedetected" -> "CO₂ обнаружен"
+    "carbondioxidelevel", "carbondioxidepeaklevel" -> "CO₂"
     "carbonmonoxidedetected" -> "CO"
     "gasdetected" -> "Газ"
     "noisedetected" -> "Шум"
-    "airquality" -> "Воздух"
+    "airquality" -> "Качество воздуха"
+    "pm25density" -> "PM2.5"
+    "pm10density" -> "PM10"
     "statusfault", "operationalerror" -> "Ошибка"
     "statusjammed" -> "Заклинивание"
     "obstructiondetected" -> "Препятствие"
@@ -626,14 +680,14 @@ private fun formattedValue(control: SprutControl): String {
             "leakdetected" -> mapOf(0L to "Нет", 1L to "Обнаружена")[numeric.roundToLong()]
             "smokedetected" -> mapOf(0L to "Нет", 1L to "Обнаружен")[numeric.roundToLong()]
             "carbondioxidedetected", "carbonmonoxidedetected", "gasdetected" ->
-                mapOf(0L to "Норма", 1L to "Обнаружено")[numeric.roundToLong()]
+                mapOf(0L to "Нет", 1L to "Обнаружено")[numeric.roundToLong()]
             "airquality" -> mapOf(
                 0L to "Неизвестно",
-                1L to "Отлично",
-                2L to "Хорошо",
-                3L to "Средне",
-                4L to "Плохо",
-                5L to "Очень плохо",
+                1L to "Отличное",
+                2L to "Хорошее",
+                3L to "Среднее",
+                4L to "Плохое",
+                5L to "Очень плохое",
             )[numeric.roundToLong()]
             "chargingstate" -> mapOf(
                 0L to "Не заряжается",
@@ -698,8 +752,8 @@ private fun localizedServiceLabel(value: String): String? = when (normalizeType(
     "thermostat", "heatercooler", "humidifierdehumidifier", "temperaturecontrol",
     "airconditioner", "airconditioning" -> "Климат"
     "battery", "batteryservice" -> "Батарея"
-    "temperaturesensor" -> "Температура"
-    "humiditysensor" -> "Влажность"
+    "temperature", "temperaturesensor" -> "Температура"
+    "humidity", "humiditysensor" -> "Влажность"
     "airquality", "airqualitysensor" -> "Качество воздуха"
     "contactsensor" -> "Контакт"
     "motionsensor" -> "Движение"
@@ -707,7 +761,7 @@ private fun localizedServiceLabel(value: String): String? = when (normalizeType(
     "lightsensor" -> "Освещённость"
     "leaksensor" -> "Протечка"
     "smokesensor" -> "Дым"
-    "carbondioxidesensor" -> "CO₂"
+    "co2", "carbondioxide", "carbondioxidesensor" -> "CO₂"
     "carbonmonoxidesensor" -> "CO"
     "gassensor" -> "Газ"
     "noisesensor" -> "Шум"

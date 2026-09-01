@@ -188,6 +188,57 @@ class SprutCatalogParserTest {
     }
 
     @Test
+    fun keepsAllEightQingpingValuesAcrossFiveReadOnlyServices() {
+        val rooms = json.parseToJsonElement("""{"rooms":[{"id":1,"name":"Спальня Никита"}]}""")
+        val accessories = json.parseToJsonElement(
+            """
+            {"accessories":[{
+              "id":120,"name":"Qingping Air Monitor Lite","roomId":1,"services":[
+                {"id":1,"type":"AirQualitySensor","name":"Air Quality","characteristics":[
+                  {"id":1,"type":"AirQuality","control":{"write":false,"value":{"intValue":1}}},
+                  {"id":2,"type":"PM2_5Density","control":{"write":false,"value":{"doubleValue":8}}},
+                  {"id":3,"type":"PM10Density","control":{"write":false,"value":{"doubleValue":8}}}
+                ]},
+                {"id":2,"type":"CarbonDioxideSensor","name":"CO2","characteristics":[
+                  {"id":1,"type":"CarbonDioxideDetected","control":{"write":false,"value":{"intValue":0}}},
+                  {"id":2,"type":"CarbonDioxideLevel","control":{"write":false,"value":{"doubleValue":456}}}
+                ]},
+                {"id":3,"type":"BatteryService","name":"Battery","characteristics":[
+                  {"id":1,"type":"BatteryLevel","unit":"percentage","control":{"write":false,"value":{"intValue":100}}}
+                ]},
+                {"id":4,"type":"TemperatureSensor","name":"Temperature","characteristics":[
+                  {"id":1,"type":"CurrentTemperature","unit":"celsius","control":{"write":false,"value":{"doubleValue":23.8}}}
+                ]},
+                {"id":5,"type":"HumiditySensor","name":"Humidity","characteristics":[
+                  {"id":1,"type":"CurrentRelativeHumidity","unit":"percentage","control":{"write":false,"value":{"intValue":67}}}
+                ]}
+              ]
+            }]}
+            """.trimIndent(),
+        )
+
+        val controls = parser.parse(rooms, accessories).controls
+        val group = io.github.nikitau.spruthubhelper.data.groupControlsByAccessory(controls).single()
+        val valuesByService = group.serviceCards.associate { card ->
+            group.serviceLabel(card) to card.characteristicValues().associate { it.label to it.value }
+        }
+
+        assertEquals(8, controls.size)
+        assertEquals(5, group.serviceCards.size)
+        assertEquals(
+            mapOf("Качество воздуха" to "Отличное", "PM2.5" to "8", "PM10" to "8"),
+            valuesByService.getValue("Качество воздуха"),
+        )
+        assertEquals(
+            mapOf("CO₂ обнаружен" to "Нет", "CO₂" to "456"),
+            valuesByService.getValue("CO₂"),
+        )
+        assertEquals(mapOf("Батарея" to "100 %"), valuesByService.getValue("Батарея"))
+        assertEquals(mapOf("Сейчас" to "23.8 °C"), valuesByService.getValue("Температура"))
+        assertEquals(mapOf("Влажность" to "67 %"), valuesByService.getValue("Влажность"))
+    }
+
+    @Test
     fun keepsServiceAndCharacteristicNamesForMultiServiceAccessory() {
         val rooms = json.parseToJsonElement("""{"rooms":[{"id":1,"name":"Дом"}]}""")
         val accessories = json.parseToJsonElement(

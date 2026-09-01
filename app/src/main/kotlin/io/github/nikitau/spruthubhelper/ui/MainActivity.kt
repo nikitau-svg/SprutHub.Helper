@@ -2323,6 +2323,8 @@ private fun ControlActions(
     var tileMenuExpanded by remember(control.id) { mutableStateOf(false) }
     var settingsMenuExpanded by remember(control.id) { mutableStateOf(false) }
     var iconDialogOpen by remember(control.id) { mutableStateOf(false) }
+    var characteristicsExpanded by rememberSaveable(card.id) { mutableStateOf(false) }
+    val characteristicValues = remember(card) { card.characteristicValues() }
     val iconManager = remember { CustomIconManager(context) }
     var hasCustomIcon by remember(control.id, iconRevision) {
         mutableStateOf(iconManager.hasIcon(control.id))
@@ -2440,6 +2442,64 @@ private fun ControlActions(
                                 removeCustomIcon()
                             },
                         )
+                    }
+                }
+            }
+        }
+        if (characteristicValues.size > 1) {
+            Surface(
+                onClick = { characteristicsExpanded = !characteristicsExpanded },
+                modifier = Modifier.fillMaxWidth(),
+                shape = SprutControlShape,
+                color = Color.White.copy(alpha = 0.035f),
+                contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                border = BorderStroke(1.dp, SprutGlassBorder),
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        "Все показатели · ${characteristicValues.size}",
+                        modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.labelLarge,
+                    )
+                    Icon(
+                        if (characteristicsExpanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
+                        if (characteristicsExpanded) "Свернуть показатели" else "Показать все показатели",
+                        modifier = Modifier.size(20.dp),
+                    )
+                }
+            }
+            AnimatedVisibility(characteristicsExpanded) {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = SprutControlShape,
+                    color = Color.White.copy(alpha = 0.025f),
+                    border = BorderStroke(1.dp, SprutGlassBorder),
+                ) {
+                    Column(Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) {
+                        characteristicValues.forEachIndexed { index, characteristic ->
+                            if (index > 0) HorizontalDivider(color = SprutGlassBorder)
+                            Row(
+                                modifier = Modifier.padding(vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    characteristic.label,
+                                    modifier = Modifier.weight(1f),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                Text(
+                                    characteristic.value,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Medium,
+                                )
+                            }
+                        }
                     }
                 }
             }

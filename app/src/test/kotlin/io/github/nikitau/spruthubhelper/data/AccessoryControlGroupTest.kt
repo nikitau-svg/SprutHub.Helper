@@ -46,6 +46,24 @@ class AccessoryControlGroupTest {
     }
 
     @Test
+    fun localizesShortTemperatureAndHumidityServiceNames() {
+        val temperature = control(id = "8:3:1", serviceId = "3", subtitle = "Temperature").copy(
+            serviceName = "Temperature",
+            sourceType = "TemperatureSensor",
+            behavior = ControlBehavior.SENSOR,
+        )
+        val humidity = control(id = "8:4:1", serviceId = "4", subtitle = "Humidity").copy(
+            serviceName = "Humidity",
+            sourceType = "HumiditySensor",
+            behavior = ControlBehavior.SENSOR,
+        )
+
+        val group = groupControlsByAccessory(listOf(temperature, humidity)).single()
+
+        assertEquals(setOf("Температура", "Влажность"), group.serviceCards.map(group::serviceLabel).toSet())
+    }
+
+    @Test
     fun preservesReadableSprutHubServiceNameAheadOfGenericType() {
         val climate = control(id = "9:1:1", serviceId = "1", subtitle = "Кондиционер").copy(
             serviceName = "Кондиционер",
@@ -98,6 +116,43 @@ class AccessoryControlGroupTest {
         assertEquals("22 °C", card.rangeValue())
         assertEquals("Сейчас", card.attributeLabel(currentTemperature))
         assertEquals("Охлаждение", card.attributeValue(mode))
+    }
+
+    @Test
+    fun exposesEveryQingpingAirQualityCharacteristicWithoutExpandingThePanelCard() {
+        val quality = control(id = "120:1:1", serviceId = "1", subtitle = "Air Quality").copy(
+            behavior = ControlBehavior.SENSOR,
+            writable = false,
+            serviceName = "Air Quality",
+            sourceType = "AirQualitySensor",
+            characteristicType = "AirQuality",
+            value = SprutValue(numberValue = 1.0),
+        )
+        val pm25 = control(id = "120:1:2", serviceId = "1", subtitle = "PM2.5").copy(
+            behavior = ControlBehavior.SENSOR,
+            writable = false,
+            serviceName = "Air Quality",
+            sourceType = "AirQualitySensor",
+            characteristicType = "PM2_5Density",
+            value = SprutValue(numberValue = 8.0),
+        )
+        val pm10 = control(id = "120:1:3", serviceId = "1", subtitle = "PM10").copy(
+            behavior = ControlBehavior.SENSOR,
+            writable = false,
+            serviceName = "Air Quality",
+            sourceType = "AirQualitySensor",
+            characteristicType = "PM10Density",
+            value = SprutValue(numberValue = 8.0),
+        )
+
+        val card = buildServiceControlCards(listOf(quality, pm25, pm10)).single()
+
+        assertEquals(
+            listOf("Качество воздуха", "PM2.5", "PM10"),
+            card.characteristicValues().map(CharacteristicDisplayValue::label),
+        )
+        assertEquals(listOf("Отличное", "8", "8"), card.characteristicValues().map(CharacteristicDisplayValue::value))
+        assertEquals(2, card.defaultAttributes().size)
     }
 
     @Test
