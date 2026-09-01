@@ -77,6 +77,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -333,11 +334,8 @@ private fun SprutDevicePanel(
                 EmptyPanel(Modifier.weight(1f), onOpenApp)
             } else {
                 BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
-                    val columnCount = when {
-                        maxWidth >= 760.dp -> 4
-                        maxWidth >= 540.dp -> 3
-                        else -> 2
-                    }
+                    val fontScale = LocalDensity.current.fontScale
+                    val columnCount = PanelLayoutPolicy.columnCount(maxWidth.value, fontScale)
                     LazyVerticalGrid(
                         columns = GridCells.Fixed(columnCount),
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -497,7 +495,7 @@ private fun ServiceGlassCard(
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(cardHeight)
+            .heightIn(min = cardHeight)
             .clip(shape)
             .background(
                 Brush.linearGradient(
@@ -514,7 +512,7 @@ private fun ServiceGlassCard(
             )
             .padding(12.dp),
     ) {
-        Column(Modifier.fillMaxSize()) {
+        Column(Modifier.fillMaxWidth()) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(
                     modifier = Modifier
@@ -543,7 +541,7 @@ private fun ServiceGlassCard(
                 Column(Modifier.weight(1f)) {
                     Text(
                         card.title,
-                        maxLines = 1,
+                        maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.SemiBold,
