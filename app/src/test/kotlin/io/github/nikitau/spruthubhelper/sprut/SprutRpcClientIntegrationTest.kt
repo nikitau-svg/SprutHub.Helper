@@ -172,6 +172,89 @@ class SprutRpcClientIntegrationTest {
     }
 
     @Test
+    fun autoModeFallsBackFromRejectedLocalAuthenticationToCloudSocket() = runBlocking {
+        val local = FakeSprutHubServer().also(FakeSprutHubServer::start)
+        try {
+            local.rejectAuthentication()
+            val autoConfig = config.copy(
+                mode = ConnectionMode.AUTO,
+                localUrl = local.webSocketUrl,
+                cloudUrl = server.webSocketUrl,
+                localPassword = "rejected-local-password",
+                cloudPassword = "accepted-cloud-password",
+            )
+
+            val endpoint = client.connect(autoConfig)
+
+            assertFalse(endpoint.isLocal)
+            assertEquals(server.webSocketUrl, endpoint.url)
+            assertEquals(1, local.operations.count { it == "account.auth" })
+            assertEquals(1, server.operations.count { it == "account.auth" })
+            assertEquals(SprutTransportPhase.CONNECTED_CLOUD, client.transportStatus.value.phase)
+        } finally {
+            local.close()
+        }
+    }
+
+    @Test
+    fun droppedLocalTransportRecoversThroughCloudSocket() = runBlocking {
+        val local = FakeSprutHubServer().also(FakeSprutHubServer::start)
+        try {
+            val autoConfig = config.copy(
+                mode = ConnectionMode.AUTO,
+                localUrl = local.webSocketUrl,
+                cloudUrl = server.webSocketUrl,
+                localPassword = "local-password",
+                cloudPassword = "cloud-password",
+            )
+            server.respond("room.list", buildJsonObject { put("channel", "cloud") })
+            assertTrue(client.connect(autoConfig).isLocal)
+
+            local.close()
+            withTimeout(1_000) {
+                client.transportStatus.first { it.phase == SprutTransportPhase.ERROR }
+            }
+            val response = client.call(autoConfig, request("room", "list"))
+
+            assertEquals("cloud", response.jsonObject.getValue("channel").jsonPrimitive.content)
+            assertEquals(SprutTransportPhase.CONNECTED_CLOUD, client.transportStatus.value.phase)
+            assertTrue(server.operations.contains("room.list"))
+        } finally {
+            local.close()
+        }
+    }
+
+    @Test
+    fun failureOfBothAutoEndpointsDoesNotLeakEitherPassword() = runBlocking {
+        val local = FakeSprutHubServer().also(FakeSprutHubServer::start)
+        try {
+            local.rejectAuthentication()
+            server.rejectAuthentication()
+            val localPassword = "very-private-local-password"
+            val cloudPassword = "very-private-cloud-password"
+            val autoConfig = config.copy(
+                mode = ConnectionMode.AUTO,
+                localUrl = local.webSocketUrl,
+                cloudUrl = server.webSocketUrl,
+                localPassword = localPassword,
+                cloudPassword = cloudPassword,
+            )
+
+            val result = runCatching { client.connect(autoConfig) }
+            val message = result.exceptionOrNull()?.message.orEmpty()
+
+            assertTrue(result.exceptionOrNull() is SprutConnectionException)
+            assertEquals(SprutTransportPhase.ERROR, client.transportStatus.value.phase)
+            assertFalse(message.contains(localPassword))
+            assertFalse(message.contains(cloudPassword))
+            assertTrue(message.contains("локальные данные входа"))
+            assertTrue(message.contains("облачные данные входа"))
+        } finally {
+            local.close()
+        }
+    }
+
+    @Test
     fun parserKeepsValidAccessoryWhenResponseContainsUnknownWrapperAndBrokenEntries() = runBlocking {
         val partialCatalog = Json.parseToJsonElement(
             """

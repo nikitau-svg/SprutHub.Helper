@@ -3,6 +3,7 @@ package io.github.nikitau.spruthubhelper.sprut
 import java.io.Closeable
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 import kotlinx.serialization.json.Json
@@ -33,6 +34,7 @@ internal class FakeSprutHubServer : Closeable {
     private val ignored = ConcurrentHashMap.newKeySet<String>()
     private val disconnectNextOperation = AtomicReference<String?>(null)
     private val authenticationStatus = AtomicReference<String?>(null)
+    private val closed = AtomicBoolean(false)
 
     val connectionCount = AtomicInteger()
     val operations = CopyOnWriteArrayList<String>()
@@ -78,6 +80,7 @@ internal class FakeSprutHubServer : Closeable {
     }
 
     override fun close() {
+        if (!closed.compareAndSet(false, true)) return
         disconnectClients()
         server.shutdown()
     }
