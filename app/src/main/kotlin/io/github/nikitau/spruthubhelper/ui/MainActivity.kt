@@ -269,6 +269,7 @@ private fun MainScreen(viewModel: MainViewModel = viewModel()) {
     var settingsOpen by rememberSaveable { mutableStateOf(false) }
     var settingsSectionName by rememberSaveable { mutableStateOf<String?>(null) }
     val settingsSection = SettingsSection.entries.firstOrNull { it.name == settingsSectionName }
+    val homeReadiness = buildHomeReadiness(ui, health, phone, presence)
     val healthPermissionLauncher = rememberLauncherForActivityResult(
         PermissionController.createRequestPermissionResultContract(),
     ) { viewModel.onHealthPermissionsChanged() }
@@ -422,7 +423,7 @@ private fun MainScreen(viewModel: MainViewModel = viewModel()) {
                         )
                         Text(
                             when {
-                                !settingsOpen -> "Устройства Android"
+                                !settingsOpen -> homeReadiness.status
                                 settingsSection != null -> settingsSection.description
                                 else -> "Подключение, данные и надёжность"
                             },
@@ -464,9 +465,7 @@ private fun MainScreen(viewModel: MainViewModel = viewModel()) {
         if (!settingsOpen) {
             HomeContent(
                 ui = ui,
-                health = health,
-                phone = phone,
-                presence = presence,
+                readiness = homeReadiness,
                 installedTileSlots = installedTileSlots,
                 iconRevision = iconRevision,
                 viewModel = viewModel,
@@ -503,9 +502,7 @@ private fun MainScreen(viewModel: MainViewModel = viewModel()) {
 @Composable
 private fun HomeContent(
     ui: MainUiState,
-    health: HealthUiState,
-    phone: PhoneUiState,
-    presence: PresenceUiState,
+    readiness: HomeReadiness,
     installedTileSlots: Set<Int>,
     iconRevision: Int,
     viewModel: MainViewModel,
@@ -517,15 +514,13 @@ private fun HomeContent(
     val filtered = remember(ui.catalog.controls, search) {
         groupControlsByAccessory(ui.catalog.controls).filter { it.matches(search) }
     }
-    val setupItems = buildSetupOverview(ui, health, phone, presence)
-
     LazyColumn(
         modifier = modifier,
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item {
-            SetupOverviewCard(
-                items = setupItems,
+            HomeReadinessCard(
+                readiness = readiness,
                 onOpenSettings = onOpenSettings,
             )
         }
@@ -647,70 +642,59 @@ private fun SettingsContent(
 }
 
 @Composable
-private fun SetupOverviewCard(
-    items: List<SetupOverviewItem>,
+private fun HomeReadinessCard(
+    readiness: HomeReadiness,
     onOpenSettings: (SettingsSection) -> Unit,
 ) {
+    val accent = when (readiness.tone) {
+        SetupTone.READY -> SprutGreen
+        SetupTone.ATTENTION -> Color(0xFFFFC857)
+        SetupTone.OPTIONAL -> Color(0xFF76B8FF)
+    }
     Card(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
         shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(containerColor = SprutSurfaceElevated),
     ) {
-        Column(Modifier.padding(18.dp)) {
+        Column(
+            Modifier.padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
-                    Text("Готовность", fontWeight = FontWeight.Bold)
                     Text(
-                        "Для плиток и панели обязателен только SprutHub. Остальные источники подключаются по желанию.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        readiness.status,
+                        style = MaterialTheme.typography.labelLarge,
+                        color = accent,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Text(readiness.title, fontWeight = FontWeight.Bold)
+                }
+                Surface(shape = CircleShape, color = accent.copy(alpha = 0.16f)) {
+                    Icon(
+                        readiness.targetSection?.icon() ?: Icons.Rounded.DevicesOther,
+                        contentDescription = null,
+                        modifier = Modifier.padding(10.dp).size(22.dp),
+                        tint = accent,
                     )
                 }
-                Icon(Icons.Rounded.Settings, contentDescription = null, tint = SprutGreen)
-            }
-            Spacer(Modifier.height(8.dp))
-            items.forEachIndexed { index, item ->
-                if (index > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                SetupOverviewRow(item = item, onClick = { onOpenSettings(item.section) })
-            }
-        }
-    }
-}
-
-@Composable
-private fun SetupOverviewRow(item: SetupOverviewItem, onClick: () -> Unit) {
-    val statusColor = setupToneColor(item.tone)
-    Row(
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 11.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Surface(
-            shape = CircleShape,
-            color = statusColor.copy(alpha = 0.16f),
-        ) {
-            Icon(
-                item.section.icon(),
-                contentDescription = null,
-                modifier = Modifier.padding(8.dp).size(20.dp),
-                tint = statusColor,
-            )
-        }
-        Spacer(Modifier.size(11.dp))
-        Column(Modifier.weight(1f)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(item.section.title, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-                Text(item.status, style = MaterialTheme.typography.labelMedium, color = statusColor)
             }
             Text(
-                item.detail,
+                readiness.detail,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
             )
+            val target = readiness.targetSection
+            val actionLabel = readiness.actionLabel
+            if (target != null && actionLabel != null) {
+                Button(
+                    onClick = { onOpenSettings(target) },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(actionLabel)
+                }
+            }
         }
-        Spacer(Modifier.size(4.dp))
-        Icon(Icons.Rounded.ChevronRight, contentDescription = "Открыть")
     }
 }
 
@@ -985,6 +969,7 @@ private fun HealthCard(
                         GuidanceAction.CREATE_HEALTH_DEVICE -> viewModel.createHealthDevice(selectedRoomId)
                         GuidanceAction.RECREATE_HEALTH_DEVICE -> confirmRecreate = true
                         GuidanceAction.ENABLE_HEALTH_BACKGROUND -> viewModel.setHealthEnabled(true)
+                        GuidanceAction.RESUME_HEALTH_MANUAL -> viewModel.resumeManualHealthAccess()
                         GuidanceAction.SYNC_HEALTH -> viewModel.syncHealth()
                         else -> Unit
                     }
@@ -1628,6 +1613,23 @@ private fun ConnectionCard(
         localPassword.isNotEmpty() ||
         cloudPassword.isNotEmpty()
     val guidance = connectionGuidance(ui, connectionFormChanged)
+    val localReady = localUrl.isNotBlank() && (localPassword.isNotEmpty() || ui.config.hasLocalPassword)
+    val cloudReady = cloudUrl.isNotBlank() && (cloudPassword.isNotEmpty() || ui.config.hasCloudPassword)
+    val endpointReady = when (mode) {
+        ConnectionMode.AUTO -> localReady || cloudReady
+        ConnectionMode.LOCAL -> localReady
+        ConnectionMode.CLOUD -> cloudReady
+    }
+    val formProblem = when {
+        serial.isBlank() -> "Укажите серийный номер хаба"
+        email.isBlank() -> "Укажите e-mail учётной записи SprutHub"
+        !endpointReady -> when (mode) {
+            ConnectionMode.AUTO -> "Укажите адрес и пароль хотя бы для дома или облака"
+            ConnectionMode.LOCAL -> "Укажите локальный адрес и локальный пароль"
+            ConnectionMode.CLOUD -> "Укажите облачный адрес и облачный пароль"
+        }
+        else -> null
+    }
 
     Card(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
@@ -1650,28 +1652,6 @@ private fun ConnectionCard(
                     Icon(if (expanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, null, tint = Color.White)
                 }
             }
-            NextActionCard(
-                guidance = guidance,
-                actionEnabled = !busy,
-                darkSurface = true,
-                onAction = { action ->
-                    when (action) {
-                        GuidanceAction.SAVE_AND_TEST_CONNECTION -> {
-                            viewModel.saveAndTestSettings(
-                                mode,
-                                localUrl,
-                                cloudUrl,
-                                serial,
-                                email,
-                                localPassword,
-                                cloudPassword,
-                            )
-                        }
-                        GuidanceAction.REFRESH_CATALOG -> viewModel.testConnection()
-                        else -> Unit
-                    }
-                },
-            )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 ConnectionMode.entries.forEach { item ->
                     FilterChip(
@@ -1779,9 +1759,18 @@ private fun ConnectionCard(
                         singleLine = true,
                         colors = sprutTextFieldColors(),
                     )
-                    OutlinedButton(
-                        onClick = {
-                            viewModel.saveSettings(
+                }
+            }
+            NextActionCard(
+                guidance = guidance,
+                actionEnabled = !busy && (
+                    guidance.action != GuidanceAction.SAVE_AND_TEST_CONNECTION || formProblem == null
+                    ),
+                darkSurface = true,
+                onAction = { action ->
+                    when (action) {
+                        GuidanceAction.SAVE_AND_TEST_CONNECTION -> {
+                            viewModel.saveAndTestSettings(
                                 mode,
                                 localUrl,
                                 cloudUrl,
@@ -1790,15 +1779,18 @@ private fun ConnectionCard(
                                 localPassword,
                                 cloudPassword,
                             )
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                        enabled = !busy,
-                    ) {
-                        Icon(Icons.Rounded.Settings, null)
-                        Spacer(Modifier.size(8.dp))
-                        Text("Сохранить настройки")
+                        }
+                        GuidanceAction.REFRESH_CATALOG -> viewModel.testConnection()
+                        else -> Unit
                     }
-                }
+                },
+            )
+            if (guidance.action == GuidanceAction.SAVE_AND_TEST_CONNECTION && formProblem != null) {
+                Text(
+                    formProblem,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = Color(0xFFFFC857),
+                )
             }
         }
     }

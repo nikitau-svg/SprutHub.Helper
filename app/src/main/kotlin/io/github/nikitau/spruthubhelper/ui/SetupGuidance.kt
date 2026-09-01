@@ -16,6 +16,7 @@ internal enum class GuidanceAction {
     CREATE_HEALTH_DEVICE,
     RECREATE_HEALTH_DEVICE,
     ENABLE_HEALTH_BACKGROUND,
+    RESUME_HEALTH_MANUAL,
     SYNC_HEALTH,
     CREATE_PHONE_DEVICE,
     RECREATE_PHONE_DEVICE,
@@ -48,10 +49,10 @@ internal fun connectionGuidance(
     SectionGuidance(
         progress = "Есть несохранённые изменения",
         title = "Проверьте новое подключение",
-        detail = "Сохраните адреса и учётные данные, затем приложение сразу проверит доступ и перечитает каталог.",
+        detail = "Сначала Helper проверит адреса и пароли. Они сохранятся только после успешного входа и чтения каталога.",
         tone = SetupTone.ATTENTION,
         action = GuidanceAction.SAVE_AND_TEST_CONNECTION,
-        actionLabel = "Сохранить и проверить",
+        actionLabel = "Проверить и сохранить",
     )
 } else when (ui.connection.phase) {
     ConnectionPhase.CONNECTED_LOCAL,
@@ -75,10 +76,10 @@ internal fun connectionGuidance(
     -> SectionGuidance(
         progress = "Шаг 1 из 1",
         title = "Проверьте доступ к SprutHub",
-        detail = "Заполните адреса и учётные данные ниже, затем сохраните и проверьте подключение.",
+        detail = "Заполните поля ниже. Helper сохранит данные только после успешного входа и чтения каталога.",
         tone = SetupTone.ATTENTION,
         action = GuidanceAction.SAVE_AND_TEST_CONNECTION,
-        actionLabel = "Сохранить и проверить",
+        actionLabel = "Проверить и сохранить",
     )
 }
 
@@ -93,6 +94,29 @@ internal fun healthGuidance(
         tone = SetupTone.ATTENTION,
         action = GuidanceAction.OPEN_HEALTH_CONNECT,
         actionLabel = "Открыть Health Connect",
+    )
+    health.binding != null && health.userPaused -> SectionGuidance(
+        progress = "Синхронизация приостановлена",
+        title = "Доступ отключён пользователем",
+        detail = "Это не ошибка. Разрешения и фоновую работу можно включить снова, когда они понадобятся.",
+        tone = SetupTone.OPTIONAL,
+        action = if (
+            health.allSelectedPermissionsGranted &&
+            (!health.backgroundReadAvailable || health.backgroundReadGranted)
+        ) {
+            if (health.backgroundReadAvailable) GuidanceAction.ENABLE_HEALTH_BACKGROUND
+            else GuidanceAction.RESUME_HEALTH_MANUAL
+        } else {
+            GuidanceAction.REQUEST_HEALTH_PERMISSIONS
+        },
+        actionLabel = if (
+            health.allSelectedPermissionsGranted &&
+            (!health.backgroundReadAvailable || health.backgroundReadGranted)
+        ) {
+            if (health.backgroundReadAvailable) "Включить снова" else "Возобновить ручной доступ"
+        } else {
+            "Настроить доступ снова"
+        },
     )
     !health.allSelectedPermissionsGranted ||
         (health.backgroundReadAvailable && !health.backgroundReadGranted) -> SectionGuidance(
@@ -178,12 +202,12 @@ internal fun phoneGuidance(
         actionLabel = "Применить новый состав",
     )
     !phone.syncSettings.enabled -> SectionGuidance(
-        progress = "Шаг 2 из 2",
-        title = "Включите фоновую синхронизацию",
-        detail = "События и страховочный опрос начнут отправлять выбранные показатели автоматически.",
-        tone = SetupTone.ATTENTION,
+        progress = "Синхронизация приостановлена",
+        title = "Телефон не отправляет данные",
+        detail = "Это не ошибка. Включите фон снова, когда захотите продолжить публикацию показателей.",
+        tone = SetupTone.OPTIONAL,
         action = GuidanceAction.ENABLE_PHONE_BACKGROUND,
-        actionLabel = "Включить фон",
+        actionLabel = "Включить снова",
     )
     phone.heartbeatProtection.status in setOf(
         HeartbeatProtectionStatus.NEEDS_REPAIR,
@@ -244,6 +268,12 @@ internal fun phoneGuidance(
 }
 
 internal fun presenceGuidance(presence: PresenceUiState): SectionGuidance = when {
+    presence.zones.isNotEmpty() && presence.zones.none(PresenceZone::enabled) -> SectionGuidance(
+        progress = "Присутствие приостановлено",
+        title = "Все зоны выключены",
+        detail = "Это не ошибка. Включите нужную зону ниже, когда снова понадобится отслеживание.",
+        tone = SetupTone.OPTIONAL,
+    )
     !presence.permissions.preciseGranted -> SectionGuidance(
         progress = "Шаг 1 из 3",
         title = "Разрешите точную геопозицию",
@@ -267,12 +297,6 @@ internal fun presenceGuidance(presence: PresenceUiState): SectionGuidance = when
         tone = SetupTone.ATTENTION,
         action = GuidanceAction.FILL_CURRENT_LOCATION,
         actionLabel = "Подставить текущую точку",
-    )
-    presence.zones.none(PresenceZone::enabled) -> SectionGuidance(
-        progress = "Присутствие приостановлено",
-        title = "Все зоны выключены",
-        detail = "Это не ошибка. Включите нужную зону ниже, когда снова понадобится отслеживание.",
-        tone = SetupTone.OPTIONAL,
     )
     !presence.geofencesRegistered -> SectionGuidance(
         progress = "Зоны требуют внимания",

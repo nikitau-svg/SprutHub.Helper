@@ -13,8 +13,10 @@ import io.github.nikitau.spruthubhelper.presence.PresenceZone
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
@@ -58,6 +60,9 @@ class SettingsRepository(private val context: Context) {
     }
 
     val healthEnabled: Flow<Boolean> = context.settingsDataStore.data.map { it[Keys.HEALTH_ENABLED] ?: false }
+    val healthUserPaused: Flow<Boolean> = context.settingsDataStore.data.map {
+        it[Keys.HEALTH_USER_PAUSED] ?: false
+    }
     val lastHealthSync: Flow<Long?> = context.settingsDataStore.data.map { it[Keys.LAST_HEALTH_SYNC] }
 
     val selectedPhoneSensors: Flow<Set<PhoneSensor>> = context.settingsDataStore.data.map { preferences ->
@@ -136,20 +141,37 @@ class SettingsRepository(private val context: Context) {
     suspend fun currentConfig(): HubConfig = config.first()
 
     suspend fun saveConfig(config: HubConfig, passwordUpdate: HubPasswordUpdate) {
-        val normalized = config.copy(
-            localUrl = normalizeSprutEndpoint(config.localUrl, secureByDefault = false),
-            cloudUrl = normalizeSprutEndpoint(config.cloudUrl, secureByDefault = true),
-            serial = normalizeHubSerial(config.serial),
-        )
-        validate(normalized)
-        context.settingsDataStore.edit { preferences ->
-            preferences[Keys.MODE] = normalized.mode.name
-            preferences[Keys.LOCAL_URL] = normalized.localUrl
-            preferences[Keys.CLOUD_URL] = normalized.cloudUrl
-            preferences[Keys.SERIAL] = normalized.serial.trim()
-            preferences[Keys.EMAIL] = normalized.email.trim()
+        val normalized = normalizeAndValidateHubConfig(config)
+        val previous = currentConfig()
+        try {
+            secretStore.updatePasswords(passwordUpdate)
+            writeConfigPreferences(normalized)
+        } catch (error: Exception) {
+            withContext(NonCancellable) {
+                runCatching { writeConfigPreferences(previous) }
+                    .exceptionOrNull()
+                    ?.let(error::addSuppressed)
+                runCatching {
+                    secretStore.updatePasswords(
+                        HubPasswordUpdate(
+                            localPassword = previous.localPassword,
+                            cloudPassword = previous.cloudPassword,
+                        ),
+                    )
+                }.exceptionOrNull()?.let(error::addSuppressed)
+            }
+            throw error
         }
-        secretStore.updatePasswords(passwordUpdate)
+    }
+
+    private suspend fun writeConfigPreferences(config: HubConfig) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[Keys.MODE] = config.mode.name
+            preferences[Keys.LOCAL_URL] = config.localUrl
+            preferences[Keys.CLOUD_URL] = config.cloudUrl
+            preferences[Keys.SERIAL] = config.serial
+            preferences[Keys.EMAIL] = config.email
+        }
     }
 
     /**
@@ -303,8 +325,18 @@ class SettingsRepository(private val context: Context) {
         }
     }
 
-    suspend fun setHealthEnabled(enabled: Boolean) {
-        context.settingsDataStore.edit { it[Keys.HEALTH_ENABLED] = enabled }
+    suspend fun setHealthEnabled(enabled: Boolean, userInitiated: Boolean = false) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[Keys.HEALTH_ENABLED] = enabled
+            when {
+                userInitiated -> preferences[Keys.HEALTH_USER_PAUSED] = !enabled
+                enabled -> preferences[Keys.HEALTH_USER_PAUSED] = false
+            }
+        }
+    }
+
+    suspend fun setHealthUserPaused(paused: Boolean) {
+        context.settingsDataStore.edit { it[Keys.HEALTH_USER_PAUSED] = paused }
     }
 
     suspend fun markHealthSynced(epochMs: Long = System.currentTimeMillis()) {
@@ -463,30 +495,6 @@ class SettingsRepository(private val context: Context) {
             }
             .take(MAX_PANEL_ITEMS)
 
-    private fun validate(config: HubConfig) {
-        require(config.serial.isNotBlank()) { "Укажите серийный номер SprutHub" }
-        when (config.mode) {
-            ConnectionMode.AUTO -> require(config.localUrl.isNotBlank() || config.cloudUrl.isNotBlank()) {
-                "Укажите хотя бы один адрес SprutHub"
-            }
-            ConnectionMode.LOCAL -> require(config.localUrl.isNotBlank()) { "Укажите локальный адрес SprutHub" }
-            ConnectionMode.CLOUD -> require(config.cloudUrl.isNotBlank()) { "Укажите облачный адрес SprutHub" }
-        }
-        listOf(config.localUrl to "локальный", config.cloudUrl to "облачный")
-            .filter { (url) -> url.isNotBlank() }
-            .forEach { (url, label) ->
-            val uri = runCatching { URI(url.trim()) }.getOrNull()
-                ?: error("Некорректный $label адрес")
-            require(uri.scheme == "ws" || uri.scheme == "wss") { "$label адрес должен начинаться с ws:// или wss://" }
-            require(uri.host != null) { "В $label адресе не найден хост" }
-            if (uri.scheme == "ws") {
-                require(label == "локальный" && isPrivateLanHost(uri.host)) {
-                    "Незашифрованный ws:// разрешён только для локального адреса; используйте wss://"
-                }
-            }
-        }
-    }
-
     private object Keys {
         val DEVICE_INSTANCE_ID = stringPreferencesKey("device_instance_id")
         val DEVICE_LEGACY_RECOVERY = booleanPreferencesKey("device_legacy_recovery")
@@ -500,6 +508,7 @@ class SettingsRepository(private val context: Context) {
         val HEALTH_METRICS = stringPreferencesKey("health_metrics")
         val HEALTH_BINDING = stringPreferencesKey("health_binding")
         val HEALTH_ENABLED = booleanPreferencesKey("health_enabled")
+        val HEALTH_USER_PAUSED = booleanPreferencesKey("health_user_paused")
         val LAST_HEALTH_SYNC = longPreferencesKey("last_health_sync")
         val PHONE_SENSORS = stringPreferencesKey("phone_sensors")
         val PHONE_BINDING = stringPreferencesKey("phone_binding")
@@ -540,6 +549,39 @@ class SettingsRepository(private val context: Context) {
             PhoneSensor.LAST_SYNC,
         )
     }
+}
+
+internal fun normalizeAndValidateHubConfig(config: HubConfig): HubConfig {
+    val normalized = config.copy(
+        localUrl = normalizeSprutEndpoint(config.localUrl, secureByDefault = false),
+        cloudUrl = normalizeSprutEndpoint(config.cloudUrl, secureByDefault = true),
+        serial = normalizeHubSerial(config.serial),
+        email = config.email.trim(),
+    )
+    require(normalized.serial.isNotBlank()) { "Укажите серийный номер SprutHub" }
+    when (normalized.mode) {
+        ConnectionMode.AUTO -> require(normalized.localUrl.isNotBlank() || normalized.cloudUrl.isNotBlank()) {
+            "Укажите хотя бы один адрес SprutHub"
+        }
+        ConnectionMode.LOCAL -> require(normalized.localUrl.isNotBlank()) { "Укажите локальный адрес SprutHub" }
+        ConnectionMode.CLOUD -> require(normalized.cloudUrl.isNotBlank()) { "Укажите облачный адрес SprutHub" }
+    }
+    listOf(normalized.localUrl to "локальный", normalized.cloudUrl to "облачный")
+        .filter { (url) -> url.isNotBlank() }
+        .forEach { (url, label) ->
+            val uri = runCatching { URI(url) }.getOrNull()
+                ?: error("Некорректный $label адрес")
+            require(uri.scheme == "ws" || uri.scheme == "wss") {
+                "$label адрес должен начинаться с ws:// или wss://"
+            }
+            require(uri.host != null) { "В $label адресе не найден хост" }
+            if (uri.scheme == "ws") {
+                require(label == "локальный" && isPrivateLanHost(uri.host)) {
+                    "Незашифрованный ws:// разрешён только для локального адреса; используйте wss://"
+                }
+            }
+        }
+    return normalized
 }
 
 internal fun normalizeSprutEndpoint(raw: String, secureByDefault: Boolean): String {

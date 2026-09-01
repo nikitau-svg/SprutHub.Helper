@@ -84,6 +84,20 @@ class SetupGuidanceTest {
     }
 
     @Test
+    fun `health explicitly paused by user is optional`() {
+        val guidance = healthGuidance(
+            HealthUiState(
+                available = true,
+                binding = binding,
+                userPaused = true,
+            ),
+        )
+
+        assertEquals(SetupTone.OPTIONAL, guidance.tone)
+        assertEquals(GuidanceAction.REQUEST_HEALTH_PERMISSIONS, guidance.action)
+    }
+
+    @Test
     fun `phone reliability requests notifications before reporting ready`() {
         val guidance = phoneGuidance(
             PhoneUiState(
@@ -114,6 +128,19 @@ class SetupGuidanceTest {
 
         assertEquals(GuidanceAction.OPEN_PHONE_SENSOR_ACCESS, guidance.action)
         assertEquals(SetupTone.ATTENTION, guidance.tone)
+    }
+
+    @Test
+    fun `phone explicitly disabled by user is paused instead of broken`() {
+        val guidance = phoneGuidance(
+            PhoneUiState(
+                binding = binding,
+                syncSettings = PhoneSyncSettings(enabled = false),
+            ),
+        )
+
+        assertEquals(SetupTone.OPTIONAL, guidance.tone)
+        assertEquals(GuidanceAction.ENABLE_PHONE_BACKGROUND, guidance.action)
     }
 
     @Test
@@ -200,5 +227,22 @@ class SetupGuidanceTest {
 
         assertEquals(null, guidance.action)
         assertEquals(SetupTone.OPTIONAL, guidance.tone)
+    }
+
+    @Test
+    fun `disabled presence zones stay paused after location access is revoked`() {
+        val zone = PresenceZone.create(
+            name = "Работа",
+            latitude = 55.75,
+            longitude = 37.61,
+            radiusMeters = 150.0,
+            roomId = "room",
+            publishDistance = false,
+        ).copy(enabled = false)
+
+        val guidance = presenceGuidance(PresenceUiState(zones = listOf(zone)))
+
+        assertEquals(SetupTone.OPTIONAL, guidance.tone)
+        assertEquals(null, guidance.action)
     }
 }

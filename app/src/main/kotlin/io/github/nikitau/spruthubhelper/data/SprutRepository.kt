@@ -170,15 +170,35 @@ class SprutRepository(
     }
 
     suspend fun refresh(forceConnection: Boolean = false): Result<SprutCatalog> = refreshMutex.withLock {
+        refreshLocked(settings.currentConfig(), forceConnection)
+    }
+
+    /**
+     * Verifies a candidate configuration before it is persisted. A successful
+     * verification persists it through [onVerified] before the live socket,
+     * assignments and authoritative catalog are adopted. A failed persistence
+     * therefore cannot reconcile Android interfaces against the wrong hub.
+     */
+    suspend fun verifyConfig(
+        config: HubConfig,
+        onVerified: suspend () -> Unit,
+    ): Result<SprutCatalog> = refreshMutex.withLock {
+        refreshLocked(config, forceConnection = true, beforeAdopt = onVerified)
+    }
+
+    private suspend fun refreshLocked(
+        config: HubConfig,
+        forceConnection: Boolean,
+        beforeAdopt: suspend () -> Unit = {},
+    ): Result<SprutCatalog> {
         val connectionBeforeRefresh = _connectionStatus.value
         catalogRefreshInProgress.set(true)
         _connectionStatus.value = ConnectionStatus(
             phase = ConnectionPhase.CONNECTING,
             message = "Подключение к SprutHub…",
         )
-        val config = settings.currentConfig()
         val authoritativeAtStart = _authoritativeVersions.value
-        try {
+        return try {
             runCatching {
                 val loaded = catalogLoader.load(config, forceConnection)
                 val endpoint = loaded.endpoint
@@ -186,6 +206,7 @@ class SprutRepository(
                 check(parsedSnapshot.controls.isNotEmpty()) {
                     "SprutHub ответил, но управляемые устройства не найдены"
                 }
+                beforeAdopt()
                 reconcileAssignments(_catalog.value.controls, parsedSnapshot.controls)
                 val parsed = synchronized(catalogStateLock) {
                     val merged = preserveConcurrentUpdates(parsedSnapshot, authoritativeAtStart)
@@ -357,11 +378,6 @@ class SprutRepository(
     suspend fun clearPanelItems(): Result<Unit> = runCatching {
         settings.clearPanelItems()
         log("Крупная панель очищена")
-    }
-
-    suspend fun reconnectAfterSettingsChange() {
-        client.disconnect()
-        _connectionStatus.value = ConnectionStatus(message = "Настройки сохранены — выполните проверку")
     }
 
     private suspend fun perform(
