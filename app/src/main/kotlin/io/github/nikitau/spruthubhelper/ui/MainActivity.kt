@@ -866,8 +866,8 @@ private fun HealthCard(
     ) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Surface(shape = CircleShape, color = Color(0xFFFFE0E6)) {
-                    Icon(Icons.Rounded.Favorite, null, Modifier.padding(9.dp), tint = Color(0xFFB3264C))
+                Surface(shape = CircleShape, color = SprutError.copy(alpha = 0.14f)) {
+                    Icon(Icons.Rounded.Favorite, null, Modifier.padding(9.dp), tint = SprutError)
                 }
                 Spacer(Modifier.size(10.dp))
                 Column(Modifier.weight(1f)) {
@@ -1090,8 +1090,8 @@ private fun PhoneCard(
     ) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Surface(shape = CircleShape, color = Color(0xFFDCE9FF)) {
-                    Icon(Icons.Rounded.Smartphone, null, Modifier.padding(9.dp), tint = Color(0xFF315DA8))
+                Surface(shape = CircleShape, color = SprutInfo.copy(alpha = 0.14f)) {
+                    Icon(Icons.Rounded.Smartphone, null, Modifier.padding(9.dp), tint = SprutInfo)
                 }
                 Spacer(Modifier.size(10.dp))
                 Column(Modifier.weight(1f)) {
