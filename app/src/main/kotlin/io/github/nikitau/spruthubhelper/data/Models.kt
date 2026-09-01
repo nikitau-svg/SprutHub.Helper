@@ -2,6 +2,7 @@ package io.github.nikitau.spruthubhelper.data
 
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.Transient
+import java.util.Locale
 import kotlin.math.abs
 
 @Serializable
@@ -162,7 +163,7 @@ data class SprutControl(
             ControlBehavior.TOGGLE, ControlBehavior.TOGGLE_RANGE -> if (value.asBoolean()) "Включено" else "Выключено"
             ControlBehavior.RANGE -> buildString {
                 append(value.asDouble().formatCompact())
-                if (unit.isNotBlank()) append(" ").append(unit)
+                readableSprutUnit(unit).takeIf(String::isNotBlank)?.let { append(" ").append(it) }
             }
             ControlBehavior.OPTIONS -> valueOptions
                 .firstOrNull { option -> option.value.sameValueAs(value) }
@@ -179,9 +180,76 @@ data class SprutControl(
                         ?: value.boolValue?.let { if (it) "Да" else "Нет" }
                         ?: "—",
                 )
-                if (unit.isNotBlank() && value.numberValue != null) append(" ").append(unit)
+                if (value.numberValue != null) {
+                    readableSprutUnit(unit).takeIf(String::isNotBlank)?.let { append(" ").append(it) }
+                }
             }
         }
+}
+
+internal fun readableSprutUnit(unit: String): String = when (unit.trim().lowercase(Locale.ROOT)) {
+    "" -> ""
+    "celsius", "@unit_celsius" -> "°C"
+    "percentage", "@unit_percent" -> "%"
+    "arcdegrees", "@unit_degree" -> "°"
+    "seconds", "@unit_sec" -> "с"
+    "milliseconds", "@unit_ms" -> "мс"
+    "a", "@unit_amp" -> "А"
+    "ma", "@unit_ma" -> "мА"
+    "v", "@unit_volt" -> "В"
+    "mv", "@unit_mv" -> "мВ"
+    "w", "@unit_watt" -> "Вт"
+    "kw", "@unit_kw" -> "кВт"
+    "mw", "@unit_mw" -> "мВт"
+    "va" -> "ВА"
+    "var" -> "вар"
+    "hz", "@unit_hz" -> "Гц"
+    "kwh", "@unit_kwh" -> "кВт·ч"
+    "mwh", "@unit_mwh" -> "мВт·ч"
+    "kvah" -> "кВА·ч"
+    "kvarh" -> "квар·ч"
+    "gcal" -> "Гкал"
+    "@unit_gcal_h" -> "Гкал/ч"
+    "bar", "@unit_bar" -> "бар"
+    "kpa", "@unit_kpa" -> "кПа"
+    "@unit_hpa" -> "гПа"
+    "mmhg" -> "мм рт. ст."
+    "lux", "@unit_lux" -> "лк"
+    "uvi" -> "УФ"
+    "ppm", "@unit_ppm" -> "ppm"
+    "@unit_ppb" -> "ppb"
+    "mg_m3", "@unit_mg_m3" -> "мг/м³"
+    "@unit_ug_m3" -> "мкг/м³"
+    "@unit_g_m3" -> "г/м³"
+    "@unit_mg_l" -> "мг/л"
+    "m", "@unit_metre" -> "м"
+    "@unit_cm" -> "см"
+    "@unit_mm" -> "мм"
+    "@unit_um" -> "мкм"
+    "m2", "@unit_m2" -> "м²"
+    "m3", "@unit_m3" -> "м³"
+    "@unit_m3h" -> "м³/ч"
+    "@unit_m_s" -> "м/с"
+    "@unit_litre" -> "л"
+    "@unit_ml" -> "мл"
+    "@unit_gram" -> "г"
+    "@unit_kohm" -> "кОм"
+    "@unit_ohm" -> "Ом"
+    "@unit_kelvin" -> "К"
+    "@unit_bpm" -> "уд/мин"
+    "@unit_rpm" -> "об/мин"
+    "@unit_day" -> "д"
+    "@unit_hour" -> "ч"
+    "@unit_min" -> "мин"
+    "@unit_kb" -> "КБ"
+    "@unit_mbps" -> "Мбит/с"
+    "@unit_portion" -> "порц."
+    "@unit_times" -> "раз"
+    "@unit_ur_h" -> "мкР/ч"
+    "db" -> "дБ"
+    "db_m" -> "дБм"
+    "mired" -> "миред"
+    else -> unit
 }
 
 internal fun SprutValue.sameValueAs(other: SprutValue): Boolean = when {

@@ -584,50 +584,84 @@ private fun attributePriority(control: SprutControl): Int {
     }
 }
 
-private fun characteristicLabel(control: SprutControl): String = when (normalizeType(control.characteristicType)) {
-    "active", "on" -> "Питание"
-    "brightness" -> "Яркость"
-    "currenttemperature" -> "Сейчас"
-    "targettemperature", "coolingthresholdtemperature", "heatingthresholdtemperature" -> "Задано"
-    "currentheatercoolerstate", "currentheatingcoolingstate", "currentoperationalstate" -> "Режим"
-    "targetheatercoolerstate", "targetheatingcoolingstate", "targetoperationalstate" -> "Заданный режим"
-    "currentrelativehumidity" -> "Влажность"
-    "fanspeed", "rotationspeed", "currentfanstate" -> "Вентилятор"
-    "currentposition" -> "Положение"
-    "positionstate" -> "Движение"
-    "currentdoorstate" -> "Состояние"
-    "targetdoorstate" -> "Команда"
-    "lockcurrentstate" -> "Состояние"
-    "locktargetstate" -> "Команда"
-    "securitysystemcurrentstate" -> "Охрана"
-    "securitysystemtargetstate" -> "Заданный режим"
-    "outletinuse", "inuse" -> "Нагрузка"
-    "contactsensorstate" -> "Контакт"
-    "motiondetected" -> "Движение"
-    "occupancydetected" -> "Присутствие"
-    "leakdetected" -> "Протечка"
-    "smokedetected" -> "Дым"
-    "carbondioxidedetected" -> "CO₂ обнаружен"
-    "carbondioxidelevel", "carbondioxidepeaklevel" -> "CO₂"
-    "carbonmonoxidedetected" -> "CO"
-    "gasdetected" -> "Газ"
-    "noisedetected" -> "Шум"
-    "airquality" -> "Качество воздуха"
-    "pm25density" -> "PM2.5"
-    "pm10density" -> "PM10"
-    "statusfault", "operationalerror" -> "Ошибка"
-    "statusjammed" -> "Заклинивание"
-    "obstructiondetected" -> "Препятствие"
-    "online", "statusactive" -> "Связь"
-    "batterylevel" -> "Батарея"
-    "statuslowbattery" -> "Низкий заряд"
-    "chargingstate" -> "Зарядка"
-    else -> control.characteristicName
-        .takeIf(String::isNotBlank)
-        ?: readableType(control.characteristicType)
-        ?: control.subtitle.substringAfterLast(" · ")
-            .takeIf { it.isNotBlank() && !it.equals(control.serviceName, ignoreCase = true) }
-        ?: "Параметр"
+private fun characteristicLabel(control: SprutControl): String {
+    if (control.characteristicType.contains("PM1_0", ignoreCase = true)) return "PM1.0"
+    return when (normalizeType(control.characteristicType)) {
+        "active", "on" -> "Питание"
+        "brightness" -> "Яркость"
+        "currenttemperature" -> "Сейчас"
+        "targettemperature", "coolingthresholdtemperature", "heatingthresholdtemperature" -> "Задано"
+        "currentheatercoolerstate", "currentheatingcoolingstate", "currentoperationalstate" -> "Режим"
+        "targetheatercoolerstate", "targetheatingcoolingstate", "targetoperationalstate" -> "Заданный режим"
+        "currentrelativehumidity" -> "Влажность"
+        "fanspeed", "rotationspeed", "currentfanstate" -> "Вентилятор"
+        "currentposition" -> "Положение"
+        "positionstate" -> "Движение"
+        "currentdoorstate" -> "Состояние"
+        "targetdoorstate" -> "Команда"
+        "lockcurrentstate" -> "Состояние"
+        "locktargetstate" -> "Команда"
+        "securitysystemcurrentstate" -> "Охрана"
+        "securitysystemtargetstate" -> "Заданный режим"
+        "outletinuse", "inuse" -> "Нагрузка"
+        "contactsensorstate" -> "Контакт"
+        "motiondetected" -> "Движение"
+        "occupancydetected" -> "Присутствие"
+        "leakdetected" -> "Протечка"
+        "smokedetected" -> "Дым"
+        "carbondioxidedetected" -> "CO₂ обнаружен"
+        "carbondioxidelevel", "carbondioxidepeaklevel" -> "CO₂"
+        "carbonmonoxidedetected" -> "CO"
+        "gasdetected" -> "Газ"
+        "noisedetected" -> "Шум"
+        "airquality" -> "Качество воздуха"
+        "pm25density" -> "PM2.5"
+        "pm10density" -> "PM10"
+        "currentatmosphericpressure" -> "Атмосферное давление"
+        "currentambientlightlevel" -> "Освещённость"
+        "currentnoiselevel" -> "Уровень шума"
+        "airparticulatedensity" -> "Частицы в воздухе"
+        "formaldehydedensity" -> "Формальдегид"
+        "aqidensity" -> "AQI"
+        "vocdensity" -> "Летучие соединения"
+        "nitrogendioxidedensity" -> "Диоксид азота"
+        "ozonedensity" -> "Озон"
+        "sulphurdioxidedensity" -> "Диоксид серы"
+        "carbonmonoxidelevel" -> "CO"
+        "carbonmonoxidepeaklevel" -> "Пиковый CO"
+        "volt" -> "Напряжение"
+        "ampere" -> "Ток"
+        "watt" -> "Мощность"
+        "voltampere" -> "Полная мощность"
+        "kilowatthour" -> "Энергия"
+        "kilovoltamperehour" -> "Полная энергия"
+        "voltamperereactive" -> "Реактивная мощность"
+        "kilovoltamperereactivehour" -> "Реактивная энергия"
+        "powerfactor" -> "Коэффициент мощности"
+        "frequency" -> "Частота"
+        "currentultraviolet" -> "УФ-индекс"
+        "pulsecount" -> "Импульсы"
+        "cubicmeter" -> "Объём"
+        "distance" -> "Расстояние"
+        "currentmotionlevel", "intensity" -> "Интенсивность"
+        "currenttiltangle", "tiltangle", "angle" -> "Угол"
+        "filterlifelevel" -> "Ресурс фильтра"
+        "filterchangeindication" -> "Замена фильтра"
+        "waterlevel" -> "Уровень воды"
+        "statusfault", "operationalerror" -> "Ошибка"
+        "statusjammed" -> "Заклинивание"
+        "obstructiondetected" -> "Препятствие"
+        "online", "statusactive" -> "Связь"
+        "batterylevel" -> "Батарея"
+        "statuslowbattery" -> "Низкий заряд"
+        "chargingstate" -> "Зарядка"
+        else -> control.characteristicName
+            .takeIf(String::isNotBlank)
+            ?: readableType(control.characteristicType)
+            ?: control.subtitle.substringAfterLast(" · ")
+                .takeIf { it.isNotBlank() && !it.equals(control.serviceName, ignoreCase = true) }
+            ?: "Параметр"
+    }
 }
 
 private fun formattedValue(control: SprutControl): String {
@@ -727,13 +761,7 @@ private fun formatNumber(value: Double, unit: String): String {
     val number = if (value % 1.0 == 0.0) value.roundToLong().toString() else {
         String.format(Locale.US, "%.1f", value).trimEnd('0').trimEnd('.')
     }
-    val readableUnit = when (unit.lowercase()) {
-        "celsius", "@unit_celsius" -> "°C"
-        "percentage", "@unit_percent" -> "%"
-        "arcdegrees", "@unit_degree" -> "°"
-        "seconds", "@unit_sec" -> "с"
-        else -> unit
-    }
+    val readableUnit = readableSprutUnit(unit)
     return if (readableUnit.isBlank()) number else "$number $readableUnit"
 }
 

@@ -156,6 +156,52 @@ class AccessoryControlGroupTest {
     }
 
     @Test
+    fun localizesRareSensorLabelsAndUnitsAcrossAndroidSurfaces() {
+        val pm1 = control(id = "123:1:1", serviceId = "1", subtitle = "PM1").copy(
+            behavior = ControlBehavior.SENSOR,
+            writable = false,
+            characteristicType = "C_PM1_0Density",
+            value = SprutValue(numberValue = 3.0),
+            unit = "@unit_ug_m3",
+        )
+        val pm10 = control(id = "123:1:2", serviceId = "1", subtitle = "PM10").copy(
+            behavior = ControlBehavior.SENSOR,
+            writable = false,
+            characteristicId = "2",
+            characteristicType = "PM10Density",
+            value = SprutValue(numberValue = 8.0),
+            unit = "@unit_ug_m3",
+        )
+        val pressure = control(id = "123:1:3", serviceId = "1", subtitle = "Pressure").copy(
+            behavior = ControlBehavior.SENSOR,
+            writable = false,
+            characteristicId = "3",
+            characteristicType = "C_CurrentAtmosphericPressure",
+            value = SprutValue(numberValue = 1008.4),
+            unit = "@unit_hpa",
+        )
+        val voltage = control(id = "123:1:4", serviceId = "1", subtitle = "Voltage").copy(
+            behavior = ControlBehavior.SENSOR,
+            writable = false,
+            characteristicId = "4",
+            characteristicType = "C_Volt",
+            value = SprutValue(numberValue = 228.0),
+            unit = "V",
+        )
+
+        val values = buildServiceControlCards(listOf(pm1, pm10, pressure, voltage))
+            .single()
+            .characteristicValues()
+            .associate { it.label to it.value }
+
+        assertEquals("3 мкг/м³", values.getValue("PM1.0"))
+        assertEquals("8 мкг/м³", values.getValue("PM10"))
+        assertEquals("1008.4 гПа", values.getValue("Атмосферное давление"))
+        assertEquals("228 В", values.getValue("Напряжение"))
+        assertEquals("228 В", voltage.displayValue)
+    }
+
+    @Test
     fun mergesLinkedSensorServicesIntoPrimaryActionCard() {
         val thermostat = control(id = "31:1:main", serviceId = "1", subtitle = "Климат").copy(
             behavior = ControlBehavior.TOGGLE_RANGE,
