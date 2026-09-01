@@ -44,7 +44,7 @@ internal fun quickSettingsPresentation(
         // Some OEM SystemUI implementations hide Tile.subtitle even in the
         // expanded shade. Keep a sensor's state visible in the primary label
         // while leaving actionable tile names stable.
-        "$subject · $status"
+        "$status · $subject"
     } else {
         control.title
     }
