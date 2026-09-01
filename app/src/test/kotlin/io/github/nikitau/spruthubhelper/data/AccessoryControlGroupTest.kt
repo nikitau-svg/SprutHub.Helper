@@ -233,6 +233,31 @@ class AccessoryControlGroupTest {
     }
 
     @Test
+    fun mergesOneWayLinkedSensorChainIntoItsOnlyAction() {
+        val climate = control(id = "32:1:main", serviceId = "1", subtitle = "Климат").copy(
+            behavior = ControlBehavior.TOGGLE,
+            linkedServiceIds = listOf("2"),
+        )
+        val airQuality = control(id = "32:2:1", serviceId = "2", subtitle = "Воздух").copy(
+            behavior = ControlBehavior.SENSOR,
+            writable = false,
+            characteristicType = "AirQuality",
+            linkedServiceIds = listOf("3"),
+        )
+        val carbonDioxide = control(id = "32:3:1", serviceId = "3", subtitle = "CO2").copy(
+            behavior = ControlBehavior.SENSOR,
+            writable = false,
+            characteristicType = "CarbonDioxideLevel",
+        )
+
+        val card = buildServiceControlCards(listOf(climate, airQuality, carbonDioxide)).single()
+
+        assertEquals("service:32:1", card.id)
+        assertEquals(listOf("1", "2", "3"), card.memberServiceIds)
+        assertEquals(listOf("32:2:1", "32:3:1"), card.availableAttributes().map(SprutControl::id))
+    }
+
+    @Test
     fun preservesSeveralLinkedWritableServicesAsSeparateCards() {
         val light = control(id = "42:1:1", serviceId = "1", subtitle = "Свет").copy(
             linkedServiceIds = listOf("2", "3"),
@@ -254,6 +279,35 @@ class AccessoryControlGroupTest {
         assertEquals(listOf("1"), cards[0].memberServiceIds)
         assertEquals(listOf("2"), cards[1].memberServiceIds)
         assertEquals(listOf("3"), cards[2].memberServiceIds)
+    }
+
+    @Test
+    fun keepsSensorChainStandaloneWhenItTouchesTwoActions() {
+        val light = control(id = "43:1:1", serviceId = "1", subtitle = "Свет").copy(
+            linkedServiceIds = listOf("3"),
+        )
+        val fan = control(id = "43:2:1", serviceId = "2", subtitle = "Вентилятор").copy(
+            linkedServiceIds = listOf("4"),
+        )
+        val temperature = control(id = "43:3:1", serviceId = "3", subtitle = "Температура").copy(
+            behavior = ControlBehavior.SENSOR,
+            writable = false,
+            characteristicType = "CurrentTemperature",
+            linkedServiceIds = listOf("4"),
+        )
+        val humidity = control(id = "43:4:1", serviceId = "4", subtitle = "Влажность").copy(
+            behavior = ControlBehavior.SENSOR,
+            writable = false,
+            characteristicType = "CurrentRelativeHumidity",
+        )
+
+        val cards = buildServiceControlCards(listOf(light, fan, temperature, humidity))
+        val byId = cards.associateBy(ServiceControlCard::id)
+
+        assertEquals(setOf("service:43:1", "service:43:2", "service:43:3"), byId.keys)
+        assertEquals(listOf("1"), byId.getValue("service:43:1").memberServiceIds)
+        assertEquals(listOf("2"), byId.getValue("service:43:2").memberServiceIds)
+        assertEquals(listOf("3", "4"), byId.getValue("service:43:3").memberServiceIds)
     }
 
     @Test
