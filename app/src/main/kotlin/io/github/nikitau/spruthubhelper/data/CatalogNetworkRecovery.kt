@@ -3,7 +3,19 @@ package io.github.nikitau.spruthubhelper.data
 import android.content.Context
 import android.net.ConnectivityManager
 import android.net.Network
+import android.net.NetworkCapabilities
 import android.util.Log
+import androidx.work.Constraints
+import androidx.work.CoroutineWorker
+import androidx.work.ExistingWorkPolicy
+import androidx.work.NetworkType
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.WorkManager
+import androidx.work.WorkerParameters
+import androidx.work.workDataOf
+import io.github.nikitau.spruthubhelper.AppGraph
+import io.github.nikitau.spruthubhelper.diagnostics.DiagnosticCategory
+import io.github.nikitau.spruthubhelper.diagnostics.DiagnosticOutcome
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -15,12 +27,12 @@ import kotlinx.coroutines.launch
 internal fun catalogRecoveredAfter(
     connection: ConnectionStatus,
     catalog: SprutCatalog,
-    networkAvailableAtEpochMs: Long,
+    recoveryBoundaryEpochMs: Long,
 ): Boolean = connection.phase in setOf(
     ConnectionPhase.CONNECTED_LOCAL,
     ConnectionPhase.CONNECTED_CLOUD,
 ) &&
-    (connection.lastSuccessEpochMs ?: 0L) >= networkAvailableAtEpochMs &&
+    (connection.lastSuccessEpochMs ?: 0L) >= recoveryBoundaryEpochMs &&
     catalog.controls.isNotEmpty()
 
 /**
@@ -36,7 +48,7 @@ internal class CatalogNetworkRecoveryCoordinator(
     private val initialDelayMs: Long = DEFAULT_INITIAL_DELAY_MS,
     private val retryDelayMs: Long = DEFAULT_RETRY_DELAY_MS,
     private val nowEpochMs: () -> Long = System::currentTimeMillis,
-    private val refresh: suspend (networkAvailableAtEpochMs: Long) -> Result<Unit>,
+    private val refresh: suspend (recoveryBoundaryEpochMs: Long) -> Result<Unit>,
     private val onAttemptFinished: (attempt: Int, result: Result<Unit>) -> Unit = { _, _ -> },
 ) {
     private val stateLock = Any()
@@ -44,6 +56,7 @@ internal class CatalogNetworkRecoveryCoordinator(
     private var outageGeneration = 0L
     private var pendingAvailability = false
     private var activeGeneration: Long? = null
+    private var completedGeneration: Long? = null
     private var recoveryJob: Job? = null
 
     fun onNetworkLost() {
@@ -65,6 +78,7 @@ internal class CatalogNetworkRecoveryCoordinator(
                 return
             }
             if (!outageObserved && !connectionIsOffline) return
+            if (completedGeneration == outageGeneration) return
 
             val generation = outageGeneration
             val availableAt = nowEpochMs()
@@ -92,6 +106,7 @@ internal class CatalogNetworkRecoveryCoordinator(
             val restart = synchronized(stateLock) {
                 recoveryJob = null
                 activeGeneration = null
+                completedGeneration = generation
                 if (succeeded && outageGeneration == generation) outageObserved = false
                 val shouldRestart = pendingAvailability && outageObserved
                 pendingAvailability = false
@@ -119,6 +134,80 @@ internal class CatalogNetworkRecoveryCoordinator(
     }
 }
 
+/**
+ * A process-independent safety net for OEMs that defer app network callbacks
+ * while the display sleeps. It is enqueued at the moment of a real loss and
+ * Android starts it only after a usable network exists again.
+ */
+internal class CatalogRecoveryWorkScheduler(
+    private val context: Context,
+    private val nowEpochMs: () -> Long = System::currentTimeMillis,
+) {
+    fun schedule() {
+        val request = OneTimeWorkRequestBuilder<CatalogRecoveryWorker>()
+            .setConstraints(
+                Constraints.Builder()
+                    .setRequiredNetworkType(NetworkType.CONNECTED)
+                    .build(),
+            )
+            .setInputData(workDataOf(CatalogRecoveryWorker.KEY_OUTAGE_AT to nowEpochMs()))
+            .build()
+        WorkManager.getInstance(context).enqueueUniqueWork(
+            WORK_NAME,
+            ExistingWorkPolicy.REPLACE,
+            request,
+        )
+    }
+
+    companion object {
+        const val WORK_NAME = "spruthub_catalog_network_recovery"
+    }
+}
+
+class CatalogRecoveryWorker(
+    appContext: Context,
+    parameters: WorkerParameters,
+) : CoroutineWorker(appContext, parameters) {
+    override suspend fun doWork(): Result {
+        AppGraph.initialize(applicationContext)
+        val repository = AppGraph.repository
+        if (
+            repository.connectionStatus.value.phase == ConnectionPhase.IDLE &&
+            repository.catalog.value.controls.isEmpty()
+        ) {
+            return Result.success()
+        }
+
+        // NetworkType.CONNECTED may be satisfied during route handover before
+        // DNS and the local route have fully settled.
+        delay(CatalogNetworkRecoveryCoordinator.DEFAULT_INITIAL_DELAY_MS)
+        val recoveryBoundary = inputData.getLong(KEY_OUTAGE_AT, 0L)
+        val result = repository.refreshAfterNetworkRecovery(recoveryBoundary)
+        AppGraph.diagnostics.record(
+            category = DiagnosticCategory.NETWORK,
+            event = "Страховочное восстановление каталога после возврата сети",
+            outcome = if (result.isSuccess) DiagnosticOutcome.SUCCESS else DiagnosticOutcome.FAILED,
+            reason = result.exceptionOrNull()?.let { "SprutHub пока недоступен" },
+            details = mapOf("механизм" to "WorkManager"),
+        )
+        return if (result.isSuccess) {
+            Log.i(LOG_TAG, "Catalog recovered after network return by WorkManager")
+            Result.success()
+        } else {
+            // The live callback already owns its one controlled retry. This
+            // independent path is deliberately one-shot to keep every outage
+            // bounded even on noisy OEM network stacks.
+            Log.w(LOG_TAG, "Catalog recovery safety net could not reach SprutHub")
+            Result.failure()
+        }
+    }
+
+    companion object {
+        const val KEY_OUTAGE_AT = "outage_at_epoch_ms"
+        private const val LOG_TAG = "SprutHubHelper"
+    }
+}
+
 internal class CatalogNetworkRecoveryMonitor(
     context: Context,
     private val repository: SprutRepository,
@@ -127,6 +216,7 @@ internal class CatalogNetworkRecoveryMonitor(
 ) {
     private val connectivity = context.getSystemService(ConnectivityManager::class.java)
     private val started = AtomicBoolean(false)
+    private val workScheduler = CatalogRecoveryWorkScheduler(context)
     private val coordinator = CatalogNetworkRecoveryCoordinator(
         scope = scope,
         refresh = { availableAt ->
@@ -140,19 +230,41 @@ internal class CatalogNetworkRecoveryMonitor(
         }
 
         override fun onLost(network: Network) {
+            if (!recoveryIsRelevant()) return
             coordinator.onNetworkLost()
+            runCatching(workScheduler::schedule).onFailure { error ->
+                Log.w(LOG_TAG, "Catalog recovery safety net could not be scheduled", error)
+            }
             // During Wi-Fi/mobile handover Android may expose the replacement
             // default network before reporting the old one as lost.
             if (connectivity.activeNetwork != null) {
                 requestRecoveryIfRelevant()
             }
         }
+
+        override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
+            if (
+                capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+                capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+            ) {
+                // Some OEMs defer onAvailable while sleeping but still send
+                // the final validated-capabilities callback after wake-up.
+                requestRecoveryIfRelevant(allowMissedLoss = false)
+            }
+        }
     }
 
-    private fun requestRecoveryIfRelevant() {
+    private fun recoveryIsRelevant(): Boolean {
         val connection = repository.connectionStatus.value
-        if (connection.phase == ConnectionPhase.IDLE && repository.catalog.value.controls.isEmpty()) return
-        coordinator.onNetworkAvailable(connectionIsOffline = connection.phase == ConnectionPhase.ERROR)
+        return connection.phase != ConnectionPhase.IDLE || repository.catalog.value.controls.isNotEmpty()
+    }
+
+    private fun requestRecoveryIfRelevant(allowMissedLoss: Boolean = true) {
+        if (!recoveryIsRelevant()) return
+        coordinator.onNetworkAvailable(
+            connectionIsOffline = allowMissedLoss &&
+                repository.connectionStatus.value.phase == ConnectionPhase.ERROR,
+        )
     }
 
     fun start() {

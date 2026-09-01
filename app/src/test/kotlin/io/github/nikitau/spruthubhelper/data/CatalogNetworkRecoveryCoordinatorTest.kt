@@ -76,6 +76,29 @@ class CatalogNetworkRecoveryCoordinatorTest {
     }
 
     @Test
+    fun `failed generation stays exhausted until a new loss`() = runTest {
+        var refreshes = 0
+        val coordinator = coordinator {
+            refreshes += 1
+            Result.failure(IllegalStateException("offline"))
+        }
+
+        coordinator.onNetworkLost()
+        coordinator.onNetworkAvailable(connectionIsOffline = true)
+        testScheduler.advanceUntilIdle()
+        coordinator.onNetworkAvailable(connectionIsOffline = true)
+        testScheduler.advanceUntilIdle()
+
+        assertEquals(2, refreshes)
+
+        coordinator.onNetworkLost()
+        coordinator.onNetworkAvailable(connectionIsOffline = true)
+        testScheduler.advanceUntilIdle()
+
+        assertEquals(4, refreshes)
+    }
+
+    @Test
     fun `new outage during recovery schedules one new recovery cycle`() = runTest {
         var refreshes = 0
         val coordinator = coordinator {
@@ -139,7 +162,7 @@ class CatalogNetworkRecoveryCoordinatorTest {
                     lastSuccessEpochMs = 5_000,
                 ),
                 catalog = catalog,
-                networkAvailableAtEpochMs = 4_000,
+                recoveryBoundaryEpochMs = 4_000,
             ),
         )
         assertFalse(
@@ -149,7 +172,7 @@ class CatalogNetworkRecoveryCoordinatorTest {
                     lastSuccessEpochMs = 5_000,
                 ),
                 catalog = catalog,
-                networkAvailableAtEpochMs = 4_000,
+                recoveryBoundaryEpochMs = 4_000,
             ),
         )
         assertFalse(
@@ -159,7 +182,7 @@ class CatalogNetworkRecoveryCoordinatorTest {
                     lastSuccessEpochMs = 3_000,
                 ),
                 catalog = catalog,
-                networkAvailableAtEpochMs = 4_000,
+                recoveryBoundaryEpochMs = 4_000,
             ),
         )
         assertFalse(
@@ -169,7 +192,7 @@ class CatalogNetworkRecoveryCoordinatorTest {
                     lastSuccessEpochMs = 5_000,
                 ),
                 catalog = SprutCatalog(),
-                networkAvailableAtEpochMs = 4_000,
+                recoveryBoundaryEpochMs = 4_000,
             ),
         )
     }

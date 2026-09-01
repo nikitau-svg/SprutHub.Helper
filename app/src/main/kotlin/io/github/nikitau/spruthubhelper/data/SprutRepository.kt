@@ -176,16 +176,16 @@ class SprutRepository(
     /**
      * Reconnects the shared Android-interface catalog after the default
      * network returns. A tile or panel refresh that already completed after
-     * [networkAvailableAtEpochMs] wins, avoiding a second queued catalog read.
+     * [recoveryBoundaryEpochMs] wins, avoiding a second queued catalog read.
      */
     internal suspend fun refreshAfterNetworkRecovery(
-        networkAvailableAtEpochMs: Long,
+        recoveryBoundaryEpochMs: Long,
     ): Result<SprutCatalog> = refreshMutex.withLock {
         val connection = _connectionStatus.value
         val alreadyRecovered = catalogRecoveredAfter(
             connection = connection,
             catalog = _catalog.value,
-            networkAvailableAtEpochMs = networkAvailableAtEpochMs,
+            recoveryBoundaryEpochMs = recoveryBoundaryEpochMs,
         )
         if (alreadyRecovered) {
             Result.success(_catalog.value)
