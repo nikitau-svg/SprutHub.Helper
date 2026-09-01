@@ -125,7 +125,7 @@ internal fun PresenceCard(
                     "${presence.zones.count(PresenceZone::enabled)} активных из ${presence.zones.size} · " +
                         if (presence.geofencesRegistered) "Android следит за границами" else "геозоны требуют внимания",
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.primary,
+                    color = if (presence.geofencesRegistered) SprutSuccess else SprutWarning,
                 )
             }
             NextActionCard(
@@ -348,14 +348,14 @@ private fun ZoneRow(
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
-                    Text(zone.name, fontWeight = FontWeight.SemiBold)
+                    Text(zone.name, fontWeight = FontWeight.SemiBold, color = SprutText)
                     Text(
                         when (zone.isInside) {
                             true -> "В зоне"
                             false -> "Вне зоны"
                             null -> "Состояние ещё не определено"
                         },
-                        color = if (zone.isInside == true) MaterialTheme.colorScheme.primary
+                        color = if (zone.isInside == true) SprutSuccess
                         else MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
@@ -399,7 +399,7 @@ private fun PermissionLine(
         Text(
             if (ready) "✓ $readyText" else "• $missingText",
             style = MaterialTheme.typography.labelSmall,
-            color = if (ready) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+            color = if (ready) SprutSuccess else MaterialTheme.colorScheme.error,
         )
     }
 }

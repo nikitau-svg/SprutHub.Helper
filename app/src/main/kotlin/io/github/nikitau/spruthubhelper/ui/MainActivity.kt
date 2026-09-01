@@ -1444,7 +1444,7 @@ private fun PhoneCard(
                                 "В SprutHub не найден сервис уведомлений: настройте Web Push, Telegram или e-mail"
                             },
                             style = MaterialTheme.typography.labelSmall,
-                            color = if (count > 0) SprutAccent else MaterialTheme.colorScheme.error,
+                            color = if (count > 0) SprutSuccess else MaterialTheme.colorScheme.error,
                         )
                     }
                     OutlinedButton(
@@ -1536,22 +1536,44 @@ private fun PhoneCard(
                     }
 
                     HorizontalDivider()
-                    Box {
-                        OutlinedButton(
-                            onClick = { roomMenu = true },
-                            modifier = Modifier.fillMaxWidth(),
-                            enabled = phone.binding == null && ui.catalog.rooms.isNotEmpty(),
-                        ) {
-                            Text(selectedRoom?.name ?: "Сначала загрузите комнаты SprutHub")
+                    if (phone.binding == null) {
+                        Box {
+                            OutlinedButton(
+                                onClick = { roomMenu = true },
+                                modifier = Modifier.fillMaxWidth(),
+                                enabled = ui.catalog.rooms.isNotEmpty(),
+                            ) {
+                                Text(selectedRoom?.name ?: "Сначала загрузите комнаты SprutHub")
+                            }
+                            DropdownMenu(expanded = roomMenu, onDismissRequest = { roomMenu = false }) {
+                                ui.catalog.rooms.forEach { room ->
+                                    DropdownMenuItem(
+                                        text = { Text(room.name) },
+                                        onClick = {
+                                            selectedRoomId = room.id
+                                            roomMenu = false
+                                        },
+                                    )
+                                }
+                            }
                         }
-                        DropdownMenu(expanded = roomMenu, onDismissRequest = { roomMenu = false }) {
-                            ui.catalog.rooms.forEach { room ->
-                                DropdownMenuItem(
-                                    text = { Text(room.name) },
-                                    onClick = {
-                                        selectedRoomId = room.id
-                                        roomMenu = false
-                                    },
+                    } else {
+                        Surface(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = SprutControlShape,
+                            color = Color.White.copy(alpha = 0.045f),
+                            border = BorderStroke(1.dp, SprutGlassBorder),
+                        ) {
+                            Column(Modifier.padding(horizontal = 13.dp, vertical = 10.dp)) {
+                                Text(
+                                    "Комната SprutHub",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = SprutTextMuted,
+                                )
+                                Text(
+                                    selectedRoom?.name ?: "Комната больше не найдена",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = SprutText,
                                 )
                             }
                         }
@@ -2093,7 +2115,7 @@ private fun TileSummaryCard(
                                         if (assignment.slot in installedSlots) "✓ Добавлена в системную шторку"
                                         else "Только назначена внутри приложения",
                                         style = MaterialTheme.typography.labelSmall,
-                                        color = if (assignment.slot in installedSlots) SprutAccent
+                                        color = if (assignment.slot in installedSlots) SprutSuccess
                                         else MaterialTheme.colorScheme.error,
                                     )
                                 }
@@ -2470,7 +2492,9 @@ private fun DiagnosticsCard(ui: MainUiState, expandedByDefault: Boolean = false)
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text("Диагностика", fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-                if (ui.catalog.hubVersion.isNotBlank()) AssistChip(onClick = {}, label = { Text(ui.catalog.hubVersion) })
+                if (ui.catalog.hubVersion.isNotBlank()) {
+                    AssistChip(onClick = {}, label = { Text("Хаб ${ui.catalog.hubVersion}") })
+                }
                 IconButton(onClick = { expanded = !expanded }) {
                     Icon(if (expanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, null)
                 }
