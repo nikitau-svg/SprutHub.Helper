@@ -2,6 +2,7 @@ package io.github.nikitau.spruthubhelper.data
 
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.Transient
+import kotlin.math.abs
 
 @Serializable
 enum class ConnectionMode {
@@ -70,6 +71,7 @@ enum class ControlBehavior {
     TOGGLE,
     RANGE,
     TOGGLE_RANGE,
+    OPTIONS,
     BUTTON,
     SENSOR,
 }
@@ -101,14 +103,28 @@ data class SprutValue(
     val numberValue: Double? = null,
     val stringValue: String? = null,
 ) {
-    fun asBoolean(): Boolean = boolValue
+    fun asBooleanOrNull(): Boolean? = boolValue
         ?: numberValue?.let { it > 0.0 }
-        ?: stringValue?.let { it.equals("true", true) || it == "1" || it.equals("on", true) }
-        ?: false
+        ?: stringValue?.let { raw ->
+            when (raw.lowercase()) {
+                "true", "1", "on", "active", "enabled" -> true
+                "false", "0", "off", "inactive", "disabled" -> false
+                else -> null
+            }
+        }
+
+    fun asBoolean(): Boolean = asBooleanOrNull() ?: false
 
     fun asDouble(): Double = numberValue
         ?: if (boolValue == true) 1.0 else 0.0
 }
+
+@Serializable
+data class SprutValueOption(
+    val value: SprutValue,
+    val key: String = "",
+    val name: String = "",
+)
 
 @Serializable
 data class SprutControl(
@@ -129,6 +145,15 @@ data class SprutControl(
     val unit: String = "",
     val writable: Boolean = true,
     val sourceType: String = "",
+    /** Stable SprutHub service metadata used to assemble one logical card. */
+    val serviceName: String = "",
+    val characteristicType: String = "",
+    val characteristicName: String = "",
+    val rangeCharacteristicType: String = "",
+    val servicePrimary: Boolean = false,
+    val linkedServiceIds: List<String> = emptyList(),
+    /** Server-provided labels for enum/option values, when available. */
+    val valueOptions: List<SprutValueOption> = emptyList(),
     val valueField: String = "boolValue",
     val rangeValueField: String = "doubleValue",
 ) {
@@ -139,12 +164,31 @@ data class SprutControl(
                 append(value.asDouble().formatCompact())
                 if (unit.isNotBlank()) append(" ").append(unit)
             }
-            ControlBehavior.BUTTON -> "Готово к запуску"
-            ControlBehavior.SENSOR -> value.stringValue
+            ControlBehavior.OPTIONS -> valueOptions
+                .firstOrNull { option -> option.value.sameValueAs(value) }
+                ?.let { option -> option.name.ifBlank { option.key } }
+                ?.takeIf(String::isNotBlank)
+                ?: value.stringValue
                 ?: value.numberValue?.formatCompact()
-                ?: value.boolValue?.toString()
                 ?: "—"
+            ControlBehavior.BUTTON -> "Готово к запуску"
+            ControlBehavior.SENSOR -> buildString {
+                append(
+                    value.stringValue
+                        ?: value.numberValue?.formatCompact()
+                        ?: value.boolValue?.let { if (it) "Да" else "Нет" }
+                        ?: "—",
+                )
+                if (unit.isNotBlank() && value.numberValue != null) append(" ").append(unit)
+            }
         }
+}
+
+internal fun SprutValue.sameValueAs(other: SprutValue): Boolean = when {
+    boolValue != null && other.boolValue != null -> boolValue == other.boolValue
+    numberValue != null && other.numberValue != null -> abs(numberValue - other.numberValue) < 0.000_001
+    stringValue != null && other.stringValue != null -> stringValue.equals(other.stringValue, ignoreCase = true)
+    else -> false
 }
 
 @Serializable
@@ -166,6 +210,38 @@ data class TileAssignment(
     val slot: Int,
     val controlId: String,
 )
+
+@Serializable
+enum class PanelItemSize {
+    COMPACT,
+    LARGE,
+}
+
+/** One user-selected item in the app-owned Device Controls panel. */
+@Serializable
+data class PanelItem(
+    /**
+     * Kept under the legacy JSON name for an in-place upgrade. New values are
+     * logical card ids (`service:aId:sId`), while old values may still contain
+     * a raw control id and are migrated after the next catalog refresh.
+     */
+    val controlId: String,
+    val size: PanelItemSize = PanelItemSize.COMPACT,
+    /** `null` means automatic attributes, an empty list means show none. */
+    val attributeControlIds: List<String>? = null,
+)
+
+internal fun reconcilePanelSelection(
+    current: List<PanelItem>,
+    validControlIds: Set<String>,
+    replacements: Map<String, String>,
+): List<PanelItem> = current.mapNotNull { item ->
+    when {
+        item.controlId in validControlIds -> item
+        replacements[item.controlId] != null -> item.copy(controlId = replacements.getValue(item.controlId))
+        else -> null
+    }
+}.distinctBy(PanelItem::controlId)
 
 enum class ConnectionPhase {
     IDLE,
@@ -212,6 +288,8 @@ enum class HealthValueKind { INT, DOUBLE, STRING, BOOL }
 enum class PhoneSensorCategory(val title: String) {
     BATTERY("Аккумулятор"),
     NETWORK("Сеть"),
+    DISPLAY("Экран"),
+    AUDIO("Звук и режимы"),
     SYSTEM("Система"),
     DIAGNOSTICS("Диагностика"),
 }
@@ -222,6 +300,15 @@ enum class PhoneUpdateKind(val title: String) {
     POLL("По опросу"),
     EVENT_AND_POLL("Событие + опрос"),
     STATIC("При изменении конфигурации"),
+}
+
+@Serializable
+enum class PhoneSensorAccess(val title: String, val description: String) {
+    NONE("Не требуется", "Использует обычные системные данные Android"),
+    NOTIFICATION_POLICY(
+        "Режим «Не беспокоить»",
+        "Android выдаёт этот специальный доступ на отдельном системном экране",
+    ),
 }
 
 /**
@@ -239,6 +326,8 @@ enum class PhoneSensor(
     val valueKind: HealthValueKind,
     val category: PhoneSensorCategory,
     val updateKind: PhoneUpdateKind,
+    val access: PhoneSensorAccess = PhoneSensorAccess.NONE,
+    val minimumApi: Int = 30,
 ) {
     BATTERY_LEVEL(
         "Заряд аккумулятора",
@@ -253,6 +342,14 @@ enum class PhoneSensor(
         "Меняется сразу при подключении и отключении питания",
         "да/нет",
         HealthValueKind.BOOL,
+        PhoneSensorCategory.BATTERY,
+        PhoneUpdateKind.EVENT,
+    ),
+    BATTERY_STATE(
+        "Состояние зарядки",
+        "Заряжается, полностью заряжен, разряжается или питание подключено без зарядки",
+        "",
+        HealthValueKind.STRING,
         PhoneSensorCategory.BATTERY,
         PhoneUpdateKind.EVENT,
     ),
@@ -287,6 +384,39 @@ enum class PhoneSensor(
         HealthValueKind.INT,
         PhoneSensorCategory.BATTERY,
         PhoneUpdateKind.EVENT_AND_POLL,
+    ),
+    BATTERY_CURRENT(
+        "Ток аккумулятора",
+        "Мгновенный ток по данным контроллера; знак и точность зависят от производителя",
+        "мА",
+        HealthValueKind.DOUBLE,
+        PhoneSensorCategory.BATTERY,
+        PhoneUpdateKind.EVENT_AND_POLL,
+    ),
+    BATTERY_POWER(
+        "Мощность аккумулятора",
+        "Расчёт по току и напряжению; знак показывает направление, если прошивка его сообщает корректно",
+        "Вт",
+        HealthValueKind.DOUBLE,
+        PhoneSensorCategory.BATTERY,
+        PhoneUpdateKind.EVENT_AND_POLL,
+    ),
+    CHARGE_TIME_REMAINING(
+        "До полной зарядки",
+        "Оценка Android; поле временно не обновляется, если система не может рассчитать остаток",
+        "мин",
+        HealthValueKind.INT,
+        PhoneSensorCategory.BATTERY,
+        PhoneUpdateKind.EVENT_AND_POLL,
+    ),
+    BATTERY_CYCLE_COUNT(
+        "Циклы аккумулятора",
+        "Количество полных циклов зарядки, если контроллер телефона сообщает его Android",
+        "циклов",
+        HealthValueKind.INT,
+        PhoneSensorCategory.BATTERY,
+        PhoneUpdateKind.EVENT_AND_POLL,
+        minimumApi = 34,
     ),
     POWER_SAVE_MODE(
         "Энергосбережение",
@@ -327,6 +457,87 @@ enum class PhoneSensor(
         HealthValueKind.STRING,
         PhoneSensorCategory.NETWORK,
         PhoneUpdateKind.EVENT,
+    ),
+    SCREEN_BRIGHTNESS(
+        "Яркость экрана",
+        "Текущее системное значение яркости",
+        "%",
+        HealthValueKind.INT,
+        PhoneSensorCategory.DISPLAY,
+        PhoneUpdateKind.EVENT_AND_POLL,
+    ),
+    SCREEN_BRIGHTNESS_AUTO(
+        "Автояркость",
+        "Включена ли автоматическая регулировка яркости",
+        "да/нет",
+        HealthValueKind.BOOL,
+        PhoneSensorCategory.DISPLAY,
+        PhoneUpdateKind.EVENT_AND_POLL,
+    ),
+    SCREEN_TIMEOUT(
+        "Тайм-аут экрана",
+        "Через сколько секунд бездействия Android выключает экран",
+        "с",
+        HealthValueKind.INT,
+        PhoneSensorCategory.DISPLAY,
+        PhoneUpdateKind.EVENT_AND_POLL,
+    ),
+    SCREEN_ORIENTATION(
+        "Ориентация экрана",
+        "Книжная, альбомная или неопределённая",
+        "",
+        HealthValueKind.STRING,
+        PhoneSensorCategory.DISPLAY,
+        PhoneUpdateKind.EVENT_AND_POLL,
+    ),
+    SCREEN_ROTATION(
+        "Поворот экрана",
+        "Фактический поворот дисплея относительно естественного положения",
+        "°",
+        HealthValueKind.INT,
+        PhoneSensorCategory.DISPLAY,
+        PhoneUpdateKind.EVENT_AND_POLL,
+    ),
+    RINGER_MODE(
+        "Режим звонка",
+        "Звук, вибрация или без звука",
+        "",
+        HealthValueKind.STRING,
+        PhoneSensorCategory.AUDIO,
+        PhoneUpdateKind.EVENT_AND_POLL,
+    ),
+    DND_MODE(
+        "Не беспокоить",
+        "Текущий системный фильтр уведомлений",
+        "",
+        HealthValueKind.STRING,
+        PhoneSensorCategory.AUDIO,
+        PhoneUpdateKind.EVENT,
+        access = PhoneSensorAccess.NOTIFICATION_POLICY,
+    ),
+    MUSIC_ACTIVE(
+        "Воспроизводится музыка",
+        "Сообщает ли Android об активном воспроизведении мультимедиа",
+        "да/нет",
+        HealthValueKind.BOOL,
+        PhoneSensorCategory.AUDIO,
+        PhoneUpdateKind.POLL,
+    ),
+    MICROPHONE_MUTED(
+        "Микрофон отключён",
+        "Текущее состояние системного отключения микрофона",
+        "да/нет",
+        HealthValueKind.BOOL,
+        PhoneSensorCategory.AUDIO,
+        PhoneUpdateKind.POLL,
+    ),
+    MEDIA_VOLUME(
+        "Громкость мультимедиа",
+        "Текущая громкость потока музыки относительно максимальной",
+        "%",
+        HealthValueKind.INT,
+        PhoneSensorCategory.AUDIO,
+        PhoneUpdateKind.POLL,
     ),
     DEVICE_MODEL(
         "Модель телефона",
@@ -384,6 +595,14 @@ enum class PhoneSensor(
         PhoneSensorCategory.SYSTEM,
         PhoneUpdateKind.EVENT,
     ),
+    NEXT_ALARM(
+        "Следующий будильник",
+        "Время следующего системного будильника; не обновляется, если будильник не задан",
+        "",
+        HealthValueKind.STRING,
+        PhoneSensorCategory.SYSTEM,
+        PhoneUpdateKind.EVENT_AND_POLL,
+    ),
     UPTIME_HOURS(
         "Время работы",
         "Сколько часов прошло с последней загрузки телефона",
@@ -408,6 +627,46 @@ enum class PhoneSensor(
         PhoneSensorCategory.DIAGNOSTICS,
         PhoneUpdateKind.POLL,
     ),
+    STORAGE_USED_PERCENT(
+        "Хранилище занято",
+        "Доля занятого внутреннего хранилища",
+        "%",
+        HealthValueKind.INT,
+        PhoneSensorCategory.DIAGNOSTICS,
+        PhoneUpdateKind.POLL,
+    ),
+    AVAILABLE_MEMORY_MB(
+        "Свободная память",
+        "Оперативная память, доступная приложениям по оценке Android",
+        "МБ",
+        HealthValueKind.INT,
+        PhoneSensorCategory.DIAGNOSTICS,
+        PhoneUpdateKind.POLL,
+    ),
+    TOTAL_MEMORY_MB(
+        "Всего памяти",
+        "Объём оперативной памяти, доступный Android",
+        "МБ",
+        HealthValueKind.INT,
+        PhoneSensorCategory.DIAGNOSTICS,
+        PhoneUpdateKind.POLL,
+    ),
+    LOW_MEMORY(
+        "Мало памяти",
+        "Системный сигнал Android о нехватке оперативной памяти",
+        "да/нет",
+        HealthValueKind.BOOL,
+        PhoneSensorCategory.DIAGNOSTICS,
+        PhoneUpdateKind.POLL,
+    ),
+    SYNC_HEARTBEAT(
+        "Пульс синхронизации",
+        "Служебное число меняется после каждой отправки и позволяет SprutHub заметить остановку приложения",
+        "мин Unix",
+        HealthValueKind.INT,
+        PhoneSensorCategory.DIAGNOSTICS,
+        PhoneUpdateKind.EVENT_AND_POLL,
+    ),
     LAST_SYNC(
         "Последняя синхронизация",
         "Время последней отправки данных в SprutHub",
@@ -417,6 +676,13 @@ enum class PhoneSensor(
         PhoneUpdateKind.EVENT_AND_POLL,
     ),
 }
+
+/** Operational fields required for reliable recovery and hub-side monitoring. */
+val REQUIRED_PHONE_SENSORS: Set<PhoneSensor> = setOf(PhoneSensor.SYNC_HEARTBEAT)
+
+fun withRequiredPhoneSensors(sensors: Set<PhoneSensor>): Set<PhoneSensor> = sensors + REQUIRED_PHONE_SENSORS
+
+const val PHONE_HEARTBEAT_SCENARIO_NAME = "SprutHub Helper · Контроль телефона"
 
 @Serializable
 enum class PhoneSyncMode(val title: String, val description: String) {
@@ -441,6 +707,7 @@ data class PhoneSyncSettings(
     val enabled: Boolean = false,
     val mode: PhoneSyncMode = PhoneSyncMode.BALANCED,
     val pollInterval: PhonePollInterval = PhonePollInterval.FIVE_MINUTES,
+    val watchdogEnabled: Boolean = true,
 )
 
 @Serializable
@@ -449,6 +716,9 @@ data class HealthTarget(
     val serviceId: String,
     val characteristicId: String,
     val valueField: String,
+    /** SprutHub type identifiers used by block scenarios. Empty for bindings saved by older builds. */
+    val serviceType: String = "",
+    val characteristicType: String = "",
 )
 
 @Serializable

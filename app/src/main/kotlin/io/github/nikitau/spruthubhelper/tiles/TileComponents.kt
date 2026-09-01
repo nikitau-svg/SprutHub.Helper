@@ -3,8 +3,8 @@ package io.github.nikitau.spruthubhelper.tiles
 import android.content.ComponentName
 import android.content.Context
 import android.content.pm.PackageManager
+import android.os.Build
 import android.service.quicksettings.TileService
-import io.github.nikitau.spruthubhelper.data.SettingsRepository
 import io.github.nikitau.spruthubhelper.data.TileAssignment
 
 object TileComponents {
@@ -37,16 +37,32 @@ object TileComponents {
     }
 
     fun syncEnabled(context: Context, assignments: List<TileAssignment>) {
-        val highestAssigned = assignments.maxOfOrNull(TileAssignment::slot) ?: 0
-        val visibleSlots = maxOf(4, highestAssigned + 4).coerceAtMost(SettingsRepository.MAX_TILE_SLOTS)
-        classes.forEachIndexed { index, serviceClass ->
-            val enabled = index < visibleSlots
-            context.packageManager.setComponentEnabledSetting(
-                ComponentName(context, serviceClass),
-                if (enabled) PackageManager.COMPONENT_ENABLED_STATE_ENABLED
-                else PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
-                PackageManager.DONT_KILL_APP,
+        val assignedSlots = assignedTileSlots(assignments)
+        val packageManager = context.packageManager
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            packageManager.setComponentEnabledSettings(
+                classes.mapIndexed { index, serviceClass ->
+                    PackageManager.ComponentEnabledSetting(
+                        ComponentName(context, serviceClass),
+                        if (index + 1 in assignedSlots) PackageManager.COMPONENT_ENABLED_STATE_ENABLED
+                        else PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
+                        PackageManager.DONT_KILL_APP,
+                    )
+                },
             )
+        } else {
+            classes.forEachIndexed { index, serviceClass ->
+                packageManager.setComponentEnabledSetting(
+                    ComponentName(context, serviceClass),
+                    if (index + 1 in assignedSlots) PackageManager.COMPONENT_ENABLED_STATE_ENABLED
+                    else PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
+                    PackageManager.DONT_KILL_APP,
+                )
+            }
+        }
+        classes.indices.forEach { index ->
+            val slot = index + 1
+            if (slot !in assignedSlots) TileInstallStateStore.markRemoved(context, slot)
         }
         assignments.forEach { assignment ->
             runCatching {
@@ -55,3 +71,8 @@ object TileComponents {
         }
     }
 }
+
+internal fun assignedTileSlots(assignments: List<TileAssignment>): Set<Int> = assignments
+    .map(TileAssignment::slot)
+    .filter { it in 1..12 }
+    .toSet()

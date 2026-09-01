@@ -30,11 +30,13 @@ class VirtualPresenceDeviceManager(
         client.connect(config)
         val name = zone.binding?.name?.takeIf(String::isNotBlank) ?: deviceName(zone)
         val accessories = listExpandedAccessories(config)
-        val existing = accessories.firstOrNull { accessory ->
-            (zone.binding?.accessoryId?.isNotBlank() == true &&
-                accessory.scalar("id", "aId") == zone.binding.accessoryId) ||
-                sameSprutLabel(accessory.scalar("name", "title", "displayName"), name)
+        val existingById = zone.binding?.accessoryId?.takeIf(String::isNotBlank)?.let { storedId ->
+            accessories.firstOrNull { accessory -> accessory.scalar("id", "aId") == storedId }
         }
+        check(existingById?.boolean("virtual") != false) {
+            "Защитная проверка остановила привязку зоны: сохранённый аксессуар больше не виртуальный"
+        }
+        val existing = existingById ?: findPresenceAccessory(accessories, name, zone)
         if (existing != null) {
             return awaitBinding(config, existing.scalar("id", "aId"), name, zone)
         }
@@ -161,10 +163,14 @@ class VirtualPresenceDeviceManager(
     ): HealthDeviceBinding {
         var lastProblem = "аксессуар ещё не появился"
         repeat(BINDING_ATTEMPTS) { attempt ->
-            val accessory = listExpandedAccessories(config).firstOrNull { candidate ->
-                (accessoryId.isNotBlank() && candidate.scalar("id", "aId") == accessoryId) ||
-                    sameSprutLabel(candidate.scalar("name", "title", "displayName"), name)
+            val accessories = listExpandedAccessories(config)
+            val accessoryById = accessoryId.takeIf(String::isNotBlank)?.let { storedId ->
+                accessories.firstOrNull { candidate -> candidate.scalar("id", "aId") == storedId }
             }
+            check(accessoryById?.boolean("virtual") != false) {
+                "Защитная проверка остановила привязку зоны: аксессуар больше не виртуальный"
+            }
+            val accessory = accessoryById ?: findPresenceAccessory(accessories, name, zone)
             if (accessory != null) {
                 bindingFromAccessory(accessory, name, zone)?.let { return it }
                 lastProblem = "характеристики присутствия ещё не готовы"
@@ -172,6 +178,47 @@ class VirtualPresenceDeviceManager(
             if (attempt < BINDING_ATTEMPTS - 1) delay(RETRY_MS)
         }
         error("Устройство зоны не готово: $lastProblem")
+    }
+
+    private fun findPresenceAccessory(
+        accessories: List<JsonObject>,
+        name: String,
+        zone: PresenceZone,
+    ): JsonObject? {
+        val matches = accessories.filter { accessory ->
+            accessory.boolean("virtual") != false &&
+                sameSprutLabel(accessory.scalar("name", "title", "displayName"), name)
+        }
+        if (matches.isEmpty()) return null
+        val expected = buildSet {
+            add(PRESENCE_KEY)
+            if (zone.publishDistance) add(DISTANCE_KEY)
+        }
+        val candidates = matches.map { accessory ->
+            VirtualAccessoryCandidate(
+                id = accessory.scalar("id", "aId"),
+                fieldTitles = presenceFields(accessory),
+            )
+        }
+        val selectedId = selectVirtualAccessoryId(candidates, expected) ?: return null
+        return matches.firstOrNull { it.scalar("id", "aId") == selectedId }
+    }
+
+    private fun presenceFields(accessory: JsonObject): Set<String> {
+        val characteristics = accessory.array("services")
+            .orEmpty()
+            .mapNotNull { it as? JsonObject }
+            .flatMap { service -> service.array("characteristics").orEmpty().mapNotNull { it as? JsonObject } }
+        return buildSet {
+            if (characteristics.any { characteristic ->
+                    characteristic.identifiers().any { it.isOccupancyType() }
+                }
+            ) add(PRESENCE_KEY)
+            if (characteristics.any { characteristic ->
+                    characteristic.identifiers().any { it.isDistanceType() }
+                }
+            ) add(DISTANCE_KEY)
+        }
     }
 
     private fun bindingFromAccessory(

@@ -2,6 +2,7 @@ package io.github.nikitau.spruthubhelper.ui
 
 import android.os.Build
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -11,7 +12,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -22,6 +22,8 @@ import androidx.compose.material.icons.rounded.LocationOn
 import androidx.compose.material.icons.rounded.MyLocation
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
@@ -29,7 +31,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
@@ -44,6 +45,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -61,8 +63,9 @@ internal fun PresenceCard(
     viewModel: MainViewModel,
     onRequestForegroundLocation: () -> Unit,
     onOpenBackgroundLocationSettings: () -> Unit,
+    expandedByDefault: Boolean = false,
 ) {
-    var expanded by rememberSaveable { mutableStateOf(false) }
+    var expanded by rememberSaveable(expandedByDefault) { mutableStateOf(expandedByDefault) }
     var roomMenu by remember { mutableStateOf(false) }
     var name by rememberSaveable { mutableStateOf("Дом") }
     var latitude by rememberSaveable { mutableStateOf("") }
@@ -74,6 +77,7 @@ internal fun PresenceCard(
     }
     var deletingZone by remember { mutableStateOf<PresenceZone?>(null) }
     val selectedRoom = ui.catalog.rooms.firstOrNull { it.id == selectedRoomId }
+    val guidance = presenceGuidance(presence)
 
     LaunchedEffect(viewModel) {
         viewModel.coordinateResults.collect { (lat, lon) ->
@@ -82,13 +86,19 @@ internal fun PresenceCard(
         }
     }
 
-    OutlinedCard(
+    Card(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-        shape = RoundedCornerShape(20.dp),
+        shape = SprutTileShape,
+        colors = CardDefaults.cardColors(containerColor = SprutSurfaceLow),
+        border = BorderStroke(1.dp, SprutGlassBorder),
     ) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Surface(shape = CircleShape, color = MaterialTheme.colorScheme.primaryContainer) {
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = Color.White.copy(alpha = 0.065f),
+                    border = BorderStroke(1.dp, SprutGlassBorder),
+                ) {
                     Icon(
                         Icons.Rounded.LocationOn,
                         null,
@@ -115,8 +125,39 @@ internal fun PresenceCard(
                     "${presence.zones.count(PresenceZone::enabled)} активных из ${presence.zones.size} · " +
                         if (presence.geofencesRegistered) "Android следит за границами" else "геозоны требуют внимания",
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.primary,
+                    color = if (presence.geofencesRegistered) SprutSuccess else SprutWarning,
                 )
+            }
+            NextActionCard(
+                guidance = guidance,
+                actionEnabled = !presence.busy,
+                onAction = { action ->
+                    when (action) {
+                        GuidanceAction.REQUEST_FOREGROUND_LOCATION -> onRequestForegroundLocation()
+                        GuidanceAction.OPEN_BACKGROUND_LOCATION_SETTINGS -> onOpenBackgroundLocationSettings()
+                        GuidanceAction.FILL_CURRENT_LOCATION -> {
+                            expanded = true
+                            viewModel.requestCurrentCoordinates()
+                        }
+                        GuidanceAction.SYNC_PRESENCE -> viewModel.syncPresenceZones()
+                        else -> Unit
+                    }
+                },
+            )
+
+            if (presence.duplicateZoneNames.isNotEmpty()) {
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = MaterialTheme.colorScheme.errorContainer,
+                ) {
+                    Text(
+                        "Найдены зоны с одинаковым названием: ${presence.duplicateZoneNames.joinToString()}. " +
+                            "Helper сохранил их раздельные ID и не будет удалять автоматически; оставьте нужную ниже.",
+                        modifier = Modifier.padding(12.dp),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                    )
+                }
             }
 
             AnimatedVisibility(expanded) {
@@ -134,14 +175,7 @@ internal fun PresenceCard(
                         "разрешена всегда",
                         "иначе вход и выход могут не прийти в фоне",
                     )
-                    if (!presence.permissions.preciseGranted) {
-                        Button(onClick = onRequestForegroundLocation, modifier = Modifier.fillMaxWidth()) {
-                            Text("Разрешить точную геопозицию")
-                        }
-                    } else if (!presence.permissions.backgroundGranted) {
-                        Button(onClick = onOpenBackgroundLocationSettings, modifier = Modifier.fillMaxWidth()) {
-                            Text("Разрешить геопозицию «Всегда»")
-                        }
+                    if (presence.permissions.preciseGranted && !presence.permissions.backgroundGranted) {
                         Text(
                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                                 "Android выдаёт доступ «Всегда» только на странице разрешений приложения."
@@ -165,11 +199,6 @@ internal fun PresenceCard(
                         presence.zones.forEach { zone ->
                             ZoneRow(zone, presence.busy, viewModel, onDelete = { deletingZone = zone })
                         }
-                        OutlinedButton(
-                            onClick = viewModel::syncPresenceZones,
-                            modifier = Modifier.fillMaxWidth(),
-                            enabled = !presence.busy && presence.permissions.preciseGranted,
-                        ) { Text("Обновить все зоны сейчас") }
                     }
 
                     HorizontalDivider()
@@ -180,6 +209,8 @@ internal fun PresenceCard(
                         label = { Text("Название") },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
+                        shape = SprutControlShape,
+                        colors = sprutTextFieldColors(),
                     )
                     OutlinedButton(
                         onClick = viewModel::requestCurrentCoordinates,
@@ -198,6 +229,8 @@ internal fun PresenceCard(
                             modifier = Modifier.weight(1f),
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                             singleLine = true,
+                            shape = SprutControlShape,
+                            colors = sprutTextFieldColors(),
                         )
                         OutlinedTextField(
                             value = longitude,
@@ -206,6 +239,8 @@ internal fun PresenceCard(
                             modifier = Modifier.weight(1f),
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                             singleLine = true,
+                            shape = SprutControlShape,
+                            colors = sprutTextFieldColors(),
                         )
                     }
                     OutlinedTextField(
@@ -216,6 +251,8 @@ internal fun PresenceCard(
                         modifier = Modifier.fillMaxWidth(),
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         singleLine = true,
+                        shape = SprutControlShape,
+                        colors = sprutTextFieldColors(),
                     )
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
@@ -303,18 +340,22 @@ private fun ZoneRow(
     viewModel: MainViewModel,
     onDelete: () -> Unit,
 ) {
-    OutlinedCard(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp)) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = SprutControlShape,
+        colors = CardDefaults.cardColors(containerColor = SprutSurface),
+    ) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
-                    Text(zone.name, fontWeight = FontWeight.SemiBold)
+                    Text(zone.name, fontWeight = FontWeight.SemiBold, color = SprutText)
                     Text(
                         when (zone.isInside) {
                             true -> "В зоне"
                             false -> "Вне зоны"
                             null -> "Состояние ещё не определено"
                         },
-                        color = if (zone.isInside == true) MaterialTheme.colorScheme.primary
+                        color = if (zone.isInside == true) SprutSuccess
                         else MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
@@ -358,7 +399,7 @@ private fun PermissionLine(
         Text(
             if (ready) "✓ $readyText" else "• $missingText",
             style = MaterialTheme.typography.labelSmall,
-            color = if (ready) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+            color = if (ready) SprutSuccess else MaterialTheme.colorScheme.error,
         )
     }
 }

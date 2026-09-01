@@ -10,6 +10,7 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.health.READ_STEPS" />
@@ -53,6 +54,16 @@
             android:theme="@style/Theme.SprutHubHelper" />
 
         <activity
+            android:name=".ui.WidgetConfigureActivity"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:theme="@style/Theme.SprutHubHelper">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_CONFIGURE" />
+            </intent-filter>
+        </activity>
+
+        <activity
             android:name=".ui.HealthPermissionsRationaleActivity"
             android:exported="true"
             android:theme="@style/Theme.SprutHubHelper">
@@ -82,6 +93,27 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".ui.DiagnosticsActivity"
+            android:exported="false"
+            android:theme="@style/Theme.SprutHubHelper" />
+
+        <activity
+            android:name=".controls.SprutControlsPanelActivity"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:permission="android.permission.BIND_CONTROLS"
+            android:resizeableActivity="true"
+            android:taskAffinity="${applicationId}.controls"
+            android:theme="@style/Theme.SprutHubHelper" />
+
+        <activity
+            android:name=".controls.SprutPanelPreviewActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:resizeableActivity="true"
+            android:theme="@style/Theme.SprutHubHelper" />
+
         <service
             android:name=".controls.SprutControlsProviderService"
             android:exported="true"
@@ -90,6 +122,9 @@
             <intent-filter>
                 <action android:name="android.service.controls.ControlsProviderService" />
             </intent-filter>
+            <meta-data
+                android:name="android.service.controls.META_DATA_PANEL_ACTIVITY"
+                android:value="${applicationId}/.controls.SprutControlsPanelActivity" />
         </service>
 
         <service
@@ -110,6 +145,19 @@
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
             </intent-filter>
+        </receiver>
+
+        <receiver
+            android:name=".widget.SprutAppWidgetProvider"
+            android:enabled="true"
+            android:exported="false"
+            android:label="@string/widget_name">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/sprut_app_widget_info" />
         </receiver>
 
         <service
@@ -240,6 +288,16 @@
                 <action android:name="android.service.quicksettings.action.QS_TILE" />
             </intent-filter>
         </service>
+
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.diagnostics.files"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/diagnostic_file_paths" />
+        </provider>
 
     </application>
 

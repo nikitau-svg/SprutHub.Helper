@@ -7,13 +7,19 @@ import android.service.controls.actions.CommandAction
 import android.service.controls.actions.ControlAction
 import android.service.controls.actions.FloatAction
 import io.github.nikitau.spruthubhelper.AppGraph
+import io.github.nikitau.spruthubhelper.data.CatalogFreshnessPolicy
+import io.github.nikitau.spruthubhelper.data.buildServiceControlCards
+import io.github.nikitau.spruthubhelper.diagnostics.DiagnosticCategory
+import io.github.nikitau.spruthubhelper.diagnostics.DiagnosticOutcome
 import java.util.concurrent.Flow.Publisher
 import java.util.function.Consumer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.jdk9.asPublisher
 import kotlinx.coroutines.launch
 
@@ -23,20 +29,39 @@ class SprutControlsProviderService : ControlsProviderService() {
 
     override fun createPublisherForAllAvailable(): Publisher<Control> = flow {
         val catalog = repository.refreshIfStale().getOrElse { repository.catalog.value }
-        catalog.controls.forEach { emit(ControlFactory.stateless(this@SprutControlsProviderService, it)) }
+        buildServiceControlCards(catalog.controls).forEach { card ->
+            emit(ControlFactory.stateless(this@SprutControlsProviderService, card.primaryControl))
+        }
     }.asPublisher(scope.coroutineContext)
 
     override fun createPublisherForSuggested(): Publisher<Control> = flow {
         val catalog = repository.refreshIfStale().getOrElse { repository.catalog.value }
-        catalog.controls.take(6).forEach { emit(ControlFactory.stateless(this@SprutControlsProviderService, it)) }
+        val selectedIds = AppGraph.settings.panelItems.first().map { it.controlId }
+        val cards = buildServiceControlCards(catalog.controls)
+        val cardsById = cards.associateBy { it.id }
+        val byId = catalog.controls.associateBy { it.id }
+        val suggestions = (
+            selectedIds.mapNotNull { selectedId ->
+                cardsById[selectedId]?.primaryControl ?: byId[selectedId]
+            } + cards.map { it.primaryControl }
+            ).distinctBy { it.id }.take(6)
+        suggestions.forEach { emit(ControlFactory.stateless(this@SprutControlsProviderService, it)) }
     }.asPublisher(scope.coroutineContext)
 
     override fun createPublisherFor(controlIds: MutableList<String>): Publisher<Control> = flow {
-        repository.refreshIfStale()
-        repository.catalog.collect { catalog ->
+        // SystemUI may dispose its subscription quickly; the refresh still
+        // needs to finish so the next opening does not start from stale data.
+        AppGraph.applicationScope.launch { repository.refreshIfStale() }
+        combine(
+            repository.catalog,
+            repository.connectionStatus,
+            repository.pendingControlIds,
+        ) { catalog, connection, pending ->
+            catalog to CatalogFreshnessPolicy.evaluate(catalog, connection, pending)
+        }.collect { (catalog, freshness) ->
             val byId = catalog.controls.associateBy { it.id }
             controlIds.mapNotNull(byId::get).forEach {
-                emit(ControlFactory.stateful(this@SprutControlsProviderService, it))
+                emit(ControlFactory.stateful(this@SprutControlsProviderService, it, freshness))
             }
         }
     }.asPublisher(scope.coroutineContext)
@@ -47,12 +72,25 @@ class SprutControlsProviderService : ControlsProviderService() {
         consumer: Consumer<Int>,
     ) {
         scope.launch {
+            val event = "Команда системной панели Android"
+            AppGraph.diagnostics.record(
+                category = DiagnosticCategory.COMMAND,
+                event = event,
+                outcome = DiagnosticOutcome.STARTED,
+                details = mapOf("тип" to action.javaClass.simpleName),
+            )
             val result = when (action) {
                 is BooleanAction -> repository.setBoolean(controlId, action.newState)
                 is FloatAction -> repository.setRange(controlId, action.newValue.toDouble())
                 is CommandAction -> repository.execute(controlId)
                 else -> Result.failure(IllegalArgumentException("Неподдерживаемая команда"))
             }
+            AppGraph.diagnostics.record(
+                category = DiagnosticCategory.COMMAND,
+                event = event,
+                outcome = if (result.isSuccess) DiagnosticOutcome.SUCCESS else DiagnosticOutcome.FAILED,
+                reason = result.exceptionOrNull()?.message,
+            )
             consumer.accept(if (result.isSuccess) ControlAction.RESPONSE_OK else ControlAction.RESPONSE_FAIL)
         }
     }

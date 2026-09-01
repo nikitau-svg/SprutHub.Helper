@@ -11,17 +11,23 @@ import io.github.nikitau.spruthubhelper.AppGraph
 import io.github.nikitau.spruthubhelper.data.ControlBehavior
 import io.github.nikitau.spruthubhelper.data.DeviceKind
 import io.github.nikitau.spruthubhelper.data.SprutControl
+import io.github.nikitau.spruthubhelper.data.presentationFor
+import io.github.nikitau.spruthubhelper.diagnostics.DiagnosticCategory
+import io.github.nikitau.spruthubhelper.diagnostics.DiagnosticOutcome
 import io.github.nikitau.spruthubhelper.icons.CustomIconManager
 import io.github.nikitau.spruthubhelper.ui.MainActivity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 
 abstract class SprutTileService(private val slot: Int) : TileService() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val repository get() = AppGraph.repository
+    private var listeningJob: Job? = null
 
     override fun onTileAdded() {
         super.onTileAdded()
@@ -38,44 +44,105 @@ abstract class SprutTileService(private val slot: Int) : TileService() {
         // Also migrates tiles that were already present before install-state
         // tracking was introduced.
         TileInstallStateStore.markAdded(this, slot)
-        scope.launch {
-            val refreshed = repository.refreshIfStale()
-            val error = refreshed.exceptionOrNull()?.message.takeIf { assignedControl() == null }
-            updateTile(error)
+        listeningJob?.cancel()
+        listeningJob = scope.launch {
+            combine(
+                repository.catalog,
+                repository.connectionStatus,
+                repository.pendingControlIds,
+            ) { _, _, _ -> Unit }.collect {
+                updateTile()
+            }
         }
+        // Keep the check alive even if SystemUI closes the shade and stops
+        // listening before SprutHub has answered.
+        AppGraph.applicationScope.launch { repository.refreshIfStale() }
+    }
+
+    override fun onStopListening() {
+        listeningJob?.cancel()
+        listeningJob = null
+        super.onStopListening()
     }
 
     override fun onClick() {
         super.onClick()
-        val action = Runnable { scope.launch { performAssignedAction() } }
+        val action = Runnable { AppGraph.applicationScope.launch { performAssignedAction() } }
         if (isLocked) unlockAndRun(action) else action.run()
     }
 
     private suspend fun performAssignedAction() {
-        repository.refreshIfStale(maxAgeMs = 10_000)
+        val event = "Команда плитки быстрых настроек"
+        AppGraph.diagnostics.record(
+            category = DiagnosticCategory.COMMAND,
+            event = event,
+            outcome = DiagnosticOutcome.STARTED,
+            details = mapOf("слот" to slot.toString()),
+        )
         val control = assignedControl()
         if (control == null) {
+            AppGraph.diagnostics.record(
+                category = DiagnosticCategory.COMMAND,
+                event = event,
+                outcome = DiagnosticOutcome.SKIPPED,
+                reason = "Плитке не назначено устройство или назначение устарело",
+                details = mapOf("слот" to slot.toString()),
+            )
             updateTile("Обновите назначение")
             return
         }
         val result = when (control.behavior) {
             ControlBehavior.TOGGLE, ControlBehavior.TOGGLE_RANGE ->
-                repository.setBoolean(control.id, !control.value.asBoolean())
+                repository.toggleBoolean(control.id)
             ControlBehavior.RANGE -> {
                 if (control.kind in COVERING_KINDS) {
-                    val midpoint = (control.minimum + control.maximum) / 2.0
-                    repository.setRange(
-                        control.id,
-                        if (control.value.asDouble() > midpoint) control.minimum else control.maximum,
-                    )
+                    repository.toggleRangeEndpoint(control.id)
                 } else {
+                    AppGraph.diagnostics.record(
+                        category = DiagnosticCategory.COMMAND,
+                        event = event,
+                        outcome = DiagnosticOutcome.SKIPPED,
+                        reason = "Для регулировки требуется открыть приложение",
+                        details = mapOf("слот" to slot.toString()),
+                    )
                     openControl(control)
-                    Result.success(Unit)
+                    updateTile()
+                    return
                 }
             }
+            ControlBehavior.OPTIONS -> {
+                AppGraph.diagnostics.record(
+                    category = DiagnosticCategory.COMMAND,
+                    event = event,
+                    outcome = DiagnosticOutcome.SKIPPED,
+                    reason = "Для выбора режима открыто приложение",
+                    details = mapOf("слот" to slot.toString()),
+                )
+                openControl(control)
+                updateTile()
+                return
+            }
             ControlBehavior.BUTTON -> repository.execute(control.id)
-            ControlBehavior.SENSOR -> Result.failure(IllegalStateException("Только чтение"))
+            ControlBehavior.SENSOR -> {
+                AppGraph.diagnostics.record(
+                    category = DiagnosticCategory.COMMAND,
+                    event = event,
+                    outcome = DiagnosticOutcome.SKIPPED,
+                    reason = "Показатель доступен только для чтения; открыто приложение",
+                    details = mapOf("слот" to slot.toString()),
+                )
+                openControl(control)
+                updateTile()
+                return
+            }
         }
+        AppGraph.diagnostics.record(
+            category = DiagnosticCategory.COMMAND,
+            event = event,
+            outcome = if (result.isSuccess) DiagnosticOutcome.SUCCESS else DiagnosticOutcome.FAILED,
+            reason = result.exceptionOrNull()?.message,
+            details = mapOf("слот" to slot.toString()),
+        )
         result.onFailure { error -> Log.e(LOG_TAG, "Tile $slot action failed", error) }
         updateTile(result.exceptionOrNull()?.message)
     }
@@ -83,27 +150,32 @@ abstract class SprutTileService(private val slot: Int) : TileService() {
     private fun updateTile(error: String? = null) {
         val tile = qsTile ?: return
         val control = assignedControl()
+        val freshness = repository.freshness()
         if (control == null) {
             tile.label = "SprutHub $slot"
-            tile.subtitle = error?.take(30) ?: "Не настроено"
+            val subtitle = error?.take(30) ?: "Не настроено"
+            tile.subtitle = subtitle
+            tile.stateDescription = subtitle
+            tile.contentDescription = "SprutHub $slot, $subtitle"
             tile.state = Tile.STATE_UNAVAILABLE
             tile.icon = TileIconResolver.icon(this, DeviceKind.OTHER)
         } else {
             tile.label = control.title
-            tile.subtitle = error?.take(30) ?: control.room
+            val presentation = quickSettingsPresentation(
+                control = control,
+                surface = freshness.presentationFor(control),
+                error = error,
+            )
+            tile.subtitle = presentation.subtitle
+            tile.stateDescription = presentation.stateDescription
             tile.icon = CustomIconManager(this).loadIcon(control.id)
                 ?: TileIconResolver.icon(this, control.kind)
-            tile.state = if (error != null) {
-                Tile.STATE_UNAVAILABLE
-            } else {
-                when (control.behavior) {
-                    ControlBehavior.TOGGLE, ControlBehavior.TOGGLE_RANGE ->
-                        if (control.value.asBoolean()) Tile.STATE_ACTIVE else Tile.STATE_INACTIVE
-                    ControlBehavior.BUTTON, ControlBehavior.RANGE -> Tile.STATE_INACTIVE
-                    ControlBehavior.SENSOR -> Tile.STATE_UNAVAILABLE
-                }
+            tile.state = when (presentation.visualState) {
+                QuickSettingsVisualState.ACTIVE -> Tile.STATE_ACTIVE
+                QuickSettingsVisualState.INACTIVE -> Tile.STATE_INACTIVE
+                QuickSettingsVisualState.UNAVAILABLE -> Tile.STATE_UNAVAILABLE
             }
-            tile.contentDescription = "${control.title}, ${control.displayValue}"
+            tile.contentDescription = presentation.contentDescription
         }
         tile.updateTile()
     }

@@ -12,17 +12,22 @@ import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -63,7 +68,11 @@ internal fun connectionCandidates(
     }.filter { it.url.isNotBlank() }
 }
 
-class SprutRpcClient(private val context: Context? = null) {
+class SprutRpcClient(
+    private val context: Context? = null,
+    private val socketOpenTimeoutMs: Long = DEFAULT_SOCKET_OPEN_TIMEOUT_MS,
+    private val requestTimeoutMs: Long = DEFAULT_REQUEST_TIMEOUT_MS,
+) {
     private val json = Json { ignoreUnknownKeys = true }
     private val httpClient = OkHttpClient.Builder()
         .connectTimeout(5, TimeUnit.SECONDS)
@@ -76,10 +85,12 @@ class SprutRpcClient(private val context: Context? = null) {
         extraBufferCapacity = 64,
         onBufferOverflow = BufferOverflow.DROP_OLDEST,
     )
+    private val _transportStatus = MutableStateFlow(SprutTransportStatus())
     private var session: SocketSession? = null
     private var sessionKey: String = ""
 
     val events: SharedFlow<JsonElement> = _events
+    val transportStatus: StateFlow<SprutTransportStatus> = _transportStatus.asStateFlow()
 
     suspend fun connect(config: HubConfig, force: Boolean = false): ConnectedEndpoint = connectionMutex.withLock {
         val candidates = connectionCandidates(config, preferCloud = shouldPreferCloud())
@@ -88,8 +99,13 @@ class SprutRpcClient(private val context: Context? = null) {
             return ConnectedEndpoint(it.endpoint, it.isLocal)
         }
 
-        session?.close()
+        _transportStatus.value = SprutTransportStatus(
+            phase = SprutTransportPhase.CONNECTING,
+            changedAtEpochMs = System.currentTimeMillis(),
+        )
+        val previous = session
         session = null
+        previous?.close()
         val failures = mutableListOf<String>()
         for (endpoint in candidates) {
             val candidate = SocketSession(endpoint.url, config.serial, endpoint.isLocal)
@@ -100,38 +116,85 @@ class SprutRpcClient(private val context: Context? = null) {
                     email = config.email,
                     password = endpoint.password,
                     isLocal = endpoint.isLocal,
+                    hubSerial = config.serial,
                 )
                 candidate
+            }
+            (attempt.exceptionOrNull() as? CancellationException)?.let { cancelled ->
+                candidate.close()
+                _transportStatus.value = SprutTransportStatus(
+                    phase = SprutTransportPhase.IDLE,
+                    changedAtEpochMs = System.currentTimeMillis(),
+                )
+                throw cancelled
             }
             val connected = attempt.getOrNull()
             if (connected != null) {
                 session = connected
                 sessionKey = key
+                _transportStatus.value = SprutTransportStatus(
+                    phase = if (endpoint.isLocal) {
+                        SprutTransportPhase.CONNECTED_LOCAL
+                    } else {
+                        SprutTransportPhase.CONNECTED_CLOUD
+                    },
+                    endpoint = endpoint.url,
+                    isLocal = endpoint.isLocal,
+                    changedAtEpochMs = System.currentTimeMillis(),
+                )
                 return ConnectedEndpoint(endpoint.url, endpoint.isLocal)
             }
             candidate.close()
             failures += "${safeEndpoint(endpoint.url)}: ${safeFailureMessage(attempt.exceptionOrNull(), endpoint.password)}"
         }
-        throw SprutConnectionException(failures.joinToString("; "))
+        val message = failures.joinToString("; ")
+        _transportStatus.value = SprutTransportStatus(
+            phase = SprutTransportPhase.ERROR,
+            message = message,
+            changedAtEpochMs = System.currentTimeMillis(),
+        )
+        throw SprutConnectionException(message)
     }
 
-    suspend fun call(config: HubConfig, params: JsonObject): JsonElement {
+    suspend fun call(
+        config: HubConfig,
+        params: JsonObject,
+        reconnectOnFailure: Boolean = true,
+    ): JsonElement {
         val operation = operationName(params)
         connect(config)
         val active = session ?: throw SprutConnectionException("Соединение не создано")
         return try {
-            active.request(params).also { Log.d(LOG_TAG, "RPC $operation succeeded") }
+            active.request(params).also { logDebug("RPC $operation succeeded") }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         } catch (first: Exception) {
-            Log.w(LOG_TAG, "RPC $operation failed, reconnecting: ${first.message}")
+            if (!reconnectOnFailure || !first.isReconnectableTransportFailure()) throw first
+            logWarning("RPC $operation failed, reconnecting: ${first.message}")
             connect(config, force = true)
-            (session ?: throw first).request(params).also { Log.d(LOG_TAG, "RPC $operation succeeded after reconnect") }
+            val retried = session ?: throw first
+            try {
+                retried.request(params).also {
+                    logDebug("RPC $operation succeeded after reconnect")
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (second: Exception) {
+                reportRepeatedTransportFailure(retried, second)
+                throw second
+            }
         }
     }
 
     suspend fun disconnect() = connectionMutex.withLock {
-        session?.close()
+        val previous = session
         session = null
         sessionKey = ""
+        previous?.close()
+        _transportStatus.value = SprutTransportStatus(
+            phase = SprutTransportPhase.IDLE,
+            changedAtEpochMs = System.currentTimeMillis(),
+        )
     }
 
     private fun shouldPreferCloud(): Boolean {
@@ -150,25 +213,78 @@ class SprutRpcClient(private val context: Context? = null) {
         email: String,
         password: String,
         isLocal: Boolean,
+        hubSerial: String,
     ) {
         var response = socket.request(accountRequest("auth"))
-        repeat(4) {
+        repeat(MAX_AUTH_STEPS) { step ->
             findStringByKey(response, "token")?.takeIf(String::isNotBlank)?.let {
                 socket.token = it
                 return
             }
-            val marker = response.toString().uppercase()
+
+            val status = findStringByKey(response, "status").orEmpty().uppercase()
+            when (status) {
+                "ACCOUNT_RESPONSE_FAILED" -> {
+                    val endpointLabel = if (isLocal) "локальные" else "облачные"
+                    throw SprutAuthenticationException(
+                        "SprutHub отклонил $endpointLabel данные входа. Проверьте e-mail и пароль.",
+                    )
+                }
+                "ACCOUNT_RESPONSE_TOO_FAST" -> throw SprutAuthenticationException(
+                    "SprutHub временно ограничил попытки входа. Повторите проверку через минуту.",
+                )
+            }
+
+            val question = findElementByKey(response, "question") as? JsonObject
+            val questionType = question?.get("type")
+                ?.let { runCatching { it.jsonPrimitive.content }.getOrNull() }
+                .orEmpty()
+                .uppercase()
+            val questionData = question?.get("data")
+                ?.let { runCatching { it.jsonPrimitive.content }.getOrNull() }
+                .orEmpty()
+            logDebug(
+                "Auth step=${step + 1} endpoint=${if (isLocal) "local" else "cloud"} " +
+                    "status=${status.ifBlank { "none" }} question=${questionType.ifBlank { "none" }}",
+            )
             response = when {
-                marker.contains("QUESTION_TYPE_EMAIL") || marker.contains("\"EMAIL\"") -> {
+                questionType == "QUESTION_TYPE_EMAIL" || questionType == "EMAIL" -> {
                     require(email.isNotBlank()) { "SprutHub запросил e-mail" }
                     socket.request(answerRequest(email))
                 }
-                marker.contains("QUESTION_TYPE_PASSWORD") || marker.contains("\"PASSWORD\"") -> {
+                questionType == "QUESTION_TYPE_PASSWORD" || questionType == "PASSWORD" -> {
                     val endpointLabel = if (isLocal) "локальный" else "облачный"
                     require(password.isNotBlank()) { "SprutHub запросил $endpointLabel пароль" }
                     socket.request(answerRequest(password))
                 }
-                else -> return
+                questionType == "QUESTION_TYPE_CHALLENGE" || questionType == "CHALLENGE" -> {
+                    socket.request(answerRequest(SprutCloudAuth.answerChallenge(password, questionData)))
+                }
+                questionType == "QUESTION_TYPE_ENROLL" || questionType == "ENROLL" -> {
+                    socket.request(answerRequest(SprutCloudAuth.answerEnrollment(password, questionData)))
+                }
+                questionType == "QUESTION_TYPE_SELECT_HUB" || questionType == "SELECT_HUB" -> {
+                    require(hubSerial.isNotBlank()) { "SprutHub запросил выбор хаба, но серийный номер не указан" }
+                    socket.request(answerRequest(hubSerial))
+                }
+                questionType == "QUESTION_TYPE_CAPTCHA" ||
+                    questionType == "QUESTION_TYPE_PIN_EMAIL" ||
+                    questionType == "QUESTION_TYPE_PIN_SMS" -> throw SprutAuthenticationException(
+                    "SprutHub запросил дополнительную проверку. Сначала войдите через веб-интерфейс, затем повторите.",
+                )
+                questionType == "QUESTION_TYPE_REDIRECT" -> throw SprutAuthenticationException(
+                    "Облачный сервер SprutHub запросил перенаправление. Проверьте выбранный облачный адрес.",
+                )
+                questionType == "QUESTION_TYPE_ADD_HUB" -> throw SprutAuthenticationException(
+                    "Этот аккаунт не привязан к указанному SprutHub.",
+                )
+                questionType == "QUESTION_TYPE_UNSUPPORTED_DEVICE" -> throw SprutAuthenticationException(
+                    "Этот SprutHub пока не поддерживает облачное подключение приложения.",
+                )
+                step == 0 && email.isNotBlank() -> socket.request(legacyLoginRequest(email))
+                else -> throw SprutAuthenticationException(
+                    "SprutHub не завершил авторизацию${questionType.takeIf(String::isNotBlank)?.let { ": $it" }.orEmpty()}.",
+                )
             }
         }
 
@@ -176,26 +292,21 @@ class SprutRpcClient(private val context: Context? = null) {
             socket.token = it
             return
         }
-
-        if (email.isNotBlank()) {
-            var legacy = socket.request(
-                buildJsonObject {
-                    put("account", buildJsonObject {
-                        put("login", buildJsonObject { put("login", email) })
-                    })
-                },
-            )
-            if (legacy.toString().uppercase().contains("PASSWORD") && password.isNotBlank()) {
-                legacy = socket.request(answerRequest(password))
-            }
-            findStringByKey(legacy, "token")?.takeIf(String::isNotBlank)?.let {
-                socket.token = it
-            }
-        }
+        throw SprutAuthenticationException("SprutHub не выдал токен после авторизации.")
     }
 
     private fun accountRequest(operation: String): JsonObject = buildJsonObject {
-        put("account", buildJsonObject { put(operation, buildJsonObject {}) })
+        put("account", buildJsonObject {
+            put(operation, buildJsonObject {
+                if (operation == "auth") put("params", buildJsonArray {})
+            })
+        })
+    }
+
+    private fun legacyLoginRequest(email: String): JsonObject = buildJsonObject {
+        put("account", buildJsonObject {
+            put("login", buildJsonObject { put("login", email) })
+        })
     }
 
     private fun answerRequest(value: String): JsonObject = buildJsonObject {
@@ -212,6 +323,13 @@ class SprutRpcClient(private val context: Context? = null) {
                 ?: element.values.firstNotNullOfOrNull { findStringByKey(it, wanted) }
         }
         is kotlinx.serialization.json.JsonArray -> element.firstNotNullOfOrNull { findStringByKey(it, wanted) }
+        else -> null
+    }
+
+    private fun findElementByKey(element: JsonElement, wanted: String): JsonElement? = when (element) {
+        is JsonObject -> element.entries.firstOrNull { it.key.equals(wanted, ignoreCase = true) }?.value
+            ?: element.values.firstNotNullOfOrNull { findElementByKey(it, wanted) }
+        is kotlinx.serialization.json.JsonArray -> element.firstNotNullOfOrNull { findElementByKey(it, wanted) }
         else -> null
     }
 
@@ -249,6 +367,34 @@ class SprutRpcClient(private val context: Context? = null) {
         .digest(secret.toByteArray(StandardCharsets.UTF_8))
         .joinToString(separator = "") { byte -> "%02x".format(byte) }
 
+    private fun logDebug(message: String) {
+        if (context != null) Log.d(LOG_TAG, message)
+    }
+
+    private fun logWarning(message: String) {
+        if (context != null) Log.w(LOG_TAG, message)
+    }
+
+    private fun Exception.isReconnectableTransportFailure(): Boolean =
+        this is IOException && this !is SprutProtocolException && this !is SprutAuthenticationException
+
+    private suspend fun reportRepeatedTransportFailure(failedSession: SocketSession, error: Exception) {
+        if (!error.isReconnectableTransportFailure()) return
+        connectionMutex.withLock {
+            if (session !== failedSession) return@withLock
+            session = null
+            sessionKey = ""
+            failedSession.close()
+            _transportStatus.value = SprutTransportStatus(
+                phase = SprutTransportPhase.ERROR,
+                endpoint = failedSession.endpoint,
+                isLocal = failedSession.isLocal,
+                message = error.message ?: "SprutHub не ответил после переподключения",
+                changedAtEpochMs = System.currentTimeMillis(),
+            )
+        }
+    }
+
     inner class SocketSession(
         val endpoint: String,
         private val serial: String,
@@ -269,11 +415,15 @@ class SprutRpcClient(private val context: Context? = null) {
         suspend fun open() {
             val request = Request.Builder().url(endpoint).build()
             socket = httpClient.newWebSocket(request, this)
-            withTimeout(8_000) { opened.await() }
+            val openedInTime = withTimeoutOrNull(socketOpenTimeoutMs) {
+                opened.await()
+                true
+            } ?: false
+            if (!openedInTime) throw IOException("Тайм-аут подключения к SprutHub")
         }
 
         suspend fun request(params: JsonObject): JsonElement {
-            check(isOpen) { "WebSocket закрыт" }
+            if (!isOpen) throw IOException("WebSocket закрыт")
             val id = requestIds.getAndIncrement()
             val deferred = CompletableDeferred<JsonElement>()
             pending[id] = deferred
@@ -289,7 +439,8 @@ class SprutRpcClient(private val context: Context? = null) {
                 throw IOException("SprutHub не принял запрос")
             }
             val response = try {
-                withTimeout(12_000) { deferred.await() }
+                withTimeoutOrNull(requestTimeoutMs) { deferred.await() }
+                    ?: throw IOException("SprutHub не ответил вовремя")
             } finally {
                 pending.remove(id)
             }
@@ -319,15 +470,38 @@ class SprutRpcClient(private val context: Context? = null) {
             _events.tryEmit(message)
         }
 
+        override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+            isOpen = false
+            val error = IOException("SprutHub закрывает соединение ($code)")
+            failPending(error)
+            reportUnexpectedClose(error.message.orEmpty())
+            webSocket.close(code, reason)
+        }
+
         override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
             isOpen = false
-            failPending(IOException("SprutHub закрыл соединение ($code)"))
+            val error = IOException("SprutHub закрыл соединение ($code)")
+            failPending(error)
+            reportUnexpectedClose(error.message.orEmpty())
         }
 
         override fun onFailure(webSocket: WebSocket, throwable: Throwable, response: Response?) {
             isOpen = false
             opened.completeExceptionally(throwable)
-            failPending(IOException(throwable.message ?: "Ошибка WebSocket", throwable))
+            val error = IOException(throwable.message ?: "Ошибка WebSocket", throwable)
+            failPending(error)
+            reportUnexpectedClose(error.message.orEmpty())
+        }
+
+        private fun reportUnexpectedClose(message: String) {
+            if (session !== this) return
+            _transportStatus.value = SprutTransportStatus(
+                phase = SprutTransportPhase.ERROR,
+                endpoint = endpoint,
+                isLocal = isLocal,
+                message = message.ifBlank { "Соединение со SprutHub потеряно" },
+                changedAtEpochMs = System.currentTimeMillis(),
+            )
         }
 
         private fun failPending(error: Throwable) {
@@ -342,7 +516,27 @@ data class ConnectedEndpoint(
     val isLocal: Boolean,
 )
 
+enum class SprutTransportPhase {
+    IDLE,
+    CONNECTING,
+    CONNECTED_LOCAL,
+    CONNECTED_CLOUD,
+    ERROR,
+}
+
+data class SprutTransportStatus(
+    val phase: SprutTransportPhase = SprutTransportPhase.IDLE,
+    val endpoint: String = "",
+    val isLocal: Boolean? = null,
+    val message: String = "",
+    val changedAtEpochMs: Long = 0L,
+)
+
 class SprutConnectionException(message: String) : IOException(message)
 class SprutProtocolException(message: String) : IOException(message)
+class SprutAuthenticationException(message: String) : IOException(message)
 
 private const val LOG_TAG = "SprutHubRpc"
+private const val MAX_AUTH_STEPS = 10
+private const val DEFAULT_SOCKET_OPEN_TIMEOUT_MS = 8_000L
+private const val DEFAULT_REQUEST_TIMEOUT_MS = 12_000L

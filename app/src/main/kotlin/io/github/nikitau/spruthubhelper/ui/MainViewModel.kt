@@ -4,16 +4,24 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import io.github.nikitau.spruthubhelper.AppGraph
 import io.github.nikitau.spruthubhelper.data.ConnectionMode
+import io.github.nikitau.spruthubhelper.data.ConnectionPhase
 import io.github.nikitau.spruthubhelper.data.ConnectionStatus
 import io.github.nikitau.spruthubhelper.data.DiagnosticEvent
 import io.github.nikitau.spruthubhelper.data.HubConfig
 import io.github.nikitau.spruthubhelper.data.HubPasswordUpdate
 import io.github.nikitau.spruthubhelper.data.HealthMetric
+import io.github.nikitau.spruthubhelper.data.PanelItem
+import io.github.nikitau.spruthubhelper.data.PanelItemSize
 import io.github.nikitau.spruthubhelper.data.PhonePollInterval
 import io.github.nikitau.spruthubhelper.data.PhoneSensor
 import io.github.nikitau.spruthubhelper.data.PhoneSyncMode
 import io.github.nikitau.spruthubhelper.data.SprutCatalog
 import io.github.nikitau.spruthubhelper.data.TileAssignment
+import io.github.nikitau.spruthubhelper.data.normalizeAndValidateHubConfig
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -22,6 +30,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class MainViewModel : ViewModel() {
     private val settings = AppGraph.settings
@@ -30,31 +39,40 @@ class MainViewModel : ViewModel() {
     private val phone = AppGraph.phone
     private val presence = AppGraph.presence
     private val _busy = MutableStateFlow(false)
+    private val connectionWorkInProgress = AtomicBoolean(false)
+    private val activeWorkCount = AtomicInteger(0)
     private val _notice = MutableStateFlow<String?>(null)
+    private val _onboardingRequired = MutableStateFlow<Boolean?>(null)
     private val _tileAddRequests = MutableSharedFlow<TileAddRequest>(extraBufferCapacity = 1)
+    private val _panelAddRequests = MutableSharedFlow<String>(extraBufferCapacity = 1)
     private val _coordinateResults = MutableSharedFlow<Pair<Double, Double>>(extraBufferCapacity = 1)
 
     val busy: StateFlow<Boolean> = _busy.asStateFlow()
     val notice: StateFlow<String?> = _notice.asStateFlow()
+    val onboardingRequired: StateFlow<Boolean?> = _onboardingRequired.asStateFlow()
     val healthState = health.state
     val phoneState = phone.state
     val presenceState = presence.state
     val tileAddRequests = _tileAddRequests
+    val panelAddRequests = _panelAddRequests
     val coordinateResults = _coordinateResults
     val healthPermissionRequests = health.permissionRequests
     val uiState: StateFlow<MainUiState> = combine(
         settings.config,
         repository.catalog,
         repository.connectionStatus,
-        repository.tileAssignments,
+        combine(repository.tileAssignments, repository.panelItems) { tiles, panel -> tiles to panel },
         repository.diagnostics,
-    ) { config, catalog, connection, assignments, diagnostics ->
-        MainUiState(config, catalog, connection, assignments, diagnostics)
+    ) { config, catalog, connection, androidItems, diagnostics ->
+        MainUiState(config, catalog, connection, androidItems.first, androidItems.second, diagnostics)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), MainUiState())
 
     init {
         phone.ensureLiveMonitor()
         viewModelScope.launch {
+            _onboardingRequired.value = runCatching {
+                settings.prepareOnboardingForLaunch()
+            }.getOrElse { false }
             val config = settings.currentConfig()
             val hasEndpoint = when (config.mode) {
                 ConnectionMode.AUTO -> config.localUrl.isNotBlank() || config.cloudUrl.isNotBlank()
@@ -67,26 +85,6 @@ class MainViewModel : ViewModel() {
         }
     }
 
-    fun saveSettings(
-        mode: ConnectionMode,
-        localUrl: String,
-        cloudUrl: String,
-        serial: String,
-        email: String,
-        newLocalPassword: String,
-        newCloudPassword: String,
-    ) = launchWork("Настройки сохранены") {
-        saveSettingsNow(
-            mode,
-            localUrl,
-            cloudUrl,
-            serial,
-            email,
-            newLocalPassword,
-            newCloudPassword,
-        )
-    }
-
     fun saveAndTestSettings(
         mode: ConnectionMode,
         localUrl: String,
@@ -95,23 +93,34 @@ class MainViewModel : ViewModel() {
         email: String,
         newLocalPassword: String,
         newCloudPassword: String,
-    ) = launchWork(null) {
-        saveSettingsNow(
-            mode,
-            localUrl,
-            cloudUrl,
-            serial,
-            email,
-            newLocalPassword,
-            newCloudPassword,
+    ) = launchWork(null, exclusiveGuard = connectionWorkInProgress) {
+        val hadWorkingConnection = uiState.value.connection.phase == ConnectionPhase.CONNECTED_LOCAL ||
+            uiState.value.connection.phase == ConnectionPhase.CONNECTED_CLOUD
+        val candidate = buildConnectionSettingsCandidate(
+            stored = settings.currentConfig(),
+            mode = mode,
+            localUrl = localUrl,
+            cloudUrl = cloudUrl,
+            serial = serial,
+            email = email,
+            newLocalPassword = newLocalPassword,
+            newCloudPassword = newCloudPassword,
         )
-        val catalog = repository.refresh(forceConnection = true).getOrThrow()
-        _notice.value = "Готово: найдено ${catalog.controls.size} элементов"
+        val verified = repository.verifyConfig(candidate.config) {
+            settings.saveConfig(candidate.config, candidate.passwordUpdate)
+        }
+        if (verified.isFailure && hadWorkingConnection) {
+            withContext(NonCancellable) {
+                repository.refresh(forceConnection = true)
+            }
+        }
+        val catalog = verified.getOrThrow()
+        _notice.value = "Каталог перечитан: найдено ${catalog.controls.size} элементов. Новые устройства не создавались"
     }
 
-    fun testConnection() = launchWork(null) {
+    fun testConnection() = launchWork(null, exclusiveGuard = connectionWorkInProgress) {
         val catalog = repository.refresh(forceConnection = true).getOrThrow()
-        _notice.value = "Готово: найдено ${catalog.controls.size} элементов"
+        _notice.value = "Каталог перечитан: найдено ${catalog.controls.size} элементов. Новые устройства не создавались"
     }
 
     fun assignTile(slot: Int, controlId: String) = launchWork(null) {
@@ -119,8 +128,38 @@ class MainViewModel : ViewModel() {
         _tileAddRequests.emit(TileAddRequest(slot, controlId))
     }
 
-    fun clearTile(slot: Int) = launchWork("Плитка $slot освобождена") {
+    fun clearTile(slot: Int) = launchWork("Плитка $slot удалена из приложения и списка Android") {
         repository.clearTile(slot).getOrThrow()
+    }
+
+    fun clearAllTiles() = launchWork("Все плитки удалены из приложения и списка Android") {
+        repository.clearAllTiles().getOrThrow()
+    }
+
+    fun addPanelItem(controlId: String) = launchWork(null) {
+        repository.addPanelItem(controlId).getOrThrow()
+        _panelAddRequests.emit(controlId)
+        _notice.value = "Добавлено в крупную панель"
+    }
+
+    fun removePanelItem(controlId: String) = launchWork("Удалено из крупной панели") {
+        repository.removePanelItem(controlId).getOrThrow()
+    }
+
+    fun setPanelItemSize(controlId: String, size: PanelItemSize) = launchWork(null) {
+        repository.setPanelItemSize(controlId, size).getOrThrow()
+    }
+
+    fun setPanelItemAttributes(controlId: String, attributeControlIds: List<String>?) = launchWork(null) {
+        repository.setPanelItemAttributes(controlId, attributeControlIds).getOrThrow()
+    }
+
+    fun movePanelItem(controlId: String, offset: Int) = launchWork(null) {
+        repository.movePanelItem(controlId, offset).getOrThrow()
+    }
+
+    fun clearPanelItems() = launchWork("Крупная панель очищена") {
+        repository.clearPanelItems().getOrThrow()
     }
 
     fun requestHealthPermissions() = health.requestPermissions()
@@ -141,8 +180,8 @@ class MainViewModel : ViewModel() {
         health.syncNow().getOrThrow()
     }
 
-    fun recreateHealthDevice() = launchWork("Состав устройства здоровья обновлён") {
-        health.recreateDevice().getOrThrow()
+    fun recreateHealthDevice(metrics: Set<HealthMetric>? = null) = launchWork("Состав устройства здоровья обновлён") {
+        health.recreateDevice(metrics).getOrThrow()
     }
 
     fun revokeAllHealthPermissions() = launchWork("Доступ Health Connect отозван") {
@@ -151,6 +190,10 @@ class MainViewModel : ViewModel() {
 
     fun setHealthEnabled(enabled: Boolean) = launchWork(if (enabled) "Фоновая синхронизация включена" else "Фоновая синхронизация выключена") {
         health.setEnabled(enabled)
+    }
+
+    fun resumeManualHealthAccess() = launchWork("Ручная синхронизация здоровья снова доступна") {
+        health.resumeManualAccess()
     }
 
     fun savePhoneSensors(sensors: Set<PhoneSensor>) = launchWork("Показатели телефона сохранены") {
@@ -165,8 +208,8 @@ class MainViewModel : ViewModel() {
         phone.syncNow().getOrThrow()
     }
 
-    fun recreatePhoneDevice() = launchWork("Состав устройства телефона обновлён") {
-        phone.recreateDevice().getOrThrow()
+    fun recreatePhoneDevice(sensors: Set<PhoneSensor>? = null) = launchWork("Состав устройства телефона обновлён") {
+        phone.recreateDevice(sensors).getOrThrow()
     }
 
     fun setPhoneEnabled(enabled: Boolean) = launchWork(
@@ -181,6 +224,15 @@ class MainViewModel : ViewModel() {
 
     fun setPhonePollInterval(interval: PhonePollInterval) = launchWork(null) {
         phone.setPollInterval(interval)
+    }
+
+    fun setPhoneWatchdogEnabled(enabled: Boolean) = launchWork(null) {
+        phone.setWatchdogEnabled(enabled)
+    }
+
+    fun checkAndRepairPhoneReliability() = launchWork(null) {
+        val report = phone.checkAndRepairReliability().getOrThrow()
+        _notice.value = report.message
     }
 
     fun refreshPhoneStatus() = phone.refreshRuntimeStatus()
@@ -223,40 +275,75 @@ class MainViewModel : ViewModel() {
         _notice.value = null
     }
 
-    private suspend fun saveSettingsNow(
-        mode: ConnectionMode,
-        localUrl: String,
-        cloudUrl: String,
-        serial: String,
-        email: String,
-        newLocalPassword: String,
-        newCloudPassword: String,
+    fun restartOnboarding() {
+        _onboardingRequired.value = true
+    }
+
+    fun completeOnboarding() = launchWork(null) {
+        settings.markOnboardingComplete()
+        _onboardingRequired.value = false
+    }
+
+    private fun launchWork(
+        successMessage: String?,
+        exclusiveGuard: AtomicBoolean? = null,
+        block: suspend () -> Unit,
     ) {
-        settings.saveConfig(
-            config = HubConfig(
+        if (exclusiveGuard != null && !exclusiveGuard.compareAndSet(false, true)) {
+            _notice.value = "Проверка подключения уже выполняется"
+            return
+        }
+        viewModelScope.launch {
+            activeWorkCount.incrementAndGet()
+            _busy.value = true
+            try {
+                block()
+                if (successMessage != null) _notice.value = successMessage
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                _notice.value = error.message ?: "Операция не выполнена"
+            } finally {
+                exclusiveGuard?.set(false)
+                _busy.value = activeWorkCount.decrementAndGet() > 0
+            }
+        }
+    }
+}
+
+internal data class ConnectionSettingsCandidate(
+    val config: HubConfig,
+    val passwordUpdate: HubPasswordUpdate,
+)
+
+internal fun buildConnectionSettingsCandidate(
+    stored: HubConfig,
+    mode: ConnectionMode,
+    localUrl: String,
+    cloudUrl: String,
+    serial: String,
+    email: String,
+    newLocalPassword: String,
+    newCloudPassword: String,
+): ConnectionSettingsCandidate {
+    val passwordUpdate = HubPasswordUpdate(
+        localPassword = newLocalPassword.takeIf(String::isNotEmpty),
+        cloudPassword = newCloudPassword.takeIf(String::isNotEmpty),
+    )
+    return ConnectionSettingsCandidate(
+        config = normalizeAndValidateHubConfig(
+            HubConfig(
                 mode = mode,
                 localUrl = localUrl,
                 cloudUrl = cloudUrl,
                 serial = serial,
                 email = email,
+                localPassword = passwordUpdate.localPassword ?: stored.localPassword,
+                cloudPassword = passwordUpdate.cloudPassword ?: stored.cloudPassword,
             ),
-            passwordUpdate = HubPasswordUpdate(
-                localPassword = newLocalPassword.takeIf(String::isNotEmpty),
-                cloudPassword = newCloudPassword.takeIf(String::isNotEmpty),
-            ),
-        )
-        repository.reconnectAfterSettingsChange()
-    }
-
-    private fun launchWork(successMessage: String?, block: suspend () -> Unit) {
-        viewModelScope.launch {
-            _busy.value = true
-            runCatching { block() }
-                .onSuccess { if (successMessage != null) _notice.value = successMessage }
-                .onFailure { _notice.value = it.message ?: "Операция не выполнена" }
-            _busy.value = false
-        }
-    }
+        ),
+        passwordUpdate = passwordUpdate,
+    )
 }
 
 data class TileAddRequest(val slot: Int, val controlId: String)
@@ -266,5 +353,6 @@ data class MainUiState(
     val catalog: SprutCatalog = SprutCatalog(),
     val connection: ConnectionStatus = ConnectionStatus(),
     val assignments: List<TileAssignment> = emptyList(),
+    val panelItems: List<PanelItem> = emptyList(),
     val diagnostics: List<DiagnosticEvent> = emptyList(),
 )

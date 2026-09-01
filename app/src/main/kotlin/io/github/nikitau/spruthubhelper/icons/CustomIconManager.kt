@@ -21,6 +21,11 @@ class CustomIconManager(context: Context) {
 
     fun hasIcon(controlId: String): Boolean = iconFile(controlId).isFile
 
+    /** Lightweight cache key for Android surfaces that already rendered this icon. */
+    fun revision(controlId: String): String? = iconFile(controlId)
+        .takeIf(File::isFile)
+        ?.let { file -> "${file.length()}:${file.lastModified()}" }
+
     fun loadIcon(controlId: String): Icon? = loadBitmap(controlId)?.let(Icon::createWithBitmap)
 
     fun loadBitmap(controlId: String): Bitmap? = iconFile(controlId)

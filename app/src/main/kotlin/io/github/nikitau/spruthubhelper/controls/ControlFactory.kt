@@ -3,6 +3,7 @@ package io.github.nikitau.spruthubhelper.controls
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import android.service.controls.Control
 import android.service.controls.DeviceTypes
 import android.service.controls.templates.ControlButton
@@ -11,9 +12,12 @@ import android.service.controls.templates.RangeTemplate
 import android.service.controls.templates.StatelessTemplate
 import android.service.controls.templates.ToggleRangeTemplate
 import android.service.controls.templates.ToggleTemplate
+import io.github.nikitau.spruthubhelper.data.CatalogFreshness
+import io.github.nikitau.spruthubhelper.data.CatalogFreshnessPhase
 import io.github.nikitau.spruthubhelper.data.ControlBehavior
 import io.github.nikitau.spruthubhelper.data.DeviceKind
 import io.github.nikitau.spruthubhelper.data.SprutControl
+import io.github.nikitau.spruthubhelper.data.presentationFor
 import io.github.nikitau.spruthubhelper.icons.CustomIconManager
 import io.github.nikitau.spruthubhelper.ui.MainActivity
 
@@ -29,16 +33,35 @@ object ControlFactory {
         return builder.build()
     }
 
-    fun stateful(context: Context, item: SprutControl): Control {
+    fun stateful(context: Context, item: SprutControl, freshness: CatalogFreshness): Control {
+        val presentation = freshness.presentationFor(item)
+        val pending = presentation.pending
+        val authoritative = presentation.stateIsAuthoritative
+        val status = when {
+            authoritative -> Control.STATUS_OK
+            pending || freshness.phase == CatalogFreshnessPhase.REFRESHING -> Control.STATUS_UNKNOWN
+            else -> Control.STATUS_ERROR
+        }
+        val statusText = when {
+            pending -> "Подтверждаем…"
+            authoritative && presentation.statusLabel != null ->
+                "${presentation.statusLabel} · ${item.displayValue}"
+            authoritative -> item.displayValue
+            item.behavior == ControlBehavior.BUTTON -> freshness.shortLabel
+            else -> "${freshness.shortLabel} · последнее: ${item.displayValue}"
+        }
         val builder = Control.StatefulBuilder(item.id, appIntent(context, item))
             .setTitle(item.title)
             .setSubtitle(item.subtitle)
             .setStructure("SprutHub")
             .setZone(item.room)
             .setDeviceType(item.deviceType())
-            .setStatus(Control.STATUS_OK)
-            .setStatusText(item.displayValue)
-            .setControlTemplate(item.template())
+            .setStatus(status)
+            .setStatusText(statusText)
+            .setControlTemplate(if (authoritative) item.template() else StatelessTemplate("unavailable:${item.id}"))
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            builder.setAuthRequired(item.requiresAuthentication())
+        }
         CustomIconManager(context).loadIcon(item.id)?.let(builder::setCustomIcon)
         return builder.build()
     }
@@ -68,7 +91,8 @@ object ControlFactory {
                 if (unit.isBlank()) "%.0f" else "%.0f $unit",
             ),
         )
-        ControlBehavior.BUTTON, ControlBehavior.SENSOR -> StatelessTemplate("command:$id")
+        ControlBehavior.OPTIONS, ControlBehavior.BUTTON, ControlBehavior.SENSOR ->
+            StatelessTemplate("command:$id")
     }
 
     private fun SprutControl.deviceType(): Int = when (kind) {
@@ -101,4 +125,12 @@ object ControlFactory {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
     }
+}
+
+/** Locks and perimeter controls are never considered safe lock-screen actions. */
+internal fun SprutControl.requiresAuthentication(): Boolean = when (kind) {
+    DeviceKind.LOCK,
+    DeviceKind.SECURITY,
+    DeviceKind.GARAGE -> true
+    else -> false
 }

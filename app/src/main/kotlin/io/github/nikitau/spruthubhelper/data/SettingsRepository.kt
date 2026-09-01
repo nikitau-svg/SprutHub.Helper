@@ -4,22 +4,46 @@ import android.content.Context
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import java.net.URI
+import java.util.UUID
 import io.github.nikitau.spruthubhelper.presence.PresenceZone
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
 private val Context.settingsDataStore by preferencesDataStore(name = "spruthub_helper_settings")
+private const val ONBOARDING_IN_PROGRESS_VERSION = -1
+private const val CURRENT_ONBOARDING_VERSION = 1
+
+internal fun shouldShowInitialOnboarding(
+    storedVersion: Int?,
+    storedSerial: String,
+): Boolean = when {
+    storedVersion == CURRENT_ONBOARDING_VERSION -> false
+    storedVersion == ONBOARDING_IN_PROGRESS_VERSION -> true
+    storedVersion == null && storedSerial.isNotBlank() -> false
+    else -> true
+}
+
+internal data class HelperDeviceIdentity(
+    val shortId: String,
+    val legacyRecoveryAllowed: Boolean,
+)
 
 class SettingsRepository(private val context: Context) {
     private val secretStore = SecretStore(context)
     private val json = Json { ignoreUnknownKeys = true }
+    private val deviceIdentityMutex = Mutex()
 
     val config: Flow<HubConfig> = context.settingsDataStore.data.map(::preferencesToConfig)
 
@@ -31,6 +55,8 @@ class SettingsRepository(private val context: Context) {
             .distinctBy { it.slot }
             .sortedBy { it.slot }
     }
+
+    val panelItems: Flow<List<PanelItem>> = context.settingsDataStore.data.map(::decodePanelItems)
 
     val selectedHealthMetrics: Flow<Set<HealthMetric>> = context.settingsDataStore.data.map { preferences ->
         preferences[Keys.HEALTH_METRICS]
@@ -47,15 +73,19 @@ class SettingsRepository(private val context: Context) {
     }
 
     val healthEnabled: Flow<Boolean> = context.settingsDataStore.data.map { it[Keys.HEALTH_ENABLED] ?: false }
+    val healthUserPaused: Flow<Boolean> = context.settingsDataStore.data.map {
+        it[Keys.HEALTH_USER_PAUSED] ?: false
+    }
     val lastHealthSync: Flow<Long?> = context.settingsDataStore.data.map { it[Keys.LAST_HEALTH_SYNC] }
 
     val selectedPhoneSensors: Flow<Set<PhoneSensor>> = context.settingsDataStore.data.map { preferences ->
-        preferences[Keys.PHONE_SENSORS]
+        val selected = preferences[Keys.PHONE_SENSORS]
             ?.split(',')
             ?.mapNotNull { runCatching { PhoneSensor.valueOf(it) }.getOrNull() }
             ?.toSet()
             ?.takeIf { it.isNotEmpty() }
             ?: DEFAULT_PHONE_SENSORS
+        withRequiredPhoneSensors(selected)
     }
 
     val phoneBinding: Flow<HealthDeviceBinding?> = context.settingsDataStore.data.map { preferences ->
@@ -72,10 +102,20 @@ class SettingsRepository(private val context: Context) {
             pollInterval = preferences[Keys.PHONE_POLL_INTERVAL]
                 ?.let { runCatching { PhonePollInterval.valueOf(it) }.getOrNull() }
                 ?: PhonePollInterval.FIVE_MINUTES,
+            watchdogEnabled = preferences[Keys.PHONE_WATCHDOG_ENABLED] ?: true,
         )
     }
 
     val lastPhoneSync: Flow<Long?> = context.settingsDataStore.data.map { it[Keys.LAST_PHONE_SYNC] }
+    val phoneMonitoringStarted: Flow<Long?> = context.settingsDataStore.data.map {
+        it[Keys.PHONE_MONITORING_STARTED]
+    }
+    val phoneWatchdogNotifiedReference: Flow<Long?> = context.settingsDataStore.data.map {
+        it[Keys.PHONE_WATCHDOG_NOTIFIED_REFERENCE]
+    }
+    val phoneHeartbeatScenarioIndex: Flow<String?> = context.settingsDataStore.data.map {
+        it[Keys.PHONE_HEARTBEAT_SCENARIO_INDEX]
+    }
 
     val presenceZones: Flow<List<PresenceZone>> = context.settingsDataStore.data.map { preferences ->
         preferences[Keys.PRESENCE_ZONES]
@@ -84,23 +124,98 @@ class SettingsRepository(private val context: Context) {
             .distinctBy(PresenceZone::id)
     }
 
+    /**
+     * Returns an installation-scoped pseudonymous identifier. It is random,
+     * contains no Android or SprutHub serial, and is persisted before a
+     * virtual accessory can be created. Existing installations may recover
+     * old unsuffixed device names; fresh installations never adopt a
+     * legacy accessory that could belong to another identical phone.
+     */
+    internal suspend fun helperDeviceIdentity(): HelperDeviceIdentity = deviceIdentityMutex.withLock {
+        val current = context.settingsDataStore.data.first()
+        current[Keys.DEVICE_INSTANCE_ID]?.takeIf(String::isNotBlank)?.let { saved ->
+            return@withLock HelperDeviceIdentity(
+                shortId = saved,
+                legacyRecoveryAllowed = current[Keys.DEVICE_LEGACY_RECOVERY] ?: true,
+            )
+        }
+
+        val identity = HelperDeviceIdentity(
+            shortId = UUID.randomUUID().toString().replace("-", "").take(6).uppercase(),
+            legacyRecoveryAllowed = current.asMap().isNotEmpty(),
+        )
+        context.settingsDataStore.edit { preferences ->
+            preferences[Keys.DEVICE_INSTANCE_ID] = identity.shortId
+            preferences[Keys.DEVICE_LEGACY_RECOVERY] = identity.legacyRecoveryAllowed
+        }
+        identity
+    }
+
     suspend fun currentConfig(): HubConfig = config.first()
 
-    suspend fun saveConfig(config: HubConfig, passwordUpdate: HubPasswordUpdate) {
-        val normalized = config.copy(
-            localUrl = normalizeSprutEndpoint(config.localUrl, secureByDefault = false),
-            cloudUrl = normalizeSprutEndpoint(config.cloudUrl, secureByDefault = true),
-            serial = normalizeHubSerial(config.serial),
-        )
-        validate(normalized)
-        context.settingsDataStore.edit { preferences ->
-            preferences[Keys.MODE] = normalized.mode.name
-            preferences[Keys.LOCAL_URL] = normalized.localUrl
-            preferences[Keys.CLOUD_URL] = normalized.cloudUrl
-            preferences[Keys.SERIAL] = normalized.serial.trim()
-            preferences[Keys.EMAIL] = normalized.email.trim()
+    /**
+     * Decides whether the short first-run flow should be shown for this launch.
+     *
+     * Installations configured before onboarding existed are migrated silently:
+     * their stored hub serial is enough to prove that the user has already gone
+     * through the longer connection flow. Fresh installations keep returning
+     * `true` until the final onboarding screen is explicitly completed.
+     */
+    suspend fun prepareOnboardingForLaunch(): Boolean {
+        val preferences = context.settingsDataStore.data.first()
+        val storedVersion = preferences[Keys.ONBOARDING_VERSION]
+        val storedSerial = preferences[Keys.SERIAL].orEmpty()
+        val required = shouldShowInitialOnboarding(storedVersion, storedSerial)
+        if (required && storedVersion == null) {
+            context.settingsDataStore.edit {
+                it[Keys.ONBOARDING_VERSION] = ONBOARDING_IN_PROGRESS_VERSION
+            }
+        } else if (!required && storedVersion != CURRENT_ONBOARDING_VERSION) {
+            context.settingsDataStore.edit {
+                it[Keys.ONBOARDING_VERSION] = CURRENT_ONBOARDING_VERSION
+            }
         }
-        secretStore.updatePasswords(passwordUpdate)
+        return required
+    }
+
+    suspend fun markOnboardingComplete() {
+        context.settingsDataStore.edit {
+            it[Keys.ONBOARDING_VERSION] = CURRENT_ONBOARDING_VERSION
+        }
+    }
+
+    suspend fun saveConfig(config: HubConfig, passwordUpdate: HubPasswordUpdate) {
+        val normalized = normalizeAndValidateHubConfig(config)
+        val previous = currentConfig()
+        try {
+            secretStore.updatePasswords(passwordUpdate)
+            writeConfigPreferences(normalized)
+        } catch (error: Exception) {
+            withContext(NonCancellable) {
+                runCatching { writeConfigPreferences(previous) }
+                    .exceptionOrNull()
+                    ?.let(error::addSuppressed)
+                runCatching {
+                    secretStore.updatePasswords(
+                        HubPasswordUpdate(
+                            localPassword = previous.localPassword,
+                            cloudPassword = previous.cloudPassword,
+                        ),
+                    )
+                }.exceptionOrNull()?.let(error::addSuppressed)
+            }
+            throw error
+        }
+    }
+
+    private suspend fun writeConfigPreferences(config: HubConfig) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[Keys.MODE] = config.mode.name
+            preferences[Keys.LOCAL_URL] = config.localUrl
+            preferences[Keys.CLOUD_URL] = config.cloudUrl
+            preferences[Keys.SERIAL] = config.serial
+            preferences[Keys.EMAIL] = config.email
+        }
     }
 
     /**
@@ -140,6 +255,75 @@ class SettingsRepository(private val context: Context) {
         }
     }
 
+    suspend fun clearAllTiles() {
+        context.settingsDataStore.edit { preferences ->
+            preferences[Keys.TILE_ASSIGNMENTS] = json.encodeToString(emptyList<TileAssignment>())
+        }
+    }
+
+    suspend fun addPanelItem(controlId: String) {
+        require(controlId.isNotBlank()) { "Устройство для панели не выбрано" }
+        context.settingsDataStore.edit { preferences ->
+            val current = decodePanelItems(preferences)
+            if (current.none { it.controlId == controlId }) {
+                require(current.size < MAX_PANEL_ITEMS) { "В панели уже $MAX_PANEL_ITEMS карточек" }
+                preferences[Keys.PANEL_ITEMS] = json.encodeToString(
+                    current + PanelItem(controlId = controlId, size = PanelItemSize.COMPACT),
+                )
+            }
+        }
+    }
+
+    suspend fun removePanelItem(controlId: String) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[Keys.PANEL_ITEMS] = json.encodeToString(
+                decodePanelItems(preferences).filterNot { it.controlId == controlId },
+            )
+        }
+    }
+
+    suspend fun setPanelItemSize(controlId: String, size: PanelItemSize) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[Keys.PANEL_ITEMS] = json.encodeToString(
+                decodePanelItems(preferences).map { item ->
+                    if (item.controlId == controlId) item.copy(size = size) else item
+                },
+            )
+        }
+    }
+
+    suspend fun setPanelItemAttributes(controlId: String, attributeControlIds: List<String>?) {
+        val normalized = attributeControlIds?.filter(String::isNotBlank)?.distinct()?.take(2)
+        context.settingsDataStore.edit { preferences ->
+            preferences[Keys.PANEL_ITEMS] = json.encodeToString(
+                decodePanelItems(preferences).map { item ->
+                    if (item.controlId == controlId) item.copy(attributeControlIds = normalized) else item
+                },
+            )
+        }
+    }
+
+    suspend fun movePanelItem(controlId: String, offset: Int) {
+        require(offset == -1 || offset == 1)
+        context.settingsDataStore.edit { preferences ->
+            val current = decodePanelItems(preferences).toMutableList()
+            val from = current.indexOfFirst { it.controlId == controlId }
+            if (from < 0) return@edit
+            val to = (from + offset).coerceIn(0, current.lastIndex)
+            if (from != to) {
+                val moved = current.removeAt(from)
+                current.add(to, moved)
+                preferences[Keys.PANEL_ITEMS] = json.encodeToString(current)
+            }
+        }
+    }
+
+    suspend fun clearPanelItems() {
+        context.settingsDataStore.edit { preferences ->
+            preferences[Keys.PANEL_ITEMS] = json.encodeToString(emptyList<PanelItem>())
+        }
+    }
+
     suspend fun reconcileTileAssignments(
         validControlIds: Set<String>,
         replacements: Map<String, String>,
@@ -161,6 +345,19 @@ class SettingsRepository(private val context: Context) {
         }
     }
 
+    suspend fun reconcilePanelItems(
+        validControlIds: Set<String>,
+        replacements: Map<String, String>,
+    ) {
+        context.settingsDataStore.edit { preferences ->
+            val current = decodePanelItems(preferences)
+            val reconciled = reconcilePanelSelection(current, validControlIds, replacements)
+            if (reconciled != current) {
+                preferences[Keys.PANEL_ITEMS] = json.encodeToString(reconciled)
+            }
+        }
+    }
+
     suspend fun saveHealthMetrics(metrics: Set<HealthMetric>) {
         require(metrics.isNotEmpty()) { "Выберите хотя бы один показатель здоровья" }
         context.settingsDataStore.edit { it[Keys.HEALTH_METRICS] = metrics.joinToString(",", transform = HealthMetric::name) }
@@ -172,8 +369,18 @@ class SettingsRepository(private val context: Context) {
         }
     }
 
-    suspend fun setHealthEnabled(enabled: Boolean) {
-        context.settingsDataStore.edit { it[Keys.HEALTH_ENABLED] = enabled }
+    suspend fun setHealthEnabled(enabled: Boolean, userInitiated: Boolean = false) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[Keys.HEALTH_ENABLED] = enabled
+            when {
+                userInitiated -> preferences[Keys.HEALTH_USER_PAUSED] = !enabled
+                enabled -> preferences[Keys.HEALTH_USER_PAUSED] = false
+            }
+        }
+    }
+
+    suspend fun setHealthUserPaused(paused: Boolean) {
+        context.settingsDataStore.edit { it[Keys.HEALTH_USER_PAUSED] = paused }
     }
 
     suspend fun markHealthSynced(epochMs: Long = System.currentTimeMillis()) {
@@ -183,7 +390,8 @@ class SettingsRepository(private val context: Context) {
     suspend fun savePhoneSensors(sensors: Set<PhoneSensor>) {
         require(sensors.isNotEmpty()) { "Выберите хотя бы один показатель телефона" }
         context.settingsDataStore.edit { preferences ->
-            preferences[Keys.PHONE_SENSORS] = sensors.joinToString(",", transform = PhoneSensor::name)
+            preferences[Keys.PHONE_SENSORS] = withRequiredPhoneSensors(sensors)
+                .joinToString(",", transform = PhoneSensor::name)
         }
     }
 
@@ -197,11 +405,23 @@ class SettingsRepository(private val context: Context) {
         context.settingsDataStore.edit { preferences ->
             preferences.remove(Keys.PHONE_BINDING)
             preferences[Keys.PHONE_ENABLED] = false
+            preferences.remove(Keys.PHONE_MONITORING_STARTED)
+            preferences.remove(Keys.PHONE_WATCHDOG_NOTIFIED_REFERENCE)
         }
     }
 
-    suspend fun setPhoneEnabled(enabled: Boolean) {
-        context.settingsDataStore.edit { it[Keys.PHONE_ENABLED] = enabled }
+    suspend fun setPhoneEnabled(enabled: Boolean, epochMs: Long = System.currentTimeMillis()) {
+        context.settingsDataStore.edit { preferences ->
+            val wasEnabled = preferences[Keys.PHONE_ENABLED] ?: false
+            preferences[Keys.PHONE_ENABLED] = enabled
+            if (enabled && !wasEnabled) {
+                preferences[Keys.PHONE_MONITORING_STARTED] = epochMs
+                preferences.remove(Keys.PHONE_WATCHDOG_NOTIFIED_REFERENCE)
+            } else if (!enabled) {
+                preferences.remove(Keys.PHONE_MONITORING_STARTED)
+                preferences.remove(Keys.PHONE_WATCHDOG_NOTIFIED_REFERENCE)
+            }
+        }
     }
 
     suspend fun setPhoneSyncMode(mode: PhoneSyncMode) {
@@ -212,8 +432,48 @@ class SettingsRepository(private val context: Context) {
         context.settingsDataStore.edit { it[Keys.PHONE_POLL_INTERVAL] = interval.name }
     }
 
+    suspend fun setPhoneWatchdogEnabled(enabled: Boolean, epochMs: Long = System.currentTimeMillis()) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[Keys.PHONE_WATCHDOG_ENABLED] = enabled
+            preferences.remove(Keys.PHONE_WATCHDOG_NOTIFIED_REFERENCE)
+            if (enabled && preferences[Keys.PHONE_ENABLED] == true) {
+                preferences[Keys.PHONE_MONITORING_STARTED] = epochMs
+            }
+        }
+    }
+
+    suspend fun ensurePhoneMonitoringStarted(epochMs: Long = System.currentTimeMillis()) {
+        context.settingsDataStore.edit { preferences ->
+            if (
+                preferences[Keys.PHONE_ENABLED] == true &&
+                preferences[Keys.PHONE_MONITORING_STARTED] == null
+            ) {
+                preferences[Keys.PHONE_MONITORING_STARTED] = epochMs
+            }
+        }
+    }
+
     suspend fun markPhoneSynced(epochMs: Long = System.currentTimeMillis()) {
-        context.settingsDataStore.edit { it[Keys.LAST_PHONE_SYNC] = epochMs }
+        context.settingsDataStore.edit { preferences ->
+            preferences[Keys.LAST_PHONE_SYNC] = epochMs
+            preferences.remove(Keys.PHONE_WATCHDOG_NOTIFIED_REFERENCE)
+        }
+    }
+
+    suspend fun markPhoneWatchdogNotified(referenceEpochMs: Long) {
+        context.settingsDataStore.edit {
+            it[Keys.PHONE_WATCHDOG_NOTIFIED_REFERENCE] = referenceEpochMs
+        }
+    }
+
+    suspend fun savePhoneHeartbeatScenarioIndex(index: String?) {
+        context.settingsDataStore.edit { preferences ->
+            if (index.isNullOrBlank()) {
+                preferences.remove(Keys.PHONE_HEARTBEAT_SCENARIO_INDEX)
+            } else {
+                preferences[Keys.PHONE_HEARTBEAT_SCENARIO_INDEX] = index
+            }
+        }
     }
 
     suspend fun savePresenceZones(zones: List<PresenceZone>) {
@@ -263,52 +523,54 @@ class SettingsRepository(private val context: Context) {
             ?.let { runCatching { json.decodeFromString<List<TileAssignment>>(it) }.getOrNull() }
             .orEmpty()
 
-    private fun validate(config: HubConfig) {
-        require(config.serial.isNotBlank()) { "Укажите серийный номер SprutHub" }
-        when (config.mode) {
-            ConnectionMode.AUTO -> require(config.localUrl.isNotBlank() || config.cloudUrl.isNotBlank()) {
-                "Укажите хотя бы один адрес SprutHub"
+    private fun decodePanelItems(preferences: Preferences): List<PanelItem> =
+        preferences[Keys.PANEL_ITEMS]
+            ?.let { runCatching { json.decodeFromString<List<PanelItem>>(it) }.getOrNull() }
+            .orEmpty()
+            .filter { it.controlId.isNotBlank() }
+            .distinctBy(PanelItem::controlId)
+            .map { item ->
+                item.copy(
+                    attributeControlIds = item.attributeControlIds
+                        ?.filter(String::isNotBlank)
+                        ?.distinct()
+                        ?.take(2),
+                )
             }
-            ConnectionMode.LOCAL -> require(config.localUrl.isNotBlank()) { "Укажите локальный адрес SprutHub" }
-            ConnectionMode.CLOUD -> require(config.cloudUrl.isNotBlank()) { "Укажите облачный адрес SprutHub" }
-        }
-        listOf(config.localUrl to "локальный", config.cloudUrl to "облачный")
-            .filter { (url) -> url.isNotBlank() }
-            .forEach { (url, label) ->
-            val uri = runCatching { URI(url.trim()) }.getOrNull()
-                ?: error("Некорректный $label адрес")
-            require(uri.scheme == "ws" || uri.scheme == "wss") { "$label адрес должен начинаться с ws:// или wss://" }
-            require(uri.host != null) { "В $label адресе не найден хост" }
-            if (uri.scheme == "ws") {
-                require(label == "локальный" && isPrivateLanHost(uri.host)) {
-                    "Незашифрованный ws:// разрешён только для локального адреса; используйте wss://"
-                }
-            }
-        }
-    }
+            .take(MAX_PANEL_ITEMS)
 
     private object Keys {
+        val DEVICE_INSTANCE_ID = stringPreferencesKey("device_instance_id")
+        val DEVICE_LEGACY_RECOVERY = booleanPreferencesKey("device_legacy_recovery")
+        val ONBOARDING_VERSION = intPreferencesKey("onboarding_version")
         val MODE = stringPreferencesKey("connection_mode")
         val LOCAL_URL = stringPreferencesKey("local_url")
         val CLOUD_URL = stringPreferencesKey("cloud_url")
         val SERIAL = stringPreferencesKey("serial")
         val EMAIL = stringPreferencesKey("email")
         val TILE_ASSIGNMENTS = stringPreferencesKey("tile_assignments")
+        val PANEL_ITEMS = stringPreferencesKey("panel_items")
         val HEALTH_METRICS = stringPreferencesKey("health_metrics")
         val HEALTH_BINDING = stringPreferencesKey("health_binding")
         val HEALTH_ENABLED = booleanPreferencesKey("health_enabled")
+        val HEALTH_USER_PAUSED = booleanPreferencesKey("health_user_paused")
         val LAST_HEALTH_SYNC = longPreferencesKey("last_health_sync")
         val PHONE_SENSORS = stringPreferencesKey("phone_sensors")
         val PHONE_BINDING = stringPreferencesKey("phone_binding")
         val PHONE_ENABLED = booleanPreferencesKey("phone_enabled")
         val PHONE_SYNC_MODE = stringPreferencesKey("phone_sync_mode")
         val PHONE_POLL_INTERVAL = stringPreferencesKey("phone_poll_interval")
+        val PHONE_WATCHDOG_ENABLED = booleanPreferencesKey("phone_watchdog_enabled")
         val LAST_PHONE_SYNC = longPreferencesKey("last_phone_sync")
+        val PHONE_MONITORING_STARTED = longPreferencesKey("phone_monitoring_started")
+        val PHONE_WATCHDOG_NOTIFIED_REFERENCE = longPreferencesKey("phone_watchdog_notified_reference")
+        val PHONE_HEARTBEAT_SCENARIO_INDEX = stringPreferencesKey("phone_heartbeat_scenario_index")
         val PRESENCE_ZONES = stringPreferencesKey("presence_zones")
     }
 
     companion object {
         const val MAX_TILE_SLOTS = 12
+        const val MAX_PANEL_ITEMS = 48
         val DEFAULT_HEALTH_METRICS = setOf(
             HealthMetric.STEPS,
             HealthMetric.HEART_RATE,
@@ -328,9 +590,43 @@ class SettingsRepository(private val context: Context) {
             PhoneSensor.DEVICE_MODEL,
             PhoneSensor.ANDROID_VERSION,
             PhoneSensor.SCREEN_INTERACTIVE,
+            PhoneSensor.SYNC_HEARTBEAT,
             PhoneSensor.LAST_SYNC,
         )
     }
+}
+
+internal fun normalizeAndValidateHubConfig(config: HubConfig): HubConfig {
+    val normalized = config.copy(
+        localUrl = normalizeSprutEndpoint(config.localUrl, secureByDefault = false),
+        cloudUrl = normalizeSprutEndpoint(config.cloudUrl, secureByDefault = true),
+        serial = normalizeHubSerial(config.serial),
+        email = config.email.trim(),
+    )
+    require(normalized.serial.isNotBlank()) { "Укажите серийный номер SprutHub" }
+    when (normalized.mode) {
+        ConnectionMode.AUTO -> require(normalized.localUrl.isNotBlank() || normalized.cloudUrl.isNotBlank()) {
+            "Укажите хотя бы один адрес SprutHub"
+        }
+        ConnectionMode.LOCAL -> require(normalized.localUrl.isNotBlank()) { "Укажите локальный адрес SprutHub" }
+        ConnectionMode.CLOUD -> require(normalized.cloudUrl.isNotBlank()) { "Укажите облачный адрес SprutHub" }
+    }
+    listOf(normalized.localUrl to "локальный", normalized.cloudUrl to "облачный")
+        .filter { (url) -> url.isNotBlank() }
+        .forEach { (url, label) ->
+            val uri = runCatching { URI(url) }.getOrNull()
+                ?: error("Некорректный $label адрес")
+            require(uri.scheme == "ws" || uri.scheme == "wss") {
+                "$label адрес должен начинаться с ws:// или wss://"
+            }
+            require(uri.host != null) { "В $label адресе не найден хост" }
+            if (uri.scheme == "ws") {
+                require(label == "локальный" && isPrivateLanHost(uri.host)) {
+                    "Незашифрованный ws:// разрешён только для локального адреса; используйте wss://"
+                }
+            }
+        }
+    return normalized
 }
 
 internal fun normalizeSprutEndpoint(raw: String, secureByDefault: Boolean): String {
