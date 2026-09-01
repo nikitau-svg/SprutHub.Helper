@@ -8,6 +8,7 @@ import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -37,6 +38,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -46,6 +48,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -123,65 +126,75 @@ private fun DiagnosticsScreen(onBack: () -> Unit) {
         }
     }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("Диагностика", fontWeight = FontWeight.SemiBold) },
-                navigationIcon = {
-                    SprutHeaderIconButton(Icons.AutoMirrored.Rounded.ArrowBack, "Назад", onBack)
-                },
-            )
-        },
-    ) { contentPadding ->
-        LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(contentPadding),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            item { PrivacyExplanationCard() }
-            item { SupportChecklistCard() }
-            item {
-                DiagnosticActions(
-                    busy = busy,
-                    onShare = { confirmShare = true },
-                    onCopy = {
-                        val summary = DiagnosticReportRenderer().renderSummary(snapshot)
-                        val clipboard = context.getSystemService(ClipboardManager::class.java)
-                        clipboard?.setPrimaryClip(ClipData.newPlainText("SprutHub Helper — диагностика", summary))
-                        showMessage("Сводка скопирована без секретов и персональных значений")
+    SprutBackdrop {
+        Scaffold(
+            containerColor = Color.Transparent,
+            topBar = {
+                TopAppBar(
+                    title = { Text("Диагностика", fontWeight = FontWeight.SemiBold) },
+                    navigationIcon = {
+                        SprutHeaderIconButton(Icons.AutoMirrored.Rounded.ArrowBack, "Назад", onBack)
                     },
-                    onClear = { confirmClear = true },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = Color.Transparent,
+                        scrolledContainerColor = SprutBackground.copy(alpha = 0.92f),
+                    ),
                 )
-            }
-            item { SystemInfoCard(snapshot) }
-            item { PermissionCard(snapshot) }
-            item { BackgroundRunsCard(events) }
-            item {
-                Column(Modifier.padding(horizontal = 16.dp)) {
-                    Text("Журнал", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                    Text(
-                        "Хранится не более 400 записей и 384 КиБ. Новые записи вытесняют старые.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+            },
+        ) { contentPadding ->
+            LazyColumn(
+                modifier = Modifier.fillMaxSize().padding(contentPadding),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                item { PrivacyExplanationCard() }
+                item { SupportChecklistCard() }
+                item {
+                    DiagnosticActions(
+                        busy = busy,
+                        onShare = { confirmShare = true },
+                        onCopy = {
+                            val summary = DiagnosticReportRenderer().renderSummary(snapshot)
+                            val clipboard = context.getSystemService(ClipboardManager::class.java)
+                            clipboard?.setPrimaryClip(
+                                ClipData.newPlainText("SprutHub Helper — диагностика", summary),
+                            )
+                            showMessage("Сводка скопирована без секретов и персональных значений")
+                        },
+                        onClear = { confirmClear = true },
                     )
                 }
-            }
-            if (events.isEmpty()) {
+                item { SystemInfoCard(snapshot) }
+                item { PermissionCard(snapshot) }
+                item { BackgroundRunsCard(events) }
                 item {
-                    Card(
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-                        shape = SprutTileShape,
-                        colors = CardDefaults.cardColors(containerColor = SprutSurfaceLow),
-                    ) {
-                        Text("Событий пока нет", Modifier.padding(16.dp))
+                    Column(Modifier.padding(horizontal = 16.dp)) {
+                        Text("Журнал", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                        Text(
+                            "Хранится не более 400 записей и 384 КиБ. Новые записи вытесняют старые.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
                 }
-            } else {
-                itemsIndexed(
-                    items = events,
-                    key = { index, event -> "${event.epochMs}-${event.category}-$index" },
-                ) { _, event -> DiagnosticEventCard(event) }
+                if (events.isEmpty()) {
+                    item {
+                        Card(
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                            shape = SprutTileShape,
+                            colors = CardDefaults.cardColors(containerColor = SprutSurfaceLow),
+                            border = BorderStroke(1.dp, SprutGlassBorder),
+                        ) {
+                            Text("Событий пока нет", Modifier.padding(16.dp))
+                        }
+                    }
+                } else {
+                    itemsIndexed(
+                        items = events,
+                        key = { index, event -> "${event.epochMs}-${event.category}-$index" },
+                    ) { _, event -> DiagnosticEventCard(event) }
+                }
+                item { Spacer(Modifier.height(24.dp)) }
             }
-            item { Spacer(Modifier.height(24.dp)) }
         }
     }
 
@@ -243,6 +256,7 @@ private fun PrivacyExplanationCard() {
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
         colors = CardDefaults.cardColors(containerColor = SprutSurfaceLow),
         shape = SprutTileShape,
+        border = BorderStroke(1.dp, SprutGlassBorder),
     ) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text("Безопасный журнал приложения", fontWeight = FontWeight.SemiBold)
@@ -271,6 +285,7 @@ private fun SupportChecklistCard() {
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
         shape = SprutTileShape,
         colors = CardDefaults.cardColors(containerColor = SprutSurfaceLow),
+        border = BorderStroke(1.dp, SprutGlassBorder),
     ) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text("Если что-то не работает", fontWeight = FontWeight.SemiBold)
@@ -297,6 +312,7 @@ private fun DiagnosticActions(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
         shape = SprutTileShape,
         colors = CardDefaults.cardColors(containerColor = SprutSurfaceLow),
+        border = BorderStroke(1.dp, SprutGlassBorder),
     ) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = onShare, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
@@ -358,6 +374,7 @@ private fun DiagnosticEventCard(event: DiagnosticEvent) {
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
         shape = SprutTileShape,
         colors = CardDefaults.cardColors(containerColor = SprutSurfaceLow),
+        border = BorderStroke(1.dp, SprutGlassBorder),
     ) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             EventSummary(event)
@@ -400,6 +417,7 @@ private fun DiagnosticSectionCard(title: String, content: @Composable () -> Unit
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
         shape = SprutTileShape,
         colors = CardDefaults.cardColors(containerColor = SprutSurfaceLow),
+        border = BorderStroke(1.dp, SprutGlassBorder),
     ) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
             Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)

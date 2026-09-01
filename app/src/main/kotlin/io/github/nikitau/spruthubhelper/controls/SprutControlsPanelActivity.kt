@@ -9,7 +9,6 @@ import android.service.controls.ControlsProviderService
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -69,7 +68,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
@@ -99,7 +97,7 @@ import io.github.nikitau.spruthubhelper.tiles.TileIconResolver
 import io.github.nikitau.spruthubhelper.ui.MainActivity
 import io.github.nikitau.spruthubhelper.ui.SprutAccent
 import io.github.nikitau.spruthubhelper.ui.SprutAccentDim
-import io.github.nikitau.spruthubhelper.ui.SprutBackground
+import io.github.nikitau.spruthubhelper.ui.SprutBackdrop
 import io.github.nikitau.spruthubhelper.ui.SprutHeaderIconButton
 import io.github.nikitau.spruthubhelper.ui.SprutHelperTheme
 import io.github.nikitau.spruthubhelper.ui.SprutSurface
@@ -391,35 +389,7 @@ private fun SprutDevicePanel(
 @Composable
 private fun GlassBackground(content: @Composable BoxScope.() -> Unit) {
     CompositionLocalProvider(LocalContentColor provides PanelText) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(
-                    Brush.linearGradient(
-                        colors = listOf(SprutBackground, Color(0xFF191713), SprutBackground),
-                    ),
-                ),
-        ) {
-            Canvas(Modifier.fillMaxSize()) {
-                drawCircle(
-                    brush = Brush.radialGradient(
-                        listOf(Color(0x28FFA805), Color.Transparent),
-                        center = Offset(size.width * 0.14f, size.height * 0.18f),
-                        radius = size.minDimension * 0.55f,
-                    ),
-                    radius = size.minDimension * 0.55f,
-                    center = Offset(size.width * 0.14f, size.height * 0.18f),
-                )
-                drawCircle(
-                    brush = Brush.radialGradient(
-                        listOf(Color(0x20774E00), Color.Transparent),
-                        center = Offset(size.width * 0.88f, size.height * 0.72f),
-                        radius = size.minDimension * 0.62f,
-                    ),
-                    radius = size.minDimension * 0.62f,
-                    center = Offset(size.width * 0.88f, size.height * 0.72f),
-                )
-            }
+        SprutBackdrop {
             content()
         }
     }

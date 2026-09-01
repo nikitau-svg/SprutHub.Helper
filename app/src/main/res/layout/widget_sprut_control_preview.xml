@@ -8,9 +8,11 @@
     android:padding="12dp">
 
     <ImageView
-        android:layout_width="40dp"
-        android:layout_height="40dp"
+        android:layout_width="42dp"
+        android:layout_height="42dp"
+        android:background="@drawable/bg_widget_icon"
         android:contentDescription="@null"
+        android:padding="7dp"
         android:src="@drawable/ic_tile_light" />
 
     <LinearLayout

@@ -16,6 +16,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -50,6 +51,7 @@ import androidx.compose.material.icons.rounded.Image
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.LocationOn
 import androidx.compose.material.icons.rounded.Menu
+import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.PowerSettingsNew
 import androidx.compose.material.icons.rounded.Refresh
@@ -337,96 +339,100 @@ private fun MainScreen(viewModel: MainViewModel = viewModel()) {
         )
     }
 
-    Scaffold(
-        snackbarHost = { SnackbarHost(snackbar) },
-        topBar = {
-            TopAppBar(
-                title = {
-                    Column {
-                        Text(
-                            when {
-                                !settingsOpen -> "SprutHub Helper"
-                                settingsSection != null -> settingsSection.title
-                                else -> "Настройки"
-                            },
-                            fontWeight = FontWeight.SemiBold,
-                        )
-                        Text(
-                            when {
-                                !settingsOpen -> homeReadiness.status
-                                settingsSection != null -> settingsSection.description
-                                else -> "Подключение, данные и надёжность"
-                            },
-                            style = MaterialTheme.typography.labelMedium,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                },
-                navigationIcon = {
-                    if (settingsOpen) {
-                        SprutHeaderIconButton(
-                            icon = Icons.AutoMirrored.Rounded.ArrowBack,
-                            contentDescription = "Назад",
-                            onClick = {
-                                if (settingsSection != null) settingsSectionName = null
-                                else settingsOpen = false
-                            },
-                        )
-                    }
-                },
-                actions = {
-                    if (!settingsOpen) {
-                        SprutHeaderIconButton(
-                            icon = Icons.Rounded.Menu,
-                            contentDescription = "Открыть настройки",
-                            onClick = {
-                                settingsSectionName = null
-                                settingsOpen = true
-                            },
-                        )
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = SprutBackground,
-                    titleContentColor = SprutText,
-                ),
-            )
-        },
-    ) { padding ->
-        if (!settingsOpen) {
-            HomeContent(
-                ui = ui,
-                readiness = homeReadiness,
-                installedTileSlots = installedTileSlots,
-                iconRevision = iconRevision,
-                viewModel = viewModel,
-                modifier = Modifier.fillMaxSize().padding(padding),
-                onOpenSettings = { section ->
-                    settingsSectionName = section.name
-                    settingsOpen = true
-                },
-                onPickIcon = { controlId ->
-                    iconTargetId = controlId
-                    customIconLauncher.launch("image/*")
-                },
-            )
-        } else {
-            SettingsContent(
-                selectedSection = settingsSection,
-                ui = ui,
-                busy = busy,
-                health = health,
-                phone = phone,
-                presence = presence,
-                viewModel = viewModel,
-                modifier = Modifier.fillMaxSize().padding(padding),
-                onSelectSection = { settingsSectionName = it.name },
-                onRequestLiveMode = requestLiveMode,
-                onRequestWatchdog = requestWatchdog,
-                onRequestForegroundLocation = requestForegroundLocation,
-                onOpenBackgroundLocationSettings = openBackgroundLocationSettings,
-            )
+    SprutBackdrop {
+        Scaffold(
+            containerColor = Color.Transparent,
+            snackbarHost = { SnackbarHost(snackbar) },
+            topBar = {
+                TopAppBar(
+                    title = {
+                        Column {
+                            Text(
+                                when {
+                                    !settingsOpen -> "SprutHub Helper"
+                                    settingsSection != null -> settingsSection.title
+                                    else -> "Настройки"
+                                },
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                            Text(
+                                when {
+                                    !settingsOpen -> homeReadiness.status
+                                    settingsSection != null -> settingsSection.description
+                                    else -> "Подключение, данные и надёжность"
+                                },
+                                style = MaterialTheme.typography.labelMedium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    },
+                    navigationIcon = {
+                        if (settingsOpen) {
+                            SprutHeaderIconButton(
+                                icon = Icons.AutoMirrored.Rounded.ArrowBack,
+                                contentDescription = "Назад",
+                                onClick = {
+                                    if (settingsSection != null) settingsSectionName = null
+                                    else settingsOpen = false
+                                },
+                            )
+                        }
+                    },
+                    actions = {
+                        if (!settingsOpen) {
+                            SprutHeaderIconButton(
+                                icon = Icons.Rounded.Menu,
+                                contentDescription = "Открыть настройки",
+                                onClick = {
+                                    settingsSectionName = null
+                                    settingsOpen = true
+                                },
+                            )
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = Color.Transparent,
+                        scrolledContainerColor = SprutBackground.copy(alpha = 0.92f),
+                        titleContentColor = SprutText,
+                    ),
+                )
+            },
+        ) { padding ->
+            if (!settingsOpen) {
+                HomeContent(
+                    ui = ui,
+                    readiness = homeReadiness,
+                    installedTileSlots = installedTileSlots,
+                    iconRevision = iconRevision,
+                    viewModel = viewModel,
+                    modifier = Modifier.fillMaxSize().padding(padding),
+                    onOpenSettings = { section ->
+                        settingsSectionName = section.name
+                        settingsOpen = true
+                    },
+                    onPickIcon = { controlId ->
+                        iconTargetId = controlId
+                        customIconLauncher.launch("image/*")
+                    },
+                )
+            } else {
+                SettingsContent(
+                    selectedSection = settingsSection,
+                    ui = ui,
+                    busy = busy,
+                    health = health,
+                    phone = phone,
+                    presence = presence,
+                    viewModel = viewModel,
+                    modifier = Modifier.fillMaxSize().padding(padding),
+                    onSelectSection = { settingsSectionName = it.name },
+                    onRequestLiveMode = requestLiveMode,
+                    onRequestWatchdog = requestWatchdog,
+                    onRequestForegroundLocation = requestForegroundLocation,
+                    onOpenBackgroundLocationSettings = openBackgroundLocationSettings,
+                )
+            }
         }
     }
 }
@@ -588,6 +594,7 @@ private fun HomeReadinessCard(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
         shape = SprutTileShape,
         colors = CardDefaults.cardColors(containerColor = SprutSurfaceLow),
+        border = BorderStroke(1.dp, SprutGlassBorder),
     ) {
         Column(
             Modifier.padding(18.dp),
@@ -603,7 +610,11 @@ private fun HomeReadinessCard(
                     )
                     Text(readiness.title, fontWeight = FontWeight.Bold)
                 }
-                Surface(shape = CircleShape, color = accent.copy(alpha = 0.16f)) {
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = accent.copy(alpha = 0.13f),
+                    border = BorderStroke(1.dp, accent.copy(alpha = 0.18f)),
+                ) {
                     Icon(
                         readiness.targetSection?.icon() ?: Icons.Rounded.DevicesOther,
                         contentDescription = null,
@@ -651,6 +662,7 @@ private fun SettingsHub(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
                 shape = SprutTileShape,
                 colors = CardDefaults.cardColors(containerColor = SprutSurfaceLow),
+                border = BorderStroke(1.dp, SprutGlassBorder),
             ) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
                     Text("Всё служебное — здесь", fontWeight = FontWeight.Bold)
@@ -694,12 +706,17 @@ private fun SettingsEntryCard(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).clickable(onClick = onClick),
         shape = SprutTileShape,
         colors = CardDefaults.cardColors(containerColor = SprutSurfaceLow),
+        border = BorderStroke(1.dp, SprutGlassBorder),
     ) {
         Row(
             modifier = Modifier.padding(15.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Surface(shape = CircleShape, color = statusColor.copy(alpha = 0.14f)) {
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = statusColor.copy(alpha = 0.12f),
+                border = BorderStroke(1.dp, statusColor.copy(alpha = 0.16f)),
+            ) {
                 Icon(
                     section.icon(),
                     contentDescription = null,
@@ -863,10 +880,15 @@ private fun HealthCard(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
         shape = SprutTileShape,
         colors = CardDefaults.cardColors(containerColor = SprutSurfaceLow),
+        border = BorderStroke(1.dp, SprutGlassBorder),
     ) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Surface(shape = CircleShape, color = SprutError.copy(alpha = 0.14f)) {
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = SprutError.copy(alpha = 0.12f),
+                    border = BorderStroke(1.dp, SprutError.copy(alpha = 0.16f)),
+                ) {
                     Icon(Icons.Rounded.Favorite, null, Modifier.padding(9.dp), tint = SprutError)
                 }
                 Spacer(Modifier.size(10.dp))
@@ -1087,10 +1109,15 @@ private fun PhoneCard(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
         shape = SprutTileShape,
         colors = CardDefaults.cardColors(containerColor = SprutSurfaceLow),
+        border = BorderStroke(1.dp, SprutGlassBorder),
     ) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Surface(shape = CircleShape, color = SprutInfo.copy(alpha = 0.14f)) {
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = SprutInfo.copy(alpha = 0.12f),
+                    border = BorderStroke(1.dp, SprutInfo.copy(alpha = 0.16f)),
+                ) {
                     Icon(Icons.Rounded.Smartphone, null, Modifier.padding(9.dp), tint = SprutInfo)
                 }
                 Spacer(Modifier.size(10.dp))
@@ -1571,6 +1598,7 @@ private fun ConnectionCard(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
         shape = SprutTileShape,
         colors = CardDefaults.cardColors(containerColor = SprutSurface),
+        border = BorderStroke(1.dp, SprutGlassBorder),
     ) {
         Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1767,17 +1795,22 @@ private fun PanelSummaryCard(
         }
     val hasEmbeddedPanel = remember { DevicePanelSupport.hasEmbeddedPanel(context) }
     val hasSystemControls = remember { DevicePanelSupport.hasSystemControls(context) }
-    var expanded by rememberSaveable { mutableStateOf(items.size <= 4) }
+    var expanded by rememberSaveable { mutableStateOf(false) }
     var confirmClear by remember { mutableStateOf(false) }
 
     Card(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
         shape = SprutTileShape,
         colors = CardDefaults.cardColors(containerColor = SprutSurfaceLow),
+        border = BorderStroke(1.dp, SprutGlassBorder),
     ) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Surface(shape = CircleShape, color = MaterialTheme.colorScheme.primaryContainer) {
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = Color.White.copy(alpha = 0.065f),
+                    border = BorderStroke(1.dp, SprutGlassBorder),
+                ) {
                     Icon(Icons.Rounded.DashboardCustomize, null, Modifier.padding(9.dp), tint = SprutAccent)
                 }
                 Spacer(Modifier.size(10.dp))
@@ -1794,37 +1827,37 @@ private fun PanelSummaryCard(
                     )
                 }
                 Text("${items.size}/48", style = MaterialTheme.typography.labelLarge)
-                if (items.isNotEmpty()) {
-                    IconButton(onClick = { expanded = !expanded }) {
-                        Icon(if (expanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, null)
-                    }
+                IconButton(onClick = { expanded = !expanded }) {
+                    Icon(if (expanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, null)
                 }
             }
 
-            Text(
-                if (hasEmbeddedPanel) {
-                    "На Android 14+ совместимая оболочка откроет этот компактный экран прямо из шторки. Одна карточка соответствует независимому управлению SprutHub, а связанные показатели собираются внутри."
-                } else {
-                    "Точный вид и место панели зависят от производителя. Предпросмотр работает даже если оболочка не показывает панель в шторке."
-                },
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-
-            Button(
-                onClick = { context.startActivity(Intent(context, SprutPanelPreviewActivity::class.java)) },
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Icon(Icons.Rounded.Visibility, null)
-                Spacer(Modifier.size(8.dp))
-                Text("Открыть предпросмотр")
-            }
-
-            if (items.isEmpty()) {
-                Text(
-                    "Пока пусто. Нажмите «В панель устройств» у нужных сервисов ниже.",
-                    style = MaterialTheme.typography.bodySmall,
-                )
+            AnimatedVisibility(expanded) {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        if (hasEmbeddedPanel) {
+                            "На Android 14+ совместимая оболочка откроет этот компактный экран прямо из шторки. Одна карточка соответствует независимому управлению SprutHub, а связанные показатели собираются внутри."
+                        } else {
+                            "Точный вид и место панели зависят от производителя. Предпросмотр работает даже если оболочка не показывает панель в шторке."
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Button(
+                        onClick = { context.startActivity(Intent(context, SprutPanelPreviewActivity::class.java)) },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Icon(Icons.Rounded.Visibility, null)
+                        Spacer(Modifier.size(8.dp))
+                        Text("Открыть предпросмотр")
+                    }
+                    if (items.isEmpty()) {
+                        Text(
+                            "Пока пусто. Нажмите «Панель» у нужного сервиса ниже.",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                }
             }
 
             AnimatedVisibility(expanded && items.isNotEmpty()) {
@@ -1957,10 +1990,12 @@ private fun TileSummaryCard(
     val scope = rememberCoroutineScope()
     val names = controls.associateBy(SprutControl::id)
     var confirmClearAll by remember { mutableStateOf(false) }
+    var expanded by rememberSaveable { mutableStateOf(false) }
     Card(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
         shape = SprutTileShape,
         colors = CardDefaults.cardColors(containerColor = SprutSurfaceLow),
+        border = BorderStroke(1.dp, SprutGlassBorder),
     ) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1968,58 +2003,66 @@ private fun TileSummaryCard(
                 Spacer(Modifier.size(8.dp))
                 Text("Плитки шторки", fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                 Text("${assignments.size}/12", style = MaterialTheme.typography.labelLarge)
-            }
-            if (assignments.isEmpty()) {
-                Text("Пока не назначены. Нажмите «Добавить плитку» у нужного устройства.", style = MaterialTheme.typography.bodySmall)
-            } else {
-                assignments.forEach { assignment ->
-                    val control = names[assignment.controlId]
-                    Column {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("${assignment.slot}", fontWeight = FontWeight.Bold, color = SprutAccent)
-                            Spacer(Modifier.size(10.dp))
-                            Column(Modifier.weight(1f)) {
-                                Text(
-                                    control?.title ?: "Недоступное устройство",
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                                Text(
-                                    if (assignment.slot in installedSlots) "✓ Добавлена в системную шторку"
-                                    else "Только назначена внутри приложения",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = if (assignment.slot in installedSlots) SprutAccent
-                                    else MaterialTheme.colorScheme.error,
-                                )
-                            }
-                            if (assignment.slot !in installedSlots && control != null) {
-                                TextButton(onClick = {
-                                    scope.launch {
-                                        TileComponents.enableSlot(context, assignment.slot)
-                                        delay(350)
-                                        requestSystemTile(
-                                            context as ComponentActivity,
-                                            assignment.slot,
-                                            control,
-                                            viewModel,
-                                        )
-                                    }
-                                }) { Text("Добавить") }
-                            }
-                            TextButton(onClick = { viewModel.clearTile(assignment.slot) }) { Text("Удалить") }
-                        }
+                if (assignments.isNotEmpty()) {
+                    IconButton(onClick = { expanded = !expanded }) {
+                        Icon(if (expanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, null)
                     }
                 }
-                OutlinedButton(
-                    onClick = { confirmClearAll = true },
-                    modifier = Modifier.fillMaxWidth(),
-                ) { Text("Удалить все плитки") }
             }
-            Text(
-                "Удаление снимает назначение и отключает системный слот, поэтому он исчезает и из списка выбора Android.",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            if (assignments.isEmpty()) {
+                Text("Пока не назначены. Выберите «Плитка» у нужного сервиса.", style = MaterialTheme.typography.bodySmall)
+            }
+            AnimatedVisibility(expanded && assignments.isNotEmpty()) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    assignments.forEach { assignment ->
+                        val control = names[assignment.controlId]
+                        Column {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("${assignment.slot}", fontWeight = FontWeight.Bold, color = SprutAccent)
+                                Spacer(Modifier.size(10.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text(
+                                        control?.title ?: "Недоступное устройство",
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                    Text(
+                                        if (assignment.slot in installedSlots) "✓ Добавлена в системную шторку"
+                                        else "Только назначена внутри приложения",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = if (assignment.slot in installedSlots) SprutAccent
+                                        else MaterialTheme.colorScheme.error,
+                                    )
+                                }
+                                if (assignment.slot !in installedSlots && control != null) {
+                                    TextButton(onClick = {
+                                        scope.launch {
+                                            TileComponents.enableSlot(context, assignment.slot)
+                                            delay(350)
+                                            requestSystemTile(
+                                                context as ComponentActivity,
+                                                assignment.slot,
+                                                control,
+                                                viewModel,
+                                            )
+                                        }
+                                    }) { Text("Добавить") }
+                                }
+                                TextButton(onClick = { viewModel.clearTile(assignment.slot) }) { Text("Удалить") }
+                            }
+                        }
+                    }
+                    OutlinedButton(
+                        onClick = { confirmClearAll = true },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("Удалить все плитки") }
+                    Text(
+                        "Удаление снимает назначение и отключает системный слот, поэтому он исчезает и из списка выбора Android.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
         }
     }
     if (confirmClearAll) {
@@ -2053,10 +2096,15 @@ private fun AccessoryCard(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
         shape = SprutTileShape,
         colors = CardDefaults.cardColors(containerColor = SprutSurfaceLow),
+        border = BorderStroke(1.dp, SprutGlassBorder),
     ) {
         Column(Modifier.padding(15.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Surface(shape = CircleShape, color = MaterialTheme.colorScheme.primaryContainer) {
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = Color.White.copy(alpha = 0.065f),
+                    border = BorderStroke(1.dp, SprutGlassBorder),
+                ) {
                     Icon(group.controls.first().icon(), null, Modifier.padding(10.dp), tint = SprutAccent)
                 }
                 Spacer(Modifier.size(12.dp))
@@ -2108,7 +2156,9 @@ private fun ControlActions(
     onPickIcon: () -> Unit,
 ) {
     val context = LocalContext.current
-    var menuExpanded by remember(control.id) { mutableStateOf(false) }
+    var tileMenuExpanded by remember(control.id) { mutableStateOf(false) }
+    var settingsMenuExpanded by remember(control.id) { mutableStateOf(false) }
+    var iconDialogOpen by remember(control.id) { mutableStateOf(false) }
     val iconManager = remember { CustomIconManager(context) }
     var hasCustomIcon by remember(control.id, iconRevision) {
         mutableStateOf(iconManager.hasIcon(control.id))
@@ -2119,6 +2169,16 @@ private fun ControlActions(
     }
     val inPanel = selectedPanelItem != null
     val firstFreeSlot = (1..12).firstOrNull { slot -> assignments.none { it.slot == slot } }
+
+    fun removeCustomIcon() {
+        if (iconManager.remove(control.id)) {
+            hasCustomIcon = false
+            TileComponents.syncEnabled(context, assignments)
+            SprutAppWidgetProvider.updateAll(context)
+            viewModel.showNotice("Пользовательская иконка удалена")
+        }
+    }
+
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         if (showServiceLabel) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -2130,85 +2190,156 @@ private fun ControlActions(
                 )
             }
         }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(
-                    onClick = {
-                        if (selectedPanelItem != null) viewModel.removePanelItem(selectedPanelItem.controlId)
-                        else viewModel.addPanelItem(card.id)
-                    },
-                    modifier = Modifier.weight(1f),
-                ) { Text(if (inPanel) "В панели устройств" else "В панель устройств") }
-                Box(Modifier.weight(1f)) {
-                    Button(onClick = { menuExpanded = true }, modifier = Modifier.fillMaxWidth()) {
-                        Text(assignedSlot?.let { "Плитка $it" } ?: "Добавить плитку")
-                    }
-                    DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
-                        if (assignedSlot == null && firstFreeSlot != null) {
-                            DropdownMenuItem(
-                                text = { Text("Добавить новой · слот $firstFreeSlot") },
-                                onClick = {
-                                    menuExpanded = false
-                                    viewModel.assignTile(firstFreeSlot, control.id)
-                                },
-                            )
-                            HorizontalDivider()
-                        } else if (assignedSlot != null) {
-                            DropdownMenuItem(
-                                text = { Text("Повторно открыть добавление плитки $assignedSlot") },
-                                onClick = {
-                                    menuExpanded = false
-                                    viewModel.assignTile(assignedSlot, control.id)
-                                },
-                            )
-                            HorizontalDivider()
-                        }
-                        (1..12).forEach { slot ->
-                            val currentId = assignments.firstOrNull { it.slot == slot }?.controlId
-                            if (slot != firstFreeSlot || assignedSlot != null) {
-                                DropdownMenuItem(
-                                    text = {
-                                        Text(
-                                            when {
-                                                currentId == control.id -> "Плитка $slot · уже назначена"
-                                                currentId == null -> "Выбрать слот $slot · свободен"
-                                                else -> "Заменить занятую плитку $slot"
-                                            },
-                                        )
-                                    },
-                                    onClick = {
-                                        menuExpanded = false
-                                        viewModel.assignTile(slot, control.id)
-                                    },
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = onPickIcon, modifier = Modifier.weight(1f)) {
-                    Icon(Icons.Rounded.Image, null)
-                    Spacer(Modifier.size(6.dp))
-                    Text(if (hasCustomIcon) "Заменить PNG" else "Своя иконка")
-                }
-                if (hasCustomIcon) {
-                    TextButton(
-                        onClick = {
-                            if (iconManager.remove(control.id)) {
-                                hasCustomIcon = false
-                                TileComponents.syncEnabled(context, assignments)
-                                SprutAppWidgetProvider.updateAll(context)
-                                viewModel.showNotice("Пользовательская иконка удалена")
-                            }
-                        },
-                    ) { Text("Сбросить") }
-                }
-            }
-            Text(
-                "Лучше квадратный PNG с прозрачным фоном. Иконка применяется в Android; веб-интерфейс SprutHub не публикует поле для своей картинки.",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            PlacementAction(
+                label = if (inPanel) "Панель ✓" else "Панель",
+                icon = Icons.Rounded.DashboardCustomize,
+                selected = inPanel,
+                onClick = {
+                    if (selectedPanelItem != null) viewModel.removePanelItem(selectedPanelItem.controlId)
+                    else viewModel.addPanelItem(card.id)
+                },
+                modifier = Modifier.weight(1f),
             )
+            Box(Modifier.weight(1f)) {
+                PlacementAction(
+                    label = assignedSlot?.let { "Плитка $it" } ?: "Плитка",
+                    icon = Icons.Rounded.Tune,
+                    selected = assignedSlot != null,
+                    onClick = { tileMenuExpanded = true },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                DropdownMenu(expanded = tileMenuExpanded, onDismissRequest = { tileMenuExpanded = false }) {
+                    if (assignedSlot == null && firstFreeSlot != null) {
+                        DropdownMenuItem(
+                            text = { Text("Добавить новой · слот $firstFreeSlot") },
+                            onClick = {
+                                tileMenuExpanded = false
+                                viewModel.assignTile(firstFreeSlot, control.id)
+                            },
+                        )
+                        HorizontalDivider()
+                    } else if (assignedSlot != null) {
+                        DropdownMenuItem(
+                            text = { Text("Повторно открыть добавление плитки $assignedSlot") },
+                            onClick = {
+                                tileMenuExpanded = false
+                                viewModel.assignTile(assignedSlot, control.id)
+                            },
+                        )
+                        HorizontalDivider()
+                    }
+                    (1..12).forEach { slot ->
+                        val currentId = assignments.firstOrNull { it.slot == slot }?.controlId
+                        if (slot != firstFreeSlot || assignedSlot != null) {
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        when {
+                                            currentId == control.id -> "Плитка $slot · уже назначена"
+                                            currentId == null -> "Выбрать слот $slot · свободен"
+                                            else -> "Заменить занятую плитку $slot"
+                                        },
+                                    )
+                                },
+                                onClick = {
+                                    tileMenuExpanded = false
+                                    viewModel.assignTile(slot, control.id)
+                                },
+                            )
+                        }
+                    }
+                }
+            }
+            Box {
+                SprutHeaderIconButton(
+                    icon = Icons.Rounded.MoreVert,
+                    contentDescription = "Настройки сервиса",
+                    onClick = { settingsMenuExpanded = true },
+                )
+                DropdownMenu(
+                    expanded = settingsMenuExpanded,
+                    onDismissRequest = { settingsMenuExpanded = false },
+                ) {
+                    DropdownMenuItem(
+                        text = { Text(if (hasCustomIcon) "Настроить свою иконку" else "Своя иконка") },
+                        onClick = {
+                            settingsMenuExpanded = false
+                            iconDialogOpen = true
+                        },
+                    )
+                    if (hasCustomIcon) {
+                        DropdownMenuItem(
+                            text = { Text("Вернуть стандартную иконку") },
+                            onClick = {
+                                settingsMenuExpanded = false
+                                removeCustomIcon()
+                            },
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    if (iconDialogOpen) {
+        AlertDialog(
+            onDismissRequest = { iconDialogOpen = false },
+            icon = { Icon(Icons.Rounded.Image, null) },
+            title = { Text("Своя иконка") },
+            text = {
+                Text(
+                    "Лучше выбрать квадратный PNG с прозрачным фоном. Иконка появится в виджете, Панели устройств и плитке шторки. Веб-интерфейс SprutHub пока не принимает пользовательскую картинку.",
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        iconDialogOpen = false
+                        onPickIcon()
+                    },
+                ) { Text(if (hasCustomIcon) "Заменить PNG" else "Выбрать PNG") }
+            },
+            dismissButton = {
+                TextButton(onClick = { iconDialogOpen = false }) { Text("Отмена") }
+            },
+        )
+    }
+}
+
+@Composable
+private fun PlacementAction(
+    label: String,
+    icon: ImageVector,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        onClick = onClick,
+        modifier = modifier,
+        shape = SprutControlShape,
+        color = if (selected) SprutAccentDim.copy(alpha = 0.72f) else Color.White.copy(alpha = 0.055f),
+        contentColor = if (selected) SprutAccent else SprutTextMuted,
+        border = BorderStroke(
+            1.dp,
+            if (selected) SprutAccent.copy(alpha = 0.82f) else SprutGlassBorder,
+        ),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 11.dp, vertical = 9.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center,
+        ) {
+            Icon(icon, null, Modifier.size(18.dp))
+            Spacer(Modifier.size(7.dp))
+            Text(
+                label,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                style = MaterialTheme.typography.labelLarge,
+            )
+        }
     }
 }
 
@@ -2248,6 +2379,7 @@ private fun EmptyCatalogCard(hasCache: Boolean, onRefresh: () -> Unit) {
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
         shape = SprutTileShape,
         colors = CardDefaults.cardColors(containerColor = SprutSurfaceLow),
+        border = BorderStroke(1.dp, SprutGlassBorder),
     ) {
         Column(Modifier.padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             Icon(Icons.Rounded.DevicesOther, null, Modifier.size(36.dp))
@@ -2267,6 +2399,7 @@ private fun DiagnosticsCard(ui: MainUiState, expandedByDefault: Boolean = false)
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
         shape = SprutTileShape,
         colors = CardDefaults.cardColors(containerColor = SprutSurfaceLow),
+        border = BorderStroke(1.dp, SprutGlassBorder),
     ) {
         Column {
             Row(

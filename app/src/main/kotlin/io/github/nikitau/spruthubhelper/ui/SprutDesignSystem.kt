@@ -1,7 +1,12 @@
 package io.github.nikitau.spruthubhelper.ui
 
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -12,6 +17,8 @@ import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.TextStyle
@@ -27,10 +34,10 @@ import androidx.compose.ui.unit.sp
  * without copying its private assets: neutral graphite layers, restrained
  * translucency, a single amber action accent and compact typography.
  */
-internal val SprutBackground = Color(0xFF121212)
-internal val SprutSurfaceLow = Color(0xFF1B1B1B)
-internal val SprutSurface = Color(0xFF262626)
-internal val SprutSurfaceHigh = Color(0xFF323232)
+internal val SprutBackground = Color(0xFF0D1114)
+internal val SprutSurfaceLow = Color(0xD91B1D20)
+internal val SprutSurface = Color(0xE626292D)
+internal val SprutSurfaceHigh = Color(0xF0323539)
 internal val SprutSurfaceHighest = Color(0xFF3F3F3F)
 internal val SprutAccent = Color(0xFFFFA805)
 internal val SprutAccentDim = Color(0xFF774E00)
@@ -38,6 +45,7 @@ internal val SprutText = Color(0xFFFFFFFF)
 internal val SprutTextMuted = Color(0x99FFFFFF)
 internal val SprutTextFaint = Color(0x66FFFFFF)
 internal val SprutOutline = Color(0xFF4B4B4B)
+internal val SprutGlassBorder = Color(0x1AFFFFFF)
 internal val SprutSuccess = Color(0xFF4CAF50)
 internal val SprutWarning = Color(0xFFFF9800)
 internal val SprutError = Color(0xFFDD3434)
@@ -115,6 +123,73 @@ internal fun SprutHelperTheme(content: @Composable () -> Unit) {
         shapes = SprutShapes,
         content = content,
     )
+}
+
+/**
+ * Atmospheric layer used behind all app-owned screens.
+ *
+ * It deliberately avoids a bundled photo: the muted mesh remains legible on
+ * every screen size and gives translucent surfaces depth without copying a
+ * SprutHub wallpaper or depending on blur support from the device.
+ */
+@Composable
+internal fun SprutBackdrop(
+    modifier: Modifier = Modifier,
+    content: @Composable BoxScope.() -> Unit,
+) {
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .background(
+                Brush.verticalGradient(
+                    listOf(
+                        Color(0xFF18232A),
+                        Color(0xFF121619),
+                        SprutBackground,
+                    ),
+                ),
+            ),
+    ) {
+        Canvas(Modifier.fillMaxSize()) {
+            drawCircle(
+                brush = Brush.radialGradient(
+                    colors = listOf(Color(0x4D4B8EA5), Color.Transparent),
+                    center = Offset(size.width * 0.92f, size.height * 0.08f),
+                    radius = size.minDimension * 0.82f,
+                ),
+                radius = size.minDimension * 0.82f,
+                center = Offset(size.width * 0.92f, size.height * 0.08f),
+            )
+            drawCircle(
+                brush = Brush.radialGradient(
+                    colors = listOf(Color(0x3367506F), Color.Transparent),
+                    center = Offset(size.width * 0.08f, size.height * 0.28f),
+                    radius = size.minDimension * 0.74f,
+                ),
+                radius = size.minDimension * 0.74f,
+                center = Offset(size.width * 0.08f, size.height * 0.28f),
+            )
+            drawCircle(
+                brush = Brush.radialGradient(
+                    colors = listOf(Color(0x24A46D2E), Color.Transparent),
+                    center = Offset(size.width * 0.86f, size.height * 0.92f),
+                    radius = size.minDimension * 0.68f,
+                ),
+                radius = size.minDimension * 0.68f,
+                center = Offset(size.width * 0.86f, size.height * 0.92f),
+            )
+        }
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(
+                    Brush.verticalGradient(
+                        listOf(Color.Transparent, Color.Black.copy(alpha = 0.18f)),
+                    ),
+                ),
+        )
+        content()
+    }
 }
 
 @Composable

@@ -120,104 +120,116 @@ private fun WidgetConfigureScreen(
         AppGraph.repository.refreshIfStale(maxAgeMs = 0)
     }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("Виджет SprutHub") },
-                navigationIcon = {
-                    SprutHeaderIconButton(Icons.Rounded.Close, "Отмена", onCancel)
-                },
-                actions = {
-                    SprutHeaderIconButton(
-                        icon = Icons.Rounded.Refresh,
-                        contentDescription = "Обновить каталог",
-                        onClick = { AppGraph.applicationScope.launch { AppGraph.repository.refresh(true) } },
-                    )
-                },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
-            )
-        },
-        bottomBar = {
+    SprutBackdrop {
+        Scaffold(
+            containerColor = Color.Transparent,
+            topBar = {
+                TopAppBar(
+                    title = { Text("Виджет SprutHub") },
+                    navigationIcon = {
+                        SprutHeaderIconButton(Icons.Rounded.Close, "Отмена", onCancel)
+                    },
+                    actions = {
+                        SprutHeaderIconButton(
+                            icon = Icons.Rounded.Refresh,
+                            contentDescription = "Обновить каталог",
+                            onClick = { AppGraph.applicationScope.launch { AppGraph.repository.refresh(true) } },
+                        )
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = Color.Transparent,
+                        scrolledContainerColor = SprutBackground.copy(alpha = 0.92f),
+                    ),
+                )
+            },
+            bottomBar = {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                ) {
+                    Button(
+                        onClick = { onConfirm(selectedId) },
+                        enabled = selectedId.isNotBlank(),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(
+                            if (WidgetAssignmentStore.controlId(context, appWidgetId) == null) {
+                                "Добавить виджет"
+                            } else {
+                                "Сохранить"
+                            },
+                        )
+                    }
+                }
+            },
+        ) { padding ->
             Column(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                    .fillMaxSize()
+                    .padding(padding)
+                    .padding(horizontal = 16.dp),
             ) {
-                Button(
-                    onClick = { onConfirm(selectedId) },
-                    enabled = selectedId.isNotBlank(),
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text(if (WidgetAssignmentStore.controlId(context, appWidgetId) == null) "Добавить виджет" else "Сохранить")
-                }
-            }
-        },
-    ) { padding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .padding(horizontal = 16.dp),
-        ) {
-            Text(
-                "Выберите устройство, сценарий или датчик. Нажатие на управляемый виджет отправит команду, датчик откроет приложение.",
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.height(12.dp))
-            OutlinedTextField(
-                value = query,
-                onValueChange = { query = it },
-                modifier = Modifier.fillMaxWidth(),
-                leadingIcon = { Icon(Icons.Rounded.Search, null) },
-                label = { Text("Поиск по устройствам и комнатам") },
-                singleLine = true,
-                shape = SprutControlShape,
-                colors = sprutTextFieldColors(),
-            )
-            Spacer(Modifier.height(12.dp))
-
-            if (connection.phase == ConnectionPhase.CONNECTING && groups.isEmpty()) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(24.dp),
-                    horizontalArrangement = Arrangement.Center,
-                ) {
-                    CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
-                }
-            } else if (groups.isEmpty()) {
                 Text(
-                    if (query.isNotBlank()) "Ничего не найдено" else connection.message.ifBlank {
-                        "Каталог пуст. Сначала проверьте подключение в приложении."
-                    },
-                    modifier = Modifier.padding(vertical = 24.dp),
+                    "Выберите устройство, сценарий или датчик. Нажатие на управляемый виджет отправит команду, датчик откроет приложение.",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-            } else {
-                LazyColumn(
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.fillMaxSize(),
-                ) {
-                    groups.groupBy(AccessoryControlGroup::room).forEach { (room, roomGroups) ->
-                        item(key = "room:$room") {
-                            Text(
-                                room,
-                                modifier = Modifier.padding(top = 8.dp, bottom = 2.dp),
-                                fontWeight = FontWeight.SemiBold,
-                                color = MaterialTheme.colorScheme.primary,
-                            )
-                        }
-                        roomGroups.forEach { group ->
-                            items(group.controls, key = SprutControl::id) { control ->
-                                WidgetControlChoice(
-                                    accessoryTitle = group.title,
-                                    serviceLabel = group.serviceLabel(control),
-                                    control = control,
-                                    selected = selectedId == control.id,
-                                    onClick = { selectedId = control.id },
+                Spacer(Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    leadingIcon = { Icon(Icons.Rounded.Search, null) },
+                    label = { Text("Поиск по устройствам и комнатам") },
+                    singleLine = true,
+                    shape = SprutControlShape,
+                    colors = sprutTextFieldColors(),
+                )
+                Spacer(Modifier.height(12.dp))
+
+                if (connection.phase == ConnectionPhase.CONNECTING && groups.isEmpty()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(24.dp),
+                        horizontalArrangement = Arrangement.Center,
+                    ) {
+                        CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
+                    }
+                } else if (groups.isEmpty()) {
+                    Text(
+                        if (query.isNotBlank()) "Ничего не найдено" else connection.message.ifBlank {
+                            "Каталог пуст. Сначала проверьте подключение в приложении."
+                        },
+                        modifier = Modifier.padding(vertical = 24.dp),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else {
+                    LazyColumn(
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.fillMaxSize(),
+                    ) {
+                        groups.groupBy(AccessoryControlGroup::room).forEach { (room, roomGroups) ->
+                            item(key = "room:$room") {
+                                Text(
+                                    room,
+                                    modifier = Modifier.padding(top = 8.dp, bottom = 2.dp),
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.primary,
                                 )
                             }
+                            roomGroups.forEach { group ->
+                                items(group.controls, key = SprutControl::id) { control ->
+                                    WidgetControlChoice(
+                                        accessoryTitle = group.title,
+                                        serviceLabel = group.serviceLabel(control),
+                                        control = control,
+                                        selected = selectedId == control.id,
+                                        onClick = { selectedId = control.id },
+                                    )
+                                }
+                            }
                         }
+                        item { Spacer(Modifier.height(80.dp)) }
                     }
-                    item { Spacer(Modifier.height(80.dp)) }
                 }
             }
         }
@@ -237,9 +249,9 @@ private fun WidgetControlChoice(
         modifier = Modifier.fillMaxWidth(),
         shape = SprutTileShape,
         colors = CardDefaults.cardColors(
-            containerColor = if (selected) SprutAccentDim else SprutSurfaceLow,
+            containerColor = if (selected) SprutAccentDim.copy(alpha = 0.62f) else SprutSurfaceLow,
         ),
-        border = if (selected) BorderStroke(1.dp, SprutAccent) else null,
+        border = BorderStroke(1.dp, if (selected) SprutAccent else SprutGlassBorder),
     ) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(14.dp),
