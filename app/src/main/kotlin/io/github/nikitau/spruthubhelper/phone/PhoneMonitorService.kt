@@ -52,6 +52,7 @@ class PhoneMonitorService : Service() {
     private var networkCallbackRegistered = false
     private var displayObserverRegistered = false
     private val networkChangeGate = PhoneNetworkChangeGate()
+    private val batteryChangeGate = PhoneBatteryChangeGate()
 
     private val displaySettingsObserver = object : ContentObserver(Handler(Looper.getMainLooper())) {
         override fun onChange(selfChange: Boolean) {
@@ -153,6 +154,7 @@ class PhoneMonitorService : Service() {
     }
 
     private fun registerEvents() {
+        currentBatteryFingerprint()?.let(batteryChangeGate::prime)
         val filter = IntentFilter().apply {
             addAction(Intent.ACTION_BATTERY_CHANGED)
             addAction(Intent.ACTION_POWER_CONNECTED)
@@ -227,9 +229,18 @@ class PhoneMonitorService : Service() {
         val containsNetworkEvent = triggers.any(PHONE_NETWORK_TRIGGERS::contains)
         val networkFingerprint = if (containsNetworkEvent) currentNetworkFingerprint() else null
         val networkChanged = networkFingerprint?.let(networkChangeGate::hasChanged) ?: containsNetworkEvent
-        val effectiveTriggers = filterPhoneNetworkTriggers(triggers, networkChanged)
+        var effectiveTriggers = filterPhoneNetworkTriggers(triggers, networkChanged)
+
+        val containsBatteryEvent = PhoneSyncTrigger.BATTERY_CHANGED in triggers
+        val batteryFingerprint = if (containsBatteryEvent) currentBatteryFingerprint() else null
+        val batteryChanged = batteryFingerprint?.let(batteryChangeGate::hasChanged) ?: containsBatteryEvent
+        effectiveTriggers = filterPhoneBatteryTriggers(effectiveTriggers, batteryChanged)
         if (effectiveTriggers.isEmpty()) {
-            Log.d(LOG_TAG, "Phone event batch skipped: reasons=$originalReasons cause=unchanged-network-state")
+            val unchanged = buildList {
+                if (containsNetworkEvent && !networkChanged) add("network")
+                if (containsBatteryEvent && !batteryChanged) add("battery")
+            }.joinToString("-").ifBlank { "observed" }
+            Log.d(LOG_TAG, "Phone event batch skipped: reasons=$originalReasons cause=unchanged-$unchanged-state")
             return Result.success(Unit)
         }
 
@@ -246,6 +257,7 @@ class PhoneMonitorService : Service() {
         }
         if (!decision.shouldSync) {
             if (networkChanged && networkFingerprint != null) networkChangeGate.commit(networkFingerprint)
+            if (batteryChanged && batteryFingerprint != null) batteryChangeGate.commit(batteryFingerprint)
             Log.d(LOG_TAG, "Phone event batch skipped: reasons=$reasons cause=${decision.skipReason}")
             val diagnosticReason = when (decision.skipReason) {
                 "no-selected-phone-sensors" -> "не выбраны показатели телефона"
@@ -272,6 +284,9 @@ class PhoneMonitorService : Service() {
             if (result.isSuccess && networkChanged && networkFingerprint != null) {
                 networkChangeGate.commit(networkFingerprint)
             }
+            if (result.isSuccess && batteryChanged && batteryFingerprint != null) {
+                batteryChangeGate.commit(batteryFingerprint)
+            }
             AppGraph.diagnostics.record(
                 category = DiagnosticCategory.SYNC,
                 event = "Событийная синхронизация телефона",
@@ -286,6 +301,13 @@ class PhoneMonitorService : Service() {
         getSystemService(ConnectivityManager::class.java).phoneNetworkFingerprint()
     }.onFailure { error ->
         Log.w(LOG_TAG, "Cannot read the current network fingerprint", error)
+    }.getOrNull()
+
+    private fun currentBatteryFingerprint(): PhoneBatteryFingerprint? = runCatching {
+        registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+            ?.phoneBatteryFingerprint()
+    }.onFailure { error ->
+        Log.w(LOG_TAG, "Cannot read the current battery fingerprint", error)
     }.getOrNull()
 
     private fun createNotificationChannel() {

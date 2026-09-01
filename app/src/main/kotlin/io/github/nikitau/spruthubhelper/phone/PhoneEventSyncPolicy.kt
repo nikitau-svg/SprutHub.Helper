@@ -7,12 +7,7 @@ private val BATTERY_EVENT_SENSORS = eventSensors(
     PhoneSensor.IS_CHARGING,
     PhoneSensor.BATTERY_STATE,
     PhoneSensor.CHARGER_TYPE,
-    PhoneSensor.BATTERY_TEMPERATURE,
     PhoneSensor.BATTERY_HEALTH,
-    PhoneSensor.BATTERY_VOLTAGE,
-    PhoneSensor.BATTERY_CURRENT,
-    PhoneSensor.BATTERY_POWER,
-    PhoneSensor.CHARGE_TIME_REMAINING,
     PhoneSensor.BATTERY_CYCLE_COUNT,
 )
 private val CHARGING_EVENT_SENSORS = eventSensors(
@@ -42,7 +37,7 @@ private val AUDIO_EVENT_SENSORS = eventSensors(
 )
 
 private fun eventSensors(vararg sensors: PhoneSensor): Set<PhoneSensor> =
-    sensors.toSet() + PhoneSensor.LAST_SYNC + PhoneSensor.SYNC_HEARTBEAT
+    sensors.toSet()
 
 /**
  * An auditable map between Android callbacks and the phone values they can

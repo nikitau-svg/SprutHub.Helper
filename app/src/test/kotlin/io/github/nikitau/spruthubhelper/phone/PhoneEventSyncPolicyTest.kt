@@ -1,6 +1,7 @@
 package io.github.nikitau.spruthubhelper.phone
 
 import io.github.nikitau.spruthubhelper.data.PhoneSensor
+import io.github.nikitau.spruthubhelper.data.withRequiredPhoneSensors
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -41,17 +42,46 @@ class PhoneEventSyncPolicyTest {
     fun `charging event runs only for an affected selected sensor`() {
         val relevant = PhoneEventSyncPolicy.decide(
             triggers = setOf(PhoneSyncTrigger.POWER_CONNECTED),
-            selectedSensors = setOf(PhoneSensor.IS_CHARGING, PhoneSensor.UPTIME_HOURS),
+            selectedSensors = withRequiredPhoneSensors(
+                setOf(PhoneSensor.IS_CHARGING, PhoneSensor.UPTIME_HOURS),
+            ),
         )
         val unrelated = PhoneEventSyncPolicy.decide(
             triggers = setOf(PhoneSyncTrigger.POWER_CONNECTED),
-            selectedSensors = setOf(PhoneSensor.UPTIME_HOURS),
+            selectedSensors = withRequiredPhoneSensors(setOf(PhoneSensor.UPTIME_HOURS)),
         )
 
         assertTrue(relevant.shouldSync)
         assertEquals(setOf(PhoneSensor.IS_CHARGING), relevant.matchedSensors)
         assertFalse(unrelated.shouldSync)
         assertEquals("selected-phone-sensors-unaffected", unrelated.skipReason)
+    }
+
+    @Test
+    fun `raw battery broadcasts do not push continuously varying electrical readings`() {
+        val stable = PhoneEventSyncPolicy.decide(
+            triggers = setOf(PhoneSyncTrigger.BATTERY_CHANGED),
+            selectedSensors = withRequiredPhoneSensors(setOf(PhoneSensor.BATTERY_LEVEL)),
+        )
+        val varying = PhoneEventSyncPolicy.decide(
+            triggers = setOf(PhoneSyncTrigger.BATTERY_CHANGED),
+            selectedSensors = withRequiredPhoneSensors(
+                setOf(
+                    PhoneSensor.BATTERY_CURRENT,
+                    PhoneSensor.BATTERY_POWER,
+                    PhoneSensor.CHARGE_TIME_REMAINING,
+                ),
+            ),
+        )
+        val connected = PhoneEventSyncPolicy.decide(
+            triggers = setOf(PhoneSyncTrigger.POWER_CONNECTED),
+            selectedSensors = withRequiredPhoneSensors(setOf(PhoneSensor.BATTERY_CURRENT)),
+        )
+
+        assertTrue(stable.shouldSync)
+        assertFalse(varying.shouldSync)
+        assertEquals("selected-phone-sensors-unaffected", varying.skipReason)
+        assertTrue(connected.shouldSync)
     }
 
     @Test
@@ -77,7 +107,9 @@ class PhoneEventSyncPolicyTest {
 
     @Test
     fun `screen and power events do not wake a phone with only poll sensors selected`() {
-        val selected = setOf(PhoneSensor.UPTIME_HOURS, PhoneSensor.FREE_STORAGE_GB)
+        val selected = withRequiredPhoneSensors(
+            setOf(PhoneSensor.UPTIME_HOURS, PhoneSensor.FREE_STORAGE_GB),
+        )
 
         listOf(
             PhoneSyncTrigger.SCREEN_ON,
