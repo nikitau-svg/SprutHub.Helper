@@ -22,7 +22,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
@@ -68,7 +68,11 @@ internal fun connectionCandidates(
     }.filter { it.url.isNotBlank() }
 }
 
-class SprutRpcClient(private val context: Context? = null) {
+class SprutRpcClient(
+    private val context: Context? = null,
+    private val socketOpenTimeoutMs: Long = DEFAULT_SOCKET_OPEN_TIMEOUT_MS,
+    private val requestTimeoutMs: Long = DEFAULT_REQUEST_TIMEOUT_MS,
+) {
     private val json = Json { ignoreUnknownKeys = true }
     private val httpClient = OkHttpClient.Builder()
         .connectTimeout(5, TimeUnit.SECONDS)
@@ -152,18 +156,33 @@ class SprutRpcClient(private val context: Context? = null) {
         throw SprutConnectionException(message)
     }
 
-    suspend fun call(config: HubConfig, params: JsonObject): JsonElement {
+    suspend fun call(
+        config: HubConfig,
+        params: JsonObject,
+        reconnectOnFailure: Boolean = true,
+    ): JsonElement {
         val operation = operationName(params)
         connect(config)
         val active = session ?: throw SprutConnectionException("Соединение не создано")
         return try {
-            active.request(params).also { Log.d(LOG_TAG, "RPC $operation succeeded") }
+            active.request(params).also { logDebug("RPC $operation succeeded") }
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (first: Exception) {
-            Log.w(LOG_TAG, "RPC $operation failed, reconnecting: ${first.message}")
+            if (!reconnectOnFailure || !first.isReconnectableTransportFailure()) throw first
+            logWarning("RPC $operation failed, reconnecting: ${first.message}")
             connect(config, force = true)
-            (session ?: throw first).request(params).also { Log.d(LOG_TAG, "RPC $operation succeeded after reconnect") }
+            val retried = session ?: throw first
+            try {
+                retried.request(params).also {
+                    logDebug("RPC $operation succeeded after reconnect")
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (second: Exception) {
+                reportRepeatedTransportFailure(retried, second)
+                throw second
+            }
         }
     }
 
@@ -224,8 +243,7 @@ class SprutRpcClient(private val context: Context? = null) {
             val questionData = question?.get("data")
                 ?.let { runCatching { it.jsonPrimitive.content }.getOrNull() }
                 .orEmpty()
-            Log.d(
-                LOG_TAG,
+            logDebug(
                 "Auth step=${step + 1} endpoint=${if (isLocal) "local" else "cloud"} " +
                     "status=${status.ifBlank { "none" }} question=${questionType.ifBlank { "none" }}",
             )
@@ -349,6 +367,34 @@ class SprutRpcClient(private val context: Context? = null) {
         .digest(secret.toByteArray(StandardCharsets.UTF_8))
         .joinToString(separator = "") { byte -> "%02x".format(byte) }
 
+    private fun logDebug(message: String) {
+        if (context != null) Log.d(LOG_TAG, message)
+    }
+
+    private fun logWarning(message: String) {
+        if (context != null) Log.w(LOG_TAG, message)
+    }
+
+    private fun Exception.isReconnectableTransportFailure(): Boolean =
+        this is IOException && this !is SprutProtocolException && this !is SprutAuthenticationException
+
+    private suspend fun reportRepeatedTransportFailure(failedSession: SocketSession, error: Exception) {
+        if (!error.isReconnectableTransportFailure()) return
+        connectionMutex.withLock {
+            if (session !== failedSession) return@withLock
+            session = null
+            sessionKey = ""
+            failedSession.close()
+            _transportStatus.value = SprutTransportStatus(
+                phase = SprutTransportPhase.ERROR,
+                endpoint = failedSession.endpoint,
+                isLocal = failedSession.isLocal,
+                message = error.message ?: "SprutHub не ответил после переподключения",
+                changedAtEpochMs = System.currentTimeMillis(),
+            )
+        }
+    }
+
     inner class SocketSession(
         val endpoint: String,
         private val serial: String,
@@ -369,11 +415,15 @@ class SprutRpcClient(private val context: Context? = null) {
         suspend fun open() {
             val request = Request.Builder().url(endpoint).build()
             socket = httpClient.newWebSocket(request, this)
-            withTimeout(8_000) { opened.await() }
+            val openedInTime = withTimeoutOrNull(socketOpenTimeoutMs) {
+                opened.await()
+                true
+            } ?: false
+            if (!openedInTime) throw IOException("Тайм-аут подключения к SprutHub")
         }
 
         suspend fun request(params: JsonObject): JsonElement {
-            check(isOpen) { "WebSocket закрыт" }
+            if (!isOpen) throw IOException("WebSocket закрыт")
             val id = requestIds.getAndIncrement()
             val deferred = CompletableDeferred<JsonElement>()
             pending[id] = deferred
@@ -389,7 +439,8 @@ class SprutRpcClient(private val context: Context? = null) {
                 throw IOException("SprutHub не принял запрос")
             }
             val response = try {
-                withTimeout(12_000) { deferred.await() }
+                withTimeoutOrNull(requestTimeoutMs) { deferred.await() }
+                    ?: throw IOException("SprutHub не ответил вовремя")
             } finally {
                 pending.remove(id)
             }
@@ -417,6 +468,14 @@ class SprutRpcClient(private val context: Context? = null) {
                 ?.let { runCatching { it.jsonPrimitive.content.toLong() }.getOrNull() }
             if (id != null && pending.remove(id)?.complete(message) == true) return
             _events.tryEmit(message)
+        }
+
+        override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+            isOpen = false
+            val error = IOException("SprutHub закрывает соединение ($code)")
+            failPending(error)
+            reportUnexpectedClose(error.message.orEmpty())
+            webSocket.close(code, reason)
         }
 
         override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
@@ -479,3 +538,5 @@ class SprutAuthenticationException(message: String) : IOException(message)
 
 private const val LOG_TAG = "SprutHubRpc"
 private const val MAX_AUTH_STEPS = 10
+private const val DEFAULT_SOCKET_OPEN_TIMEOUT_MS = 8_000L
+private const val DEFAULT_REQUEST_TIMEOUT_MS = 12_000L

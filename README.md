@@ -2,7 +2,7 @@
 
 Неофициальное Android-приложение для управления устройствами SprutHub с главного экрана, из системной панели Android и быстрых настроек.
 
-> Проект не связан с разработчиками SprutHub. Приложение использует внутренний WebSocket/JSON-RPC-протокол, который может измениться без предупреждения. Текущая beta-версия — [`0.6.0-beta.4`](https://github.com/nikitau-svg/SprutHub.Helper/releases/tag/v0.6.0-beta.4).
+> Проект не связан с разработчиками SprutHub. Приложение использует внутренний WebSocket/JSON-RPC-протокол, который может измениться без предупреждения. Текущая beta-версия — [`0.6.0-beta.5`](https://github.com/nikitau-svg/SprutHub.Helper/releases/tag/v0.6.0-beta.5).
 
 ## Что уже работает
 
@@ -42,7 +42,7 @@
 
 ## Установка APK
 
-Для обычной установки скачайте **подписанный** APK из [`v0.6.0-beta.4`](https://github.com/nikitau-svg/SprutHub.Helper/releases/tag/v0.6.0-beta.4) и сверьте его с приложенным SHA-256.
+Для обычной установки скачайте **подписанный** APK из [`v0.6.0-beta.5`](https://github.com/nikitau-svg/SprutHub.Helper/releases/tag/v0.6.0-beta.5) и сверьте его с приложенным SHA-256.
 
 Артефакт beta-workflow и опубликованный beta-prerelease — тестовые сборки, подписанные постоянным закрытым ключом сопровождающего через GitHub Secrets. Поэтому они обновляют предыдущую beta без удаления приложения и потери настроек. Неподписанный release candidate из draft-релиза установить нельзя; публиковать его как готовый APK не следует.
 
@@ -117,7 +117,7 @@ Health Connect -> только локальный SprutHub
 ./scripts/android-build.sh :app:lintDebug :app:testDebugUnitTest :app:assembleDebug
 ```
 
-Согласованный порядок развития зафиксирован в [ROADMAP.md](ROADMAP.md), а фактическое поведение обновлений и фоновой работы — в [FAQ](docs/FAQ.md). Правила веток, коммитов и pull request описаны в [CONTRIBUTING.md](CONTRIBUTING.md), история изменений — в [CHANGELOG.md](CHANGELOG.md), выпуск и локальная подпись — в [docs/RELEASE_PROCESS.md](docs/RELEASE_PROCESS.md), сообщения об уязвимостях — в [SECURITY.md](SECURITY.md).
+Согласованный порядок развития зафиксирован в [ROADMAP.md](ROADMAP.md), фактическое поведение обновлений и фоновой работы — в [FAQ](docs/FAQ.md), а покрытие обрывов и восстановления — в [матрице dead-case тестов](docs/DEAD_CASE_TESTING.md). Правила веток, коммитов и pull request описаны в [CONTRIBUTING.md](CONTRIBUTING.md), история изменений — в [CHANGELOG.md](CHANGELOG.md), выпуск и локальная подпись — в [docs/RELEASE_PROCESS.md](docs/RELEASE_PROCESS.md), сообщения об уязвимостях — в [SECURITY.md](SECURITY.md).
 
 ## Лицензия и права
 

@@ -2,6 +2,7 @@ package io.github.nikitau.spruthubhelper.data
 
 import android.util.Log
 import io.github.nikitau.spruthubhelper.sprut.CharacteristicUpdate
+import io.github.nikitau.spruthubhelper.sprut.SprutCatalogLoader
 import io.github.nikitau.spruthubhelper.sprut.SprutCatalogParser
 import io.github.nikitau.spruthubhelper.sprut.SprutRpcClient
 import io.github.nikitau.spruthubhelper.sprut.SprutTransportPhase
@@ -23,12 +24,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
-import kotlinx.serialization.json.JsonElement
-import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.put
 
 internal fun mergeControlUpdate(
@@ -85,9 +83,10 @@ internal fun preserveConcurrentControlValues(
 class SprutRepository(
     private val settings: SettingsRepository,
     private val client: SprutRpcClient,
-    private val parser: SprutCatalogParser,
+    parser: SprutCatalogParser,
     private val cache: CatalogCache,
     private val scope: CoroutineScope,
+    private val catalogLoader: SprutCatalogLoader = SprutCatalogLoader(client, parser),
 ) {
     private val refreshMutex = Mutex()
     private val staleRefreshMutex = Mutex()
@@ -181,42 +180,9 @@ class SprutRepository(
         val authoritativeAtStart = _authoritativeVersions.value
         try {
             runCatching {
-                val endpoint = client.connect(config, force = forceConnection)
-                val versionResponse = try {
-                    client.call(config, request("server", "version"))
-                } catch (cancelled: CancellationException) {
-                    throw cancelled
-                } catch (_: Exception) {
-                    try {
-                        client.call(config, request("hub", "list"))
-                    } catch (cancelled: CancellationException) {
-                        throw cancelled
-                    } catch (_: Exception) {
-                        JsonNull
-                    }
-                }
-                val rooms = client.call(config, request("room", "list"))
-                val accessories = client.call(
-                    config,
-                    request(
-                        section = "accessory",
-                        operation = "list",
-                        operationBody = buildJsonObject { put("expand", "services+characteristics") },
-                    ),
-                )
-                val scenarios = try {
-                    client.call(config, request("scenario", "list"))
-                } catch (cancelled: CancellationException) {
-                    throw cancelled
-                } catch (_: Exception) {
-                    JsonNull
-                }
-                val parsedSnapshot = parser.parse(
-                    roomsResponse = rooms,
-                    accessoriesResponse = accessories,
-                    scenariosResponse = scenarios,
-                    hubVersion = findVersion(versionResponse),
-                )
+                val loaded = catalogLoader.load(config, forceConnection)
+                val endpoint = loaded.endpoint
+                val parsedSnapshot = loaded.catalog
                 check(parsedSnapshot.controls.isNotEmpty()) {
                     "SprutHub ответил, но управляемые устройства не найдены"
                 }
@@ -664,18 +630,6 @@ class SprutRepository(
     }
 
     private fun confirmationTolerance(control: SprutControl): Double = (control.step / 2.0).coerceAtLeast(0.01)
-
-    private fun findVersion(element: JsonElement): String {
-        fun search(current: JsonElement): String? = when (current) {
-            is JsonObject -> current.entries.firstOrNull {
-                it.key.equals("version", true) && it.value is JsonPrimitive
-            }?.value?.let { (it as JsonPrimitive).contentOrNull }
-                ?: current.values.firstNotNullOfOrNull(::search)
-            is kotlinx.serialization.json.JsonArray -> current.firstNotNullOfOrNull(::search)
-            else -> null
-        }
-        return search(element).orEmpty()
-    }
 
     private fun connectionStatusFromTransport(
         transport: SprutTransportStatus,
