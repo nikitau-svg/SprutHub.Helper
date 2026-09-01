@@ -40,8 +40,6 @@ jobs:
     steps:
       - name: Checkout notification script
         uses: actions/checkout@v5
-        with:
-          ref: ${{ env.RELEASE_TAG }}
 
       - name: Verify published assets and notify Telegram
         run: python3 .github/scripts/notify_telegram_release.py

@@ -38,15 +38,16 @@ ci: build beta artifact
 2. Запустите проверки:
 
    ```bash
-   gradle --no-daemon :app:lintDebug :app:testDebugUnitTest :app:assembleDebug
+   ./scripts/check-public-tree.sh
+   ./scripts/android-build.sh :app:lintDebug :app:testDebugUnitTest :app:assembleDebug
    ```
 
 3. Опишите, что изменилось, как это проверено и какие ограничения остались.
 4. Обновите README или CHANGELOG, если изменилось поведение пользователя.
-5. Ещё раз проверьте diff на персональные данные и секреты.
+5. Ещё раз проверьте diff на персональные данные и секреты. Для отчёта о сбое используйте встроенный безопасный экспорт по [инструкции](docs/DIAGNOSTICS.md), а не полный `logcat`.
 
 Изменение готово к слиянию после зелёного CI и ревью. Для изменения внутреннего протокола приложите обезличенный минимальный пример структуры ответа, если без него проблему невозможно воспроизвести.
 
 ## Выпуск
 
-Версия и CHANGELOG обновляются отдельным pull request из `beta` в `main`. Тег создаётся только на проверенном коммите `main`. Полный процесс описан в [docs/RELEASE_PROCESS.md](docs/RELEASE_PROCESS.md).
+Нумерованная beta получает тег `vX.Y.Z-beta.N` на проверенном коммите ветки `beta`. Стабильная версия переносится отдельным pull request из `beta` в `main`, и только затем получает тег `vX.Y.Z`. Полный процесс описан в [docs/RELEASE_PROCESS.md](docs/RELEASE_PROCESS.md).

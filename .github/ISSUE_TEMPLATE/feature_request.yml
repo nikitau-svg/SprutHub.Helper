@@ -1,0 +1,64 @@
+name: Предложить функцию
+description: Новый пользовательский сценарий или улучшение совместимости
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Опишите задачу пользователя и ожидаемое поведение. Не прикладывайте реальные данные SprutHub или Health Connect.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Какую проблему нужно решить
+      description: Что сейчас приходится делать вручную или почему существующий путь не подходит?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Предлагаемое поведение
+      description: Опишите результат, а не только название кнопки.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Раздел
+      options:
+        - Подключение и каталог
+        - Плитки, виджеты или панели
+        - Телефон и фоновые задачи
+        - Health Connect
+        - Геозоны
+        - Диагностика и восстановление
+        - Интерфейс и доступность
+        - Совместимость нового устройства SprutHub
+        - Другое
+    validations:
+      required: true
+
+  - type: input
+    id: environment
+    attributes:
+      label: Телефон и Android, если это важно
+      placeholder: Производитель, модель, Android, оболочка — без персональных данных
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Что уже пробовали
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Проверка
+      options:
+        - label: Я проверил(а) матрицу возможностей, roadmap и существующие Issues.
+          required: true
+        - label: В запросе нет паролей, адресов, идентификаторов, координат или данных здоровья.
+          required: true
