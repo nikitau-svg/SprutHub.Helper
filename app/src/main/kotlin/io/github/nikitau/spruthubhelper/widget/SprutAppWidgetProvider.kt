@@ -24,12 +24,16 @@ import io.github.nikitau.spruthubhelper.icons.CustomIconManager
 import io.github.nikitau.spruthubhelper.tiles.TileIconResolver
 import io.github.nikitau.spruthubhelper.ui.MainActivity
 import io.github.nikitau.spruthubhelper.ui.WidgetConfigureActivity
+import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.launch
 
 class SprutAppWidgetProvider : AppWidgetProvider() {
     override fun onUpdate(context: Context, manager: AppWidgetManager, appWidgetIds: IntArray) {
         AppGraph.initialize(context.applicationContext)
-        updateWidgets(context, manager, appWidgetIds)
+        // The launcher may have restarted and lost its RemoteViews even while
+        // our process-local fingerprint cache survived. A host update must
+        // therefore always deliver one complete tree.
+        updateWidgets(context, manager, appWidgetIds, force = true)
         if (appWidgetIds.any { WidgetAssignmentStore.controlId(context, it) != null }) {
             val pendingResult = goAsync()
             AppGraph.applicationScope.launch {
@@ -49,16 +53,21 @@ class SprutAppWidgetProvider : AppWidgetProvider() {
         appWidgetId: Int,
         newOptions: android.os.Bundle,
     ) {
-        updateWidget(context, appWidgetManager, appWidgetId)
+        updateWidget(context, appWidgetManager, appWidgetId, force = true)
     }
 
     override fun onDeleted(context: Context, appWidgetIds: IntArray) {
-        appWidgetIds.forEach { WidgetAssignmentStore.remove(context, it) }
+        appWidgetIds.forEach { appWidgetId ->
+            WidgetAssignmentStore.remove(context, appWidgetId)
+            renderedFingerprints.remove(appWidgetId)
+        }
     }
 
     override fun onRestored(context: Context, oldWidgetIds: IntArray, newWidgetIds: IntArray) {
         WidgetAssignmentStore.restore(context, oldWidgetIds, newWidgetIds)
-        updateWidgets(context, AppWidgetManager.getInstance(context), newWidgetIds)
+        oldWidgetIds.forEach(renderedFingerprints::remove)
+        newWidgetIds.forEach(renderedFingerprints::remove)
+        updateWidgets(context, AppWidgetManager.getInstance(context), newWidgetIds, force = true)
     }
 
     override fun onReceive(context: Context, intent: Intent) {
@@ -163,6 +172,8 @@ class SprutAppWidgetProvider : AppWidgetProvider() {
         private const val REQUEST_REFRESH = 20
         private const val REQUEST_OPEN = 30
         private const val REQUEST_CONFIGURE = 40
+        private val renderedFingerprints = ConcurrentHashMap<Int, WidgetRenderFingerprint>()
+        private val renderLock = Any()
 
         fun updateAll(context: Context) {
             AppGraph.initialize(context.applicationContext)
@@ -173,30 +184,47 @@ class SprutAppWidgetProvider : AppWidgetProvider() {
 
         fun updateWidget(context: Context, appWidgetId: Int) {
             AppGraph.initialize(context.applicationContext)
-            updateWidget(context, AppWidgetManager.getInstance(context), appWidgetId)
+            updateWidget(context, AppWidgetManager.getInstance(context), appWidgetId, force = true)
         }
 
         private fun updateWidgets(
             context: Context,
             manager: AppWidgetManager,
             appWidgetIds: IntArray,
+            force: Boolean = false,
         ) {
-            appWidgetIds.forEach { updateWidget(context, manager, it) }
+            appWidgetIds.forEach { updateWidget(context, manager, it, force) }
         }
 
-        private fun updateWidget(context: Context, manager: AppWidgetManager, appWidgetId: Int) {
+        private fun updateWidget(
+            context: Context,
+            manager: AppWidgetManager,
+            appWidgetId: Int,
+            force: Boolean = false,
+        ) {
             val assignment = WidgetAssignmentStore.controlId(context, appWidgetId)
             val catalog = AppGraph.repository.catalog.value
             val freshness = AppGraph.repository.freshness()
             val control = assignment?.let { id -> catalog.controls.firstOrNull { it.id == id } }
-            val views = RemoteViews(context.packageName, R.layout.widget_sprut_control)
-
-            when {
-                assignment == null -> renderUnconfigured(context, views, appWidgetId)
-                control == null -> renderMissing(context, views, appWidgetId, catalog.controls.isEmpty())
-                else -> renderControl(context, views, appWidgetId, control, freshness)
+            val iconRevision = control?.let { CustomIconManager(context).revision(it.id) }
+            val fingerprint = widgetRenderFingerprint(
+                assignment = assignment,
+                control = control,
+                catalogIsEmpty = catalog.controls.isEmpty(),
+                freshness = freshness,
+                customIconRevision = iconRevision,
+            )
+            synchronized(renderLock) {
+                if (!force && renderedFingerprints[appWidgetId] == fingerprint) return
+                val views = RemoteViews(context.packageName, R.layout.widget_sprut_control)
+                when {
+                    assignment == null -> renderUnconfigured(context, views, appWidgetId)
+                    control == null -> renderMissing(context, views, appWidgetId, catalog.controls.isEmpty())
+                    else -> renderControl(context, views, appWidgetId, control, freshness)
+                }
+                manager.updateAppWidget(appWidgetId, views)
+                renderedFingerprints[appWidgetId] = fingerprint
             }
-            manager.updateAppWidget(appWidgetId, views)
         }
 
         private fun renderUnconfigured(context: Context, views: RemoteViews, appWidgetId: Int) {
