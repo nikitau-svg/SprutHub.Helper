@@ -1,0 +1,117 @@
+name: Сообщить об ошибке
+description: Воспроизводимая проблема приложения, синхронизации или Android-интерфейса
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Спасибо за отчёт. Не публикуйте пароль, e-mail, endpoint, IP, hub ID/серийник, координаты, значения здоровья, DevInfo или raw logcat. Используйте безопасный экспорт из Helper.
+
+  - type: input
+    id: app_version
+    attributes:
+      label: Версия SprutHub Helper
+      description: Например, 0.6.0-beta.7 (23). Это видно в диагностике.
+      placeholder: 0.6.0-beta.7 (23)
+    validations:
+      required: true
+
+  - type: input
+    id: device
+    attributes:
+      label: Телефон и Android
+      placeholder: Samsung Galaxy Fold, Android 16 / One UI …
+    validations:
+      required: true
+
+  - type: input
+    id: hub_version
+    attributes:
+      label: Версия SprutHub
+      description: Только версия ПО — без серийного номера и адреса.
+      placeholder: 2.x.x
+
+  - type: dropdown
+    id: connection_mode
+    attributes:
+      label: Режим подключения
+      options:
+        - Авто
+        - Только локальный
+        - Только облачный beta
+        - Не относится к подключению
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Где возникла проблема
+      options:
+        - Подключение или каталог
+        - Главный экран и настройки
+        - Плитка быстрых настроек
+        - Виджет рабочего стола
+        - Android Device Controls
+        - Крупная панель Helper
+        - Телефон и фоновая синхронизация
+        - Health Connect
+        - Геозоны и присутствие
+        - Диагностика или обновление APK
+        - Другое
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Шаги воспроизведения
+      description: Напишите точные нажатия и примерное время ошибки.
+      placeholder: |
+        1. Открыл …
+        2. Нажал …
+        3. Примерно в 14:25 увидел …
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Ожидаемый результат
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Фактический результат
+    validations:
+      required: true
+
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Безопасный диагностический отчёт
+      description: Перетащите сюда `.txt`, созданный через «Надёжность и диагностика». Сначала откройте и проверьте его вручную.
+
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Проверка приватности
+      options:
+        - label: Я удалил(а) из текста и вложений адреса, e-mail, идентификаторы, координаты и значения здоровья.
+          required: true
+        - label: Я не прикладывал(а) raw logcat, полный DevInfo или APK.
+          required: true
+
+  - type: checkboxes
+    id: existing
+    attributes:
+      label: Предварительная проверка
+      options:
+        - label: Я проверил(а) FAQ и существующие Issues.
+          required: true
+        - label: Проблема воспроизводится на актуальной beta либо я объяснил(а), почему обновиться невозможно.
+          required: true

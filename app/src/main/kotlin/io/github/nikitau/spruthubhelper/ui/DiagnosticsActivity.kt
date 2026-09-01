@@ -97,9 +97,33 @@ private fun DiagnosticsScreen(onBack: () -> Unit) {
     val scope = rememberCoroutineScope()
     var busy by remember { mutableStateOf(false) }
     var confirmClear by remember { mutableStateOf(false) }
+    var confirmShare by remember { mutableStateOf(false) }
 
     fun showMessage(message: String) {
         Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+    }
+
+    fun exportAndShare() {
+        scope.launch {
+            busy = true
+            runCatching {
+                val file = withContext(Dispatchers.IO) {
+                    val freshSnapshot = DiagnosticSnapshotFactory.capture(
+                        context = context,
+                        events = AppGraph.diagnostics.events.value,
+                        healthConnectAvailable = AppGraph.health.state.value.available,
+                        healthGrantedPermissions = AppGraph.health.state.value.grantedPermissions,
+                    )
+                    DiagnosticReportExporter(
+                        File(context.cacheDir, DiagnosticReportExporter.EXPORT_DIRECTORY),
+                    ).export(freshSnapshot)
+                }
+                shareReport(context, file)
+            }.onFailure { error ->
+                showMessage(error.message ?: "Не удалось подготовить файл")
+            }
+            busy = false
+        }
     }
 
     Scaffold(
@@ -119,31 +143,11 @@ private fun DiagnosticsScreen(onBack: () -> Unit) {
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             item { PrivacyExplanationCard() }
+            item { SupportChecklistCard() }
             item {
                 DiagnosticActions(
                     busy = busy,
-                    onShare = {
-                        scope.launch {
-                            busy = true
-                            runCatching {
-                                val file = withContext(Dispatchers.IO) {
-                                    val freshSnapshot = DiagnosticSnapshotFactory.capture(
-                                        context = context,
-                                        events = AppGraph.diagnostics.events.value,
-                                        healthConnectAvailable = AppGraph.health.state.value.available,
-                                        healthGrantedPermissions = AppGraph.health.state.value.grantedPermissions,
-                                    )
-                                    DiagnosticReportExporter(
-                                        File(context.cacheDir, DiagnosticReportExporter.EXPORT_DIRECTORY),
-                                    ).export(freshSnapshot)
-                                }
-                                shareReport(context, file)
-                            }.onFailure { error ->
-                                showMessage(error.message ?: "Не удалось подготовить файл")
-                            }
-                            busy = false
-                        }
-                    },
+                    onShare = { confirmShare = true },
                     onCopy = {
                         val summary = DiagnosticReportRenderer().renderSummary(snapshot)
                         val clipboard = context.getSystemService(ClipboardManager::class.java)
@@ -208,6 +212,30 @@ private fun DiagnosticsScreen(onBack: () -> Unit) {
             dismissButton = { TextButton(onClick = { confirmClear = false }) { Text("Отмена") } },
         )
     }
+
+    if (confirmShare) {
+        AlertDialog(
+            onDismissRequest = { confirmShare = false },
+            title = { Text("Поделиться безопасным отчётом?") },
+            text = {
+                Text(
+                    "В отчёте будут модель телефона, версия Android, состояния разрешений, тип сети, " +
+                        "время и результаты событий Helper. Пароли, адреса, идентификаторы, координаты " +
+                        "и значения здоровья скрываются. Перед публикацией файл всё равно можно открыть " +
+                        "и проверить вручную.",
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmShare = false
+                        exportAndShare()
+                    },
+                ) { Text("Подготовить файл") }
+            },
+            dismissButton = { TextButton(onClick = { confirmShare = false }) { Text("Отмена") } },
+        )
+    }
 }
 
 @Composable
@@ -239,6 +267,23 @@ private fun PrivacyExplanationCard() {
 }
 
 @Composable
+private fun SupportChecklistCard() {
+    OutlinedCard(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("Если что-то не работает", fontWeight = FontWeight.SemiBold)
+            Text("1. Повторите проблему один раз и запомните примерное время.")
+            Text("2. Не очищайте журнал до экспорта.")
+            Text("3. Отправьте отчёт вместе с коротким описанием нажатия и ожидаемого результата.")
+            Text(
+                "Raw logcat, DevInfo хаба и снимки с адресами или серийниками обычно не нужны.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
 private fun DiagnosticActions(
     busy: Boolean,
     onShare: () -> Unit,
@@ -249,7 +294,7 @@ private fun DiagnosticActions(
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = onShare, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
                 Icon(Icons.Rounded.Share, null)
-                Text("Поделиться файлом", Modifier.padding(start = 8.dp))
+                Text("Поделиться безопасным отчётом", Modifier.padding(start = 8.dp))
             }
             OutlinedButton(onClick = onCopy, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
                 Icon(Icons.Rounded.ContentCopy, null)

@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Установка и обновление APK
+    url: https://github.com/nikitau-svg/SprutHub.Helper/blob/main/docs/INSTALLATION.md
+    about: Если скачалась страница GitHub, Android не открывает APK или обновление не устанавливается.
+  - name: FAQ и ограничения Android
+    url: https://github.com/nikitau-svg/SprutHub.Helper/blob/main/docs/FAQ.md
+    about: Обновление плиток, виджетов, фоновая работа, local/cloud и force-stop.
+  - name: Сообщить об уязвимости
+    url: https://github.com/nikitau-svg/SprutHub.Helper/security/advisories/new
+    about: Закрытая форма для проблем безопасности. Не публикуйте секреты в обычном Issue.
