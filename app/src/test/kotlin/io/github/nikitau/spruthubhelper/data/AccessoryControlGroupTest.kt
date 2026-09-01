@@ -46,6 +46,18 @@ class AccessoryControlGroupTest {
     }
 
     @Test
+    fun preservesReadableSprutHubServiceNameAheadOfGenericType() {
+        val climate = control(id = "9:1:1", serviceId = "1", subtitle = "Кондиционер").copy(
+            serviceName = "Кондиционер",
+            sourceType = "HeaterCooler",
+        )
+
+        val group = groupControlsByAccessory(listOf(climate)).single()
+
+        assertEquals("Кондиционер", group.serviceLabel(group.serviceCards.single()))
+    }
+
+    @Test
     fun groupsCharacteristicsOfOneServiceIntoOneLogicalCard() {
         val main = control(id = "11:13:main", serviceId = "13", subtitle = "Кондиционер").copy(
             behavior = ControlBehavior.TOGGLE_RANGE,

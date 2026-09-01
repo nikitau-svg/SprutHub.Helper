@@ -595,7 +595,7 @@ private fun HomeReadinessCard(
     onOpenSettings: (SettingsSection) -> Unit,
 ) {
     val accent = when (readiness.tone) {
-        SetupTone.READY -> SprutAccent
+        SetupTone.READY -> SprutSuccess
         SetupTone.ATTENTION -> SprutWarning
         SetupTone.ERROR -> SprutError
         SetupTone.OPTIONAL -> SprutInfo
@@ -796,7 +796,7 @@ internal fun NextActionCard(
     onAction: (GuidanceAction) -> Unit,
 ) {
     val accent = when (guidance.tone) {
-        SetupTone.READY -> SprutAccent
+        SetupTone.READY -> SprutSuccess
         SetupTone.ATTENTION -> SprutWarning
         SetupTone.ERROR -> SprutError
         SetupTone.OPTIONAL -> MaterialTheme.colorScheme.onSurfaceVariant
@@ -1605,7 +1605,7 @@ private fun ReliabilityRow(
         Text(
             if (ready) "✓ $readyText" else "• $missingText",
             style = MaterialTheme.typography.labelMedium,
-            color = if (ready) SprutAccent else MaterialTheme.colorScheme.error,
+            color = if (ready) SprutSuccess else MaterialTheme.colorScheme.error,
         )
     }
 }

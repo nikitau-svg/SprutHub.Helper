@@ -311,15 +311,18 @@ data class AccessoryControlGroup(
         ?: control.sourceType.takeIf(String::isNotBlank)
         ?: title
 
-    fun serviceLabel(card: ServiceControlCard): String = card.serviceName
-        .takeIf { it.isNotBlank() && !it.equals(title, ignoreCase = true) }
-        ?.let(::localizedServiceLabel)
-        ?: localizedServiceLabel(card.serviceType)
-        ?: card.serviceName
+    fun serviceLabel(card: ServiceControlCard): String {
+        val explicitName = card.serviceName
             .takeIf { it.isNotBlank() && !it.equals(title, ignoreCase = true) }
-            ?.let(::readableType)
-        ?: readableType(card.serviceType)
-        ?: if (serviceCards.size == 1) title else "Сервис ${serviceCards.indexOf(card) + 1}"
+        if (explicitName != null) {
+            return localizedServiceLabel(explicitName)
+                ?: readableType(explicitName)
+                ?: explicitName
+        }
+        return localizedServiceLabel(card.serviceType)
+            ?: readableType(card.serviceType)
+            ?: if (serviceCards.size == 1) title else "Сервис ${serviceCards.indexOf(card) + 1}"
+    }
 
     fun matches(query: String): Boolean {
         val needle = query.trim()
