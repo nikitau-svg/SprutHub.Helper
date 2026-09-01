@@ -191,6 +191,7 @@ private fun MainScreen(viewModel: MainViewModel = viewModel()) {
     val ui by viewModel.uiState.collectAsState()
     val busy by viewModel.busy.collectAsState()
     val notice by viewModel.notice.collectAsState()
+    val onboardingRequired by viewModel.onboardingRequired.collectAsState()
     val health by viewModel.healthState.collectAsState()
     val phone by viewModel.phoneState.collectAsState()
     val presence by viewModel.presenceState.collectAsState()
@@ -201,7 +202,12 @@ private fun MainScreen(viewModel: MainViewModel = viewModel()) {
     var iconRevision by remember { mutableStateOf(0) }
     var settingsOpen by rememberSaveable { mutableStateOf(false) }
     var settingsSectionName by rememberSaveable { mutableStateOf<String?>(null) }
+    var onboardingStepName by rememberSaveable { mutableStateOf(OnboardingStep.WELCOME.name) }
     val settingsSection = SettingsSection.entries.firstOrNull { it.name == settingsSectionName }
+    val onboardingStep = OnboardingStep.entries.firstOrNull { it.name == onboardingStepName }
+        ?: OnboardingStep.WELCOME
+    val onboardingActive = onboardingRequired == true
+    val onboardingResolved = onboardingRequired != null
     val homeReadiness = buildHomeReadiness(ui, health, phone, presence)
     val healthPermissionLauncher = rememberLauncherForActivityResult(
         PermissionController.createRequestPermissionResultContract(),
@@ -292,7 +298,23 @@ private fun MainScreen(viewModel: MainViewModel = viewModel()) {
         }
     }
 
-    BackHandler(enabled = settingsOpen) {
+    LaunchedEffect(onboardingRequired) {
+        if (onboardingRequired == true) {
+            settingsSectionName = null
+            settingsOpen = false
+        }
+    }
+
+    LaunchedEffect(onboardingStep, ui.connection.phase, ui.catalog.controls.size) {
+        val advanced = advanceOnboardingStep(onboardingStep, ui)
+        if (advanced != onboardingStep) onboardingStepName = advanced.name
+    }
+
+    BackHandler(enabled = onboardingActive && onboardingStep == OnboardingStep.CONNECTION) {
+        onboardingStepName = OnboardingStep.WELCOME.name
+    }
+
+    BackHandler(enabled = settingsOpen && !onboardingActive) {
         if (settingsSection != null) settingsSectionName = null
         else settingsOpen = false
     }
@@ -351,6 +373,8 @@ private fun MainScreen(viewModel: MainViewModel = viewModel()) {
                         Column {
                             Text(
                                 when {
+                                    !onboardingResolved -> "SprutHub Helper"
+                                    onboardingActive -> "Первый запуск"
                                     !settingsOpen -> "SprutHub Helper"
                                     settingsSection != null -> settingsSection.title
                                     else -> "Настройки"
@@ -359,6 +383,8 @@ private fun MainScreen(viewModel: MainViewModel = viewModel()) {
                             )
                             Text(
                                 when {
+                                    !onboardingResolved -> "Подготавливаем приложение"
+                                    onboardingActive -> onboardingStep.subtitle()
                                     !settingsOpen -> homeReadiness.status
                                     settingsSection != null -> settingsSection.description
                                     else -> "Подключение, данные и надёжность"
@@ -370,7 +396,13 @@ private fun MainScreen(viewModel: MainViewModel = viewModel()) {
                         }
                     },
                     navigationIcon = {
-                        if (settingsOpen) {
+                        if (onboardingActive && onboardingStep == OnboardingStep.CONNECTION) {
+                            SprutHeaderIconButton(
+                                icon = Icons.AutoMirrored.Rounded.ArrowBack,
+                                contentDescription = "Назад",
+                                onClick = { onboardingStepName = OnboardingStep.WELCOME.name },
+                            )
+                        } else if (settingsOpen) {
                             SprutHeaderIconButton(
                                 icon = Icons.AutoMirrored.Rounded.ArrowBack,
                                 contentDescription = "Назад",
@@ -382,7 +414,7 @@ private fun MainScreen(viewModel: MainViewModel = viewModel()) {
                         }
                     },
                     actions = {
-                        if (!settingsOpen) {
+                        if (onboardingResolved && !onboardingActive && !settingsOpen) {
                             SprutHeaderIconButton(
                                 icon = Icons.Rounded.Menu,
                                 contentDescription = "Открыть настройки",
@@ -403,7 +435,24 @@ private fun MainScreen(viewModel: MainViewModel = viewModel()) {
                 )
             },
         ) { padding ->
-            if (!settingsOpen) {
+            if (!onboardingResolved) {
+                Box(
+                    modifier = Modifier.fillMaxSize().padding(padding),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    CircularProgressIndicator(color = SprutAccent)
+                }
+            } else if (onboardingActive) {
+                OnboardingContent(
+                    step = onboardingStep,
+                    ui = ui,
+                    busy = busy,
+                    viewModel = viewModel,
+                    modifier = Modifier.fillMaxSize().padding(padding),
+                    onContinue = { onboardingStepName = OnboardingStep.CONNECTION.name },
+                    onComplete = viewModel::completeOnboarding,
+                )
+            } else if (!settingsOpen) {
                 HomeContent(
                     ui = ui,
                     readiness = homeReadiness,
@@ -435,6 +484,12 @@ private fun MainScreen(viewModel: MainViewModel = viewModel()) {
                     onRequestWatchdog = requestWatchdog,
                     onRequestForegroundLocation = requestForegroundLocation,
                     onOpenBackgroundLocationSettings = openBackgroundLocationSettings,
+                    onRestartOnboarding = {
+                        settingsSectionName = null
+                        settingsOpen = false
+                        onboardingStepName = OnboardingStep.WELCOME.name
+                        viewModel.restartOnboarding()
+                    },
                 )
             }
         }
@@ -545,6 +600,7 @@ private fun SettingsContent(
     onRequestWatchdog: () -> Unit,
     onRequestForegroundLocation: () -> Unit,
     onOpenBackgroundLocationSettings: () -> Unit,
+    onRestartOnboarding: () -> Unit,
 ) {
     if (selectedSection == null) {
         SettingsHub(
@@ -554,6 +610,7 @@ private fun SettingsContent(
             presence = presence,
             modifier = modifier,
             onSelectSection = onSelectSection,
+            onRestartOnboarding = onRestartOnboarding,
         )
         return
     }
@@ -660,6 +717,7 @@ private fun SettingsHub(
     presence: PresenceUiState,
     modifier: Modifier,
     onSelectSection: (SettingsSection) -> Unit,
+    onRestartOnboarding: () -> Unit,
 ) {
     val setupItems = buildSetupOverview(ui, health, phone, presence)
     val hasDiagnosticErrors = ui.diagnostics.any { it.isError }
@@ -682,6 +740,12 @@ private fun SettingsHub(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                    TextButton(
+                        onClick = onRestartOnboarding,
+                        contentPadding = PaddingValues(horizontal = 0.dp, vertical = 4.dp),
+                    ) {
+                        Text("Повторить короткое знакомство")
+                    }
                 }
             }
         }
@@ -1633,7 +1697,7 @@ private fun ReliabilityRow(
 }
 
 @Composable
-private fun ConnectionCard(
+internal fun ConnectionCard(
     ui: MainUiState,
     busy: Boolean,
     viewModel: MainViewModel,

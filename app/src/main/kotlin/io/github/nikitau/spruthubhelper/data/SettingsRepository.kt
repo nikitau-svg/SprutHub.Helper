@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -21,6 +22,18 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
 private val Context.settingsDataStore by preferencesDataStore(name = "spruthub_helper_settings")
+private const val ONBOARDING_IN_PROGRESS_VERSION = -1
+private const val CURRENT_ONBOARDING_VERSION = 1
+
+internal fun shouldShowInitialOnboarding(
+    storedVersion: Int?,
+    storedSerial: String,
+): Boolean = when {
+    storedVersion == CURRENT_ONBOARDING_VERSION -> false
+    storedVersion == ONBOARDING_IN_PROGRESS_VERSION -> true
+    storedVersion == null && storedSerial.isNotBlank() -> false
+    else -> true
+}
 
 internal data class HelperDeviceIdentity(
     val shortId: String,
@@ -139,6 +152,37 @@ class SettingsRepository(private val context: Context) {
     }
 
     suspend fun currentConfig(): HubConfig = config.first()
+
+    /**
+     * Decides whether the short first-run flow should be shown for this launch.
+     *
+     * Installations configured before onboarding existed are migrated silently:
+     * their stored hub serial is enough to prove that the user has already gone
+     * through the longer connection flow. Fresh installations keep returning
+     * `true` until the final onboarding screen is explicitly completed.
+     */
+    suspend fun prepareOnboardingForLaunch(): Boolean {
+        val preferences = context.settingsDataStore.data.first()
+        val storedVersion = preferences[Keys.ONBOARDING_VERSION]
+        val storedSerial = preferences[Keys.SERIAL].orEmpty()
+        val required = shouldShowInitialOnboarding(storedVersion, storedSerial)
+        if (required && storedVersion == null) {
+            context.settingsDataStore.edit {
+                it[Keys.ONBOARDING_VERSION] = ONBOARDING_IN_PROGRESS_VERSION
+            }
+        } else if (!required && storedVersion != CURRENT_ONBOARDING_VERSION) {
+            context.settingsDataStore.edit {
+                it[Keys.ONBOARDING_VERSION] = CURRENT_ONBOARDING_VERSION
+            }
+        }
+        return required
+    }
+
+    suspend fun markOnboardingComplete() {
+        context.settingsDataStore.edit {
+            it[Keys.ONBOARDING_VERSION] = CURRENT_ONBOARDING_VERSION
+        }
+    }
 
     suspend fun saveConfig(config: HubConfig, passwordUpdate: HubPasswordUpdate) {
         val normalized = normalizeAndValidateHubConfig(config)
@@ -498,6 +542,7 @@ class SettingsRepository(private val context: Context) {
     private object Keys {
         val DEVICE_INSTANCE_ID = stringPreferencesKey("device_instance_id")
         val DEVICE_LEGACY_RECOVERY = booleanPreferencesKey("device_legacy_recovery")
+        val ONBOARDING_VERSION = intPreferencesKey("onboarding_version")
         val MODE = stringPreferencesKey("connection_mode")
         val LOCAL_URL = stringPreferencesKey("local_url")
         val CLOUD_URL = stringPreferencesKey("cloud_url")

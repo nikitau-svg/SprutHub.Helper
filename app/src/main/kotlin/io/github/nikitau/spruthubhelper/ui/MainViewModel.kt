@@ -42,12 +42,14 @@ class MainViewModel : ViewModel() {
     private val connectionWorkInProgress = AtomicBoolean(false)
     private val activeWorkCount = AtomicInteger(0)
     private val _notice = MutableStateFlow<String?>(null)
+    private val _onboardingRequired = MutableStateFlow<Boolean?>(null)
     private val _tileAddRequests = MutableSharedFlow<TileAddRequest>(extraBufferCapacity = 1)
     private val _panelAddRequests = MutableSharedFlow<String>(extraBufferCapacity = 1)
     private val _coordinateResults = MutableSharedFlow<Pair<Double, Double>>(extraBufferCapacity = 1)
 
     val busy: StateFlow<Boolean> = _busy.asStateFlow()
     val notice: StateFlow<String?> = _notice.asStateFlow()
+    val onboardingRequired: StateFlow<Boolean?> = _onboardingRequired.asStateFlow()
     val healthState = health.state
     val phoneState = phone.state
     val presenceState = presence.state
@@ -68,6 +70,9 @@ class MainViewModel : ViewModel() {
     init {
         phone.ensureLiveMonitor()
         viewModelScope.launch {
+            _onboardingRequired.value = runCatching {
+                settings.prepareOnboardingForLaunch()
+            }.getOrElse { false }
             val config = settings.currentConfig()
             val hasEndpoint = when (config.mode) {
                 ConnectionMode.AUTO -> config.localUrl.isNotBlank() || config.cloudUrl.isNotBlank()
@@ -268,6 +273,15 @@ class MainViewModel : ViewModel() {
 
     fun consumeNotice() {
         _notice.value = null
+    }
+
+    fun restartOnboarding() {
+        _onboardingRequired.value = true
+    }
+
+    fun completeOnboarding() = launchWork(null) {
+        settings.markOnboardingComplete()
+        _onboardingRequired.value = false
     }
 
     private fun launchWork(
