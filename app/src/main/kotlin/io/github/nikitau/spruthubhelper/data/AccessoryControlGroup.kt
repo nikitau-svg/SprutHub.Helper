@@ -1,6 +1,7 @@
 package io.github.nikitau.spruthubhelper.data
 
 import java.util.Locale
+import kotlin.math.abs
 import kotlin.math.roundToLong
 
 /**
@@ -19,6 +20,8 @@ data class ServiceControlCard(
     val controls: List<SprutControl>,
     val primaryControl: SprutControl,
     val linkedServiceIds: List<String>,
+    /** Service ids whose characteristics were safely composed into this card. */
+    val memberServiceIds: List<String>,
     val isPrimaryService: Boolean,
 ) {
     val isActive: Boolean?
@@ -51,7 +54,9 @@ data class ServiceControlCard(
     fun availableAttributes(): List<SprutControl> = controls
         .asSequence()
         .filterNot { it.id == primaryControl.id }
-        .distinctBy { it.characteristicId }
+        // Characteristic ids are only unique inside one service. Linked sensor
+        // services commonly reuse ids such as `1`, so use the full control id.
+        .distinctBy(SprutControl::id)
         .sortedWith(
             compareByDescending<SprutControl>(::attributePriority)
                 .thenBy { attributeLabel(it).lowercase() },
@@ -71,7 +76,29 @@ data class ServiceControlCard(
         }
     }
 
-    fun attributeLabel(control: SprutControl): String = characteristicLabel(control)
+    fun attributeLabel(control: SprutControl): String {
+        val base = characteristicLabel(control)
+        val sameLabel = controls
+            .asSequence()
+            .filterNot { it.id == primaryControl.id }
+            .distinctBy(SprutControl::id)
+            .filter { characteristicLabel(it).equals(base, ignoreCase = true) }
+            .toList()
+        if (sameLabel.size < 2) return base
+
+        val spansSeveralServices = sameLabel.map(SprutControl::serviceId).distinct().size > 1
+        val qualifier = if (spansSeveralServices) {
+            control.serviceName.takeIf(String::isNotBlank)
+                ?: control.subtitle.substringBefore(" · ").takeIf(String::isNotBlank)
+        } else {
+            control.characteristicName.takeIf(String::isNotBlank)
+                ?: control.subtitle.substringAfterLast(" · ").takeIf(String::isNotBlank)
+        }
+        return qualifier
+            ?.takeUnless { it.equals(base, ignoreCase = true) }
+            ?.let { "$it · $base" }
+            ?: base
+    }
 
     fun attributeValue(control: SprutControl): String = formattedValue(control)
 
@@ -91,6 +118,8 @@ data class ServiceControlCard(
 
     fun rangeValue(value: Double? = primaryControl.value.numberValue): String =
         value?.let { formatNumber(it, primaryControl.unit) } ?: "—"
+
+    fun containsService(candidateServiceId: String): Boolean = candidateServiceId in memberServiceIds
 
     companion object {
         const val DEFAULT_ATTRIBUTE_COUNT = 2
@@ -126,9 +155,11 @@ fun buildServiceControlCards(controls: List<SprutControl>): List<ServiceControlC
             controls = grouped,
             primaryControl = primary,
             linkedServiceIds = grouped.flatMap(SprutControl::linkedServiceIds).distinct(),
+            memberServiceIds = listOf(primary.serviceId),
             isPrimaryService = grouped.any(SprutControl::servicePrimary),
         )
     }
+    .let(::composeLinkedServiceCards)
     .sortedWith(
         compareBy<ServiceControlCard>({ it.room.lowercase() }, { it.title.lowercase() })
             .thenByDescending(ServiceControlCard::isPrimaryService)
@@ -136,9 +167,134 @@ fun buildServiceControlCards(controls: List<SprutControl>): List<ServiceControlC
             .thenBy(ServiceControlCard::id),
     )
 
+internal fun List<ServiceControlCard>.findCardForService(
+    accessoryId: String,
+    serviceId: String,
+): ServiceControlCard? = firstOrNull { card ->
+    card.accessoryId == accessoryId && card.containsService(serviceId)
+}
+
+/**
+ * SprutHub declares service topology with `primary` and `linkedServices`.
+ * A single action service and its read-only satellites become one card. If a
+ * linked component contains several independent actions, every action remains
+ * available and only an unambiguously linked sensor group is attached to it.
+ */
+private fun composeLinkedServiceCards(cards: List<ServiceControlCard>): List<ServiceControlCard> = cards
+    .groupBy { card ->
+        if (card.accessoryId.isBlank()) "control:${card.id}" else "accessory:${card.accessoryId}"
+    }
+    .values
+    .flatMap(::composeAccessoryCards)
+
+private fun composeAccessoryCards(cards: List<ServiceControlCard>): List<ServiceControlCard> {
+    if (cards.size < 2 || cards.first().accessoryId.isBlank()) return cards
+
+    val byServiceId = cards.associateBy(ServiceControlCard::serviceId)
+    val adjacency = cards.associate { it.serviceId to linkedSetOf<String>() }.toMutableMap()
+    cards.forEach { card ->
+        card.linkedServiceIds.forEach { linkedId ->
+            if (linkedId == card.serviceId || linkedId !in byServiceId) return@forEach
+            adjacency.getValue(card.serviceId).add(linkedId)
+            adjacency.getValue(linkedId).add(card.serviceId)
+        }
+    }
+
+    val visited = mutableSetOf<String>()
+    return cards.flatMap { start ->
+        if (!visited.add(start.serviceId)) return@flatMap emptyList()
+        val pending = ArrayDeque<String>().apply { add(start.serviceId) }
+        val componentIds = linkedSetOf<String>()
+        while (pending.isNotEmpty()) {
+            val current = pending.removeFirst()
+            componentIds.add(current)
+            adjacency.getValue(current).forEach { neighbour ->
+                if (visited.add(neighbour)) pending.add(neighbour)
+            }
+        }
+        val component = cards.filter { it.serviceId in componentIds }
+        composeLinkedComponent(component, adjacency)
+    }
+}
+
+private fun composeLinkedComponent(
+    component: List<ServiceControlCard>,
+    adjacency: Map<String, Set<String>>,
+): List<ServiceControlCard> {
+    if (component.size < 2) return component
+    val actionCards = component.filter(ServiceControlCard::hasAction)
+    if (actionCards.size <= 1) {
+        val root = actionCards.singleOrNull() ?: selectComponentRoot(component)
+        return listOf(mergeServiceCards(root, component))
+    }
+
+    val actionIds = actionCards.mapTo(mutableSetOf(), ServiceControlCard::serviceId)
+    val sensorCards = component.filterNot(ServiceControlCard::hasAction)
+    val sensorsById = sensorCards.associateBy(ServiceControlCard::serviceId)
+    val visitedSensors = mutableSetOf<String>()
+    val sensorsForAction = actionCards.associate { it.serviceId to mutableListOf<ServiceControlCard>() }
+    val standaloneSensorCards = mutableListOf<ServiceControlCard>()
+
+    sensorCards.forEach { start ->
+        if (!visitedSensors.add(start.serviceId)) return@forEach
+        val pending = ArrayDeque<String>().apply { add(start.serviceId) }
+        val sensorGroupIds = linkedSetOf<String>()
+        while (pending.isNotEmpty()) {
+            val current = pending.removeFirst()
+            sensorGroupIds.add(current)
+            adjacency.getValue(current).forEach { neighbour ->
+                if (neighbour in sensorsById && visitedSensors.add(neighbour)) pending.add(neighbour)
+            }
+        }
+        val sensorGroup = sensorCards.filter { it.serviceId in sensorGroupIds }
+        val adjacentActions = sensorGroupIds
+            .flatMap { adjacency.getValue(it) }
+            .filterTo(linkedSetOf()) { it in actionIds }
+        if (adjacentActions.size == 1) {
+            sensorsForAction.getValue(adjacentActions.single()).addAll(sensorGroup)
+        } else {
+            val root = selectComponentRoot(sensorGroup)
+            standaloneSensorCards.add(mergeServiceCards(root, sensorGroup))
+        }
+    }
+
+    return actionCards.map { action ->
+        mergeServiceCards(action, listOf(action) + sensorsForAction.getValue(action.serviceId))
+    } + standaloneSensorCards
+}
+
+private fun ServiceControlCard.hasAction(): Boolean = primaryControl.behavior != ControlBehavior.SENSOR
+
+private fun selectComponentRoot(cards: List<ServiceControlCard>): ServiceControlCard = cards
+    .sortedWith(
+        compareByDescending<ServiceControlCard>(ServiceControlCard::isPrimaryService)
+            .thenByDescending(ServiceControlCard::hasAction)
+            .thenByDescending { primaryPriority(it.primaryControl) }
+            .thenBy { it.serviceId.toLongOrNull() ?: Long.MAX_VALUE }
+            .thenBy(ServiceControlCard::serviceId),
+    )
+    .first()
+
+private fun mergeServiceCards(
+    root: ServiceControlCard,
+    members: List<ServiceControlCard>,
+): ServiceControlCard {
+    val orderedMembers = listOf(root) + members.filterNot { it.serviceId == root.serviceId }
+    val memberServiceIds = orderedMembers.flatMap(ServiceControlCard::memberServiceIds).distinct()
+    return root.copy(
+        controls = orderedMembers.flatMap(ServiceControlCard::controls).distinctBy(SprutControl::id),
+        linkedServiceIds = (orderedMembers.flatMap(ServiceControlCard::linkedServiceIds) + memberServiceIds)
+            .filterNot { it == root.serviceId }
+            .distinct(),
+        memberServiceIds = memberServiceIds,
+        isPrimaryService = orderedMembers.any(ServiceControlCard::isPrimaryService),
+    )
+}
+
 /**
  * SprutHub accessories may expose several independently controllable services.
- * Keep the accessory as a settings section and every service as one card.
+ * Keep the accessory as a settings section and every independent action as a
+ * card; linked read-only services remain available inside their logical card.
  */
 data class AccessoryControlGroup(
     val key: String,
@@ -238,6 +394,12 @@ private fun characteristicLabel(control: SprutControl): String = when (normalize
 }
 
 private fun formattedValue(control: SprutControl): String {
+    control.valueOptions.firstOrNull { option -> option.value.matches(control.value) }
+        ?.let { option ->
+            option.name.takeIf(String::isNotBlank)
+                ?: option.key.takeIf(String::isNotBlank)
+        }
+        ?.let { return localizedValueToken(it) }
     val type = normalizeType(control.characteristicType)
     val numeric = control.value.numberValue
     if (numeric != null) {
@@ -253,24 +415,33 @@ private fun formattedValue(control: SprutControl): String {
         return mapped ?: formatNumber(numeric, control.unit)
     }
     control.value.stringValue?.let { value ->
-        return when (value.uppercase(Locale.ROOT)) {
-            "AUTO" -> "Авто"
-            "QUIET" -> "Тихо"
-            "LOW" -> "Низкая"
-            "MEDIUM" -> "Средняя"
-            "HIGH" -> "Высокая"
-            "TURBO" -> "Турбо"
-            "HEAT", "HEATING" -> "Нагрев"
-            "COOL", "COOLING" -> "Охлаждение"
-            "DRY" -> "Осушение"
-            "FAN" -> "Вентиляция"
-            "OFF", "INACTIVE" -> "Выключено"
-            "ON", "ACTIVE" -> "Включено"
-            else -> value
-        }
+        return localizedValueToken(value)
     }
     control.value.boolValue?.let { return if (it) "Да" else "Нет" }
     return "—"
+}
+
+private fun SprutValue.matches(other: SprutValue): Boolean = when {
+    boolValue != null && other.boolValue != null -> boolValue == other.boolValue
+    numberValue != null && other.numberValue != null -> abs(numberValue - other.numberValue) < 0.000_001
+    stringValue != null && other.stringValue != null -> stringValue.equals(other.stringValue, ignoreCase = true)
+    else -> false
+}
+
+private fun localizedValueToken(value: String): String = when (value.uppercase(Locale.ROOT)) {
+    "AUTO" -> "Авто"
+    "QUIET" -> "Тихо"
+    "LOW" -> "Низкая"
+    "MEDIUM" -> "Средняя"
+    "HIGH" -> "Высокая"
+    "TURBO" -> "Турбо"
+    "HEAT", "HEATING" -> "Нагрев"
+    "COOL", "COOLING" -> "Охлаждение"
+    "DRY" -> "Осушение"
+    "FAN", "FAN_ONLY" -> "Вентиляция"
+    "OFF", "INACTIVE" -> "Выключено"
+    "ON", "ACTIVE" -> "Включено"
+    else -> value
 }
 
 private fun formatNumber(value: Double, unit: String): String {

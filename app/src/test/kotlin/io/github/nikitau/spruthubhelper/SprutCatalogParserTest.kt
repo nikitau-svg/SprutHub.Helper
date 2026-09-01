@@ -215,6 +215,93 @@ class SprutCatalogParserTest {
     }
 
     @Test
+    fun readsLocalizedNamesAndLinkedServiceReferences() {
+        val rooms = json.parseToJsonElement(
+            """{"rooms":[{"id":1,"name":{"ru":"Гостиная"}}]}""",
+        )
+        val accessories = json.parseToJsonElement(
+            """
+            {"accessories":[{
+              "id":70,"name":{"ru":"Климатическая станция"},"roomId":1,"services":[
+                {"id":10,"type":"Thermostat","name":{"ru":"Климат"},"primary":true,
+                 "linkedServices":[11,{"sId":12},{"serviceId":"13"}],"characteristics":[
+                  {"id":1,"type":"C_ACTIVE","name":{"ru":"Питание"},
+                   "control":{"write":true,"value":{"boolValue":true}}}
+                ]}
+              ]
+            }]}
+            """.trimIndent(),
+        )
+
+        val control = parser.parse(rooms, accessories).controls.single()
+
+        assertEquals("Климатическая станция", control.title)
+        assertEquals("Гостиная", control.room)
+        assertEquals("Климат", control.serviceName)
+        assertEquals("Питание", control.characteristicName)
+        assertEquals(true, control.servicePrimary)
+        assertEquals(listOf("11", "12", "13"), control.linkedServiceIds)
+    }
+
+    @Test
+    fun classifiesKnownServiceTypeBeforeAccessoryName() {
+        val rooms = json.parseToJsonElement("""{"rooms":[{"id":1,"name":"Дом"}]}""")
+        val accessories = json.parseToJsonElement(
+            """
+            {"accessories":[{
+              "id":80,"name":"Лампа у окна","roomId":1,"services":[
+                {"id":1,"type":"LightSensor","characteristics":[
+                  {"id":1,"type":"CurrentAmbientLightLevel","control":{"write":false,"value":{"doubleValue":120}}}
+                ]},
+                {"id":2,"type":"AirPurifier","characteristics":[
+                  {"id":1,"type":"C_ACTIVE","control":{"write":true,"value":{"intValue":1}}}
+                ]},
+                {"id":3,"type":"IrrigationSystem","characteristics":[
+                  {"id":1,"type":"C_ACTIVE","control":{"write":true,"value":{"intValue":0}}}
+                ]},
+                {"id":4,"type":"C_WattMeter","characteristics":[
+                  {"id":1,"type":"C_WATT","control":{"write":false,"value":{"doubleValue":42}}}
+                ]}
+              ]
+            }]}
+            """.trimIndent(),
+        )
+
+        val controlsByService = parser.parse(rooms, accessories).controls.associateBy(SprutControl::serviceId)
+
+        assertEquals(DeviceKind.SENSOR, controlsByService.getValue("1").kind)
+        assertEquals(DeviceKind.FAN, controlsByService.getValue("2").kind)
+        assertEquals(DeviceKind.VALVE, controlsByService.getValue("3").kind)
+        assertEquals(DeviceKind.SENSOR, controlsByService.getValue("4").kind)
+    }
+
+    @Test
+    fun keepsServerValueLabelsForUnknownEnumerations() {
+        val rooms = json.parseToJsonElement("""{"rooms":[{"id":1,"name":"Дом"}]}""")
+        val accessories = json.parseToJsonElement(
+            """
+            {"accessories":[{
+              "id":90,"name":"Пылесос","roomId":1,"services":[
+                {"sId":4,"type":"C_VacuumCleaner","name":"Уборка","characteristics":[
+                  {"cId":8,"control":{"name":"Режим","type":"C_CleanMode","write":false,
+                   "value":{"intValue":2},"validValues":[
+                     {"value":{"intValue":0},"key":"AUTO","name":"Авто"},
+                     {"value":{"intValue":2},"key":"TURBO","name":"Турбо"}
+                   ]}}
+                ]}
+              ]
+            }]}
+            """.trimIndent(),
+        )
+
+        val control = parser.parse(rooms, accessories).controls.single()
+
+        assertEquals(2, control.valueOptions.size)
+        assertEquals("TURBO", control.valueOptions.last().key)
+        assertEquals("Турбо", buildServiceControlCards(listOf(control)).single().headlineValue())
+    }
+
+    @Test
     fun readsCharacteristicEvent() {
         val event = json.parseToJsonElement(
             """

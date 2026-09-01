@@ -355,9 +355,7 @@ class SprutRepository(
                         oldId.startsWith("service:") && it.isNotBlank()
                     }
                     ?: oldId.substringAfter(':').substringBefore(':').takeIf(String::isNotBlank)
-                val exact = currentCards.firstOrNull {
-                    it.accessoryId == accessoryId && it.serviceId == serviceId
-                }
+                val exact = serviceId?.let { currentCards.findCardForService(accessoryId, it) }
                 val replacement = exact ?: currentCards
                     .filter { it.accessoryId == accessoryId }
                     .maxByOrNull { candidate -> replacementScore(oldControl ?: oldCard?.primaryControl, candidate.primaryControl) }

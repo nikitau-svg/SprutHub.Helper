@@ -6,6 +6,7 @@ import io.github.nikitau.spruthubhelper.data.SprutCatalog
 import io.github.nikitau.spruthubhelper.data.SprutControl
 import io.github.nikitau.spruthubhelper.data.SprutRoom
 import io.github.nikitau.spruthubhelper.data.SprutValue
+import io.github.nikitau.spruthubhelper.data.SprutValueOption
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
@@ -14,6 +15,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.jsonPrimitive
+import java.util.Locale
 
 class SprutCatalogParser {
     fun parse(
@@ -28,7 +30,7 @@ class SprutCatalogParser {
             .map { room ->
                 SprutRoom(
                     id = room.scalar("id", "index", "roomId"),
-                    name = room.scalar("name", "title").ifBlank { "Без комнаты" },
+                    name = room.displayScalar("name", "title").ifBlank { "Без комнаты" },
                 )
             }
         val rooms = roomList.associate { it.id to it.name }
@@ -95,10 +97,11 @@ class SprutCatalogParser {
         rooms: Map<String, String>,
     ): List<SprutControl> {
         val accessoryId = accessory.scalar("id", "aId", "index").ifBlank { accessoryIndex.toString() }
-        val accessoryName = accessory.scalar("name", "title", "displayName").ifBlank { "Устройство $accessoryId" }
+        val accessoryName = accessory.displayScalar("name", "title", "displayName")
+            .ifBlank { "Устройство $accessoryId" }
         val roomId = accessory.scalar("roomId", "rId", "room")
         val roomName = rooms[roomId]
-            ?: accessory.objectValue("room")?.scalar("name", "title")
+            ?: accessory.objectValue("room")?.displayScalar("name", "title")
             ?: "Без комнаты"
         val services = accessory.arrayValue("services")
             ?: findArray(accessory, "services")
@@ -117,17 +120,23 @@ class SprutCatalogParser {
         serviceIndex: Int,
     ): List<SprutControl> {
         val serviceId = service.scalar("id", "sId", "index").ifBlank { serviceIndex.toString() }
-        val serviceName = service.scalar("name", "title", "displayName")
+        val serviceName = service.displayScalar("name", "title", "displayName", "overview")
         val sourceType = service.scalar("type", "serviceType", "typeName")
+        val normalizedSourceType = normalizeCatalogIdentifier(sourceType)
         val servicePrimary = service.booleanScalar("primary") ?: false
         val linkedServiceIds = service.arrayValue("linkedServices")
             .orEmpty()
-            .mapNotNull { (it as? JsonPrimitive)?.content }
+            .mapNotNull(::serviceReferenceId)
+            .filterNot { it == serviceId }
+            .distinct()
         val descriptor = listOf(accessoryName, serviceName, sourceType, collectDescriptors(service))
             .joinToString(" ")
             .lowercase()
-        if (READ_ONLY_SERVICE_MARKERS.any(descriptor::contains)) return emptyList()
-        val kind = detectKind(descriptor)
+        if (
+            normalizedSourceType in IGNORED_SERVICE_TYPES ||
+            READ_ONLY_SERVICE_MARKERS.any(descriptor::contains)
+        ) return emptyList()
+        val kind = detectKind(normalizedSourceType, descriptor)
         val characteristics = service.arrayValue("characteristics")
             ?: findArray(service, "characteristics")
             ?: JsonArray(emptyList())
@@ -183,6 +192,7 @@ class SprutCatalogParser {
                     rangeCharacteristicType = range.typeName,
                     servicePrimary = servicePrimary,
                     linkedServiceIds = linkedServiceIds,
+                    valueOptions = toggle.valueOptions,
                     valueField = toggle.valueField,
                     rangeValueField = range.valueField,
                 ),
@@ -305,6 +315,7 @@ class SprutCatalogParser {
         characteristicName = displayName,
         servicePrimary = servicePrimary,
         linkedServiceIds = linkedServiceIds,
+        valueOptions = valueOptions,
         valueField = valueField,
         rangeValueField = valueField,
     )
@@ -312,7 +323,7 @@ class SprutCatalogParser {
     private fun parseCharacteristic(characteristic: JsonObject, index: Int): ParsedCharacteristic {
         val id = characteristic.scalar("id", "cId", "index").ifBlank { index.toString() }
         val descriptor = collectDescriptors(characteristic).lowercase()
-        val displayName = characteristic.scalar("name", "title", "displayName", "description")
+        val displayName = characteristic.displayScalar("name", "title", "displayName", "description", "overview")
             .ifBlank { findString(characteristic, "displayName", "name", "title", "description").orEmpty() }
         val discoveredType = characteristic.scalar("type", "characteristicType", "typeName", "shortId")
             .ifBlank { findString(characteristic, "characteristicType", "typeName", "shortId", "type").orEmpty() }
@@ -341,6 +352,7 @@ class SprutCatalogParser {
             isNameMetadata = isNameType(typeName),
             role = role,
             value = value,
+            valueOptions = parseValueOptions(characteristic, field),
             valueField = field,
             minimum = findNumber(characteristic, "minValue", "minimum", "min") ?: 0.0,
             maximum = findNumber(characteristic, "maxValue", "maximum", "max") ?: 100.0,
@@ -361,7 +373,7 @@ class SprutCatalogParser {
                 accessoryId = "",
                 serviceId = "scenario",
                 characteristicId = scenarioId,
-                title = scenario.scalar("name", "title").ifBlank { "Сценарий $scenarioId" },
+                title = scenario.displayScalar("name", "title").ifBlank { "Сценарий $scenarioId" },
                 room = "Сценарии",
                 kind = DeviceKind.SCENE,
                 behavior = ControlBehavior.BUTTON,
@@ -370,7 +382,64 @@ class SprutCatalogParser {
         }
     }
 
-    private fun detectKind(descriptor: String): DeviceKind = when {
+    private fun parseValueOptions(characteristic: JsonElement, valueField: String): List<SprutValueOption> =
+        findArray(characteristic, "validValues")
+            .orEmpty()
+            .mapNotNull { option ->
+                when (option) {
+                    is JsonObject -> {
+                        val value = findValueObject(option)?.let(::extractValue)
+                            ?: option["value"]?.let { primitiveValue(it, valueField) }
+                            ?: return@mapNotNull null
+                        SprutValueOption(
+                            value = value,
+                            key = option.displayScalar("key", "id"),
+                            name = option.displayScalar("name", "title", "displayName"),
+                        )
+                    }
+                    is JsonPrimitive -> SprutValueOption(value = primitiveValue(option, valueField))
+                    else -> null
+                }
+            }
+            .distinctBy { option ->
+                listOf(option.value.boolValue, option.value.numberValue, option.value.stringValue, option.key)
+            }
+
+    private fun primitiveValue(element: JsonElement, valueField: String): SprutValue {
+        val primitive = element as? JsonPrimitive ?: return SprutValue()
+        return when (valueField) {
+            "boolValue" -> SprutValue(boolValue = primitive.booleanOrNull)
+            in NUMBER_FIELDS -> SprutValue(numberValue = primitive.doubleOrNull)
+            else -> SprutValue(stringValue = primitive.content)
+        }
+    }
+
+    private fun detectKind(sourceType: String, descriptor: String): DeviceKind = when {
+        sourceType in SENSOR_SERVICE_TYPES || sourceType.endsWith("sensor") || sourceType.endsWith("meter") ->
+            DeviceKind.SENSOR
+        sourceType == "lightbulb" -> DeviceKind.LIGHT
+        sourceType == "outlet" -> DeviceKind.OUTLET
+        sourceType in setOf("fan", "fanbasic", "airpurifier") -> DeviceKind.FAN
+        sourceType in setOf("windowcovering", "slat") -> DeviceKind.BLINDS
+        sourceType == "window" -> DeviceKind.CURTAIN
+        sourceType == "door" -> DeviceKind.CURTAIN
+        sourceType in setOf("lockmechanism", "lockmanagement") -> DeviceKind.LOCK
+        sourceType in setOf("thermostat", "heatercooler", "humidifierdehumidifier", "temperaturecontrol") ->
+            DeviceKind.THERMOSTAT
+        sourceType == "garagedooropener" -> DeviceKind.GARAGE
+        sourceType in setOf("valve", "faucet", "irrigationsystem") -> DeviceKind.VALVE
+        sourceType == "securitysystem" -> DeviceKind.SECURITY
+        sourceType == "vacuumcleaner" -> DeviceKind.VACUUM
+        sourceType in setOf("television", "televisionspeaker", "speaker", "inputsource") -> DeviceKind.TELEVISION
+        sourceType in setOf(
+            "switch",
+            "statelessprogrammableswitch",
+            "doorbell",
+            "targetcontrol",
+            "option",
+            "massage",
+            "petfeeder",
+        ) -> DeviceKind.SWITCH
         descriptor.containsAny("light", "bulb", "lamp", "свет", "ламп") -> DeviceKind.LIGHT
         descriptor.containsAny("outlet", "socket", "розет") -> DeviceKind.OUTLET
         descriptor.containsAny("fan", "вентил") -> DeviceKind.FAN
@@ -400,6 +469,12 @@ class SprutCatalogParser {
         descriptor.containsAny("sensor", "датчик") -> DeviceKind.SENSOR
         else -> DeviceKind.OTHER
     }
+
+    private fun normalizeCatalogIdentifier(identifier: String): String = identifier
+        .trim()
+        .replace(Regex("^(HS|HC|S|C)[._:-]", RegexOption.IGNORE_CASE), "")
+        .lowercase()
+        .filter(Char::isLetterOrDigit)
 
     private fun extractValue(element: JsonElement): SprutValue {
         val valueObject = findValueObject(element) ?: return SprutValue()
@@ -445,7 +520,7 @@ class SprutCatalogParser {
         is JsonObject -> keys.firstNotNullOfOrNull { key ->
             element.entries.firstOrNull { it.key.equals(key, true) }
                 ?.value
-                ?.let { (it as? JsonPrimitive)?.content }
+                ?.localizedText()
         } ?: element.values.firstNotNullOfOrNull { findString(it, *keys) }
         is JsonArray -> element.firstNotNullOfOrNull { findString(it, *keys) }
         else -> null
@@ -475,7 +550,7 @@ class SprutCatalogParser {
             if (depth > 3) return
             when (current) {
                 is JsonObject -> current.forEach { (key, value) ->
-                    if (key in DESCRIPTOR_KEYS && value is JsonPrimitive) append(' ').append(value.content)
+                    if (key in DESCRIPTOR_KEYS) value.localizedText()?.let { append(' ').append(it) }
                     else if (key != "value") visit(value, depth + 1)
                 }
                 is JsonArray -> current.take(8).forEach { visit(it, depth + 1) }
@@ -488,6 +563,32 @@ class SprutCatalogParser {
     private fun JsonObject.scalar(vararg names: String): String = names.firstNotNullOfOrNull { name ->
         entries.firstOrNull { it.key.equals(name, true) }?.value?.let { (it as? JsonPrimitive)?.content }
     }.orEmpty()
+
+    private fun JsonObject.displayScalar(vararg names: String): String = names.firstNotNullOfOrNull { name ->
+        entries.firstOrNull { it.key.equals(name, true) }?.value?.localizedText()
+    }.orEmpty()
+
+    private fun JsonElement.localizedText(): String? = when (this) {
+        is JsonPrimitive -> content.takeIf(String::isNotBlank)
+        is JsonObject -> {
+            val locale = Locale.getDefault()
+            val preferredKeys = listOf(locale.toLanguageTag(), locale.language, "ru", "en")
+            preferredKeys.firstNotNullOfOrNull { preferred ->
+                entries.firstOrNull { it.key.equals(preferred, ignoreCase = true) }
+                    ?.value
+                    ?.let { (it as? JsonPrimitive)?.content?.takeIf(String::isNotBlank) }
+            } ?: values.firstNotNullOfOrNull { value ->
+                (value as? JsonPrimitive)?.content?.takeIf(String::isNotBlank)
+            }
+        }
+        else -> null
+    }
+
+    private fun serviceReferenceId(reference: JsonElement): String? = when (reference) {
+        is JsonPrimitive -> reference.content.takeIf(String::isNotBlank)
+        is JsonObject -> reference.scalar("id", "sId", "serviceId", "index").takeIf(String::isNotBlank)
+        else -> null
+    }
 
     private fun JsonObject.arrayValue(name: String): JsonArray? =
         entries.firstOrNull { it.key.equals(name, true) }?.value as? JsonArray
@@ -617,6 +718,7 @@ class SprutCatalogParser {
         val isNameMetadata: Boolean,
         val role: CharacteristicRole,
         val value: SprutValue,
+        val valueOptions: List<SprutValueOption>,
         val valueField: String,
         val minimum: Double,
         val maximum: Double,
@@ -637,6 +739,38 @@ class SprutCatalogParser {
             "accessoryinformation",
             "accessory_information",
             "s_accessory_information",
+        )
+        val IGNORED_SERVICE_TYPES = setOf(
+            "accessoryinformation",
+            "audiostreammanagement",
+            "camerartpstreammanagement",
+            "datastreamtransportmanagement",
+            "happrotocolinformation",
+            "servicelabel",
+            "targetcontrolmanagement",
+            "transfertransportmanagement",
+        )
+        val SENSOR_SERVICE_TYPES = setOf(
+            "airqualitysensor",
+            "batteryservice",
+            "carbondioxidesensor",
+            "carbonmonoxidesensor",
+            "contactsensor",
+            "filtermaintenance",
+            "humiditysensor",
+            "leaksensor",
+            "lightsensor",
+            "motionsensor",
+            "occupancysensor",
+            "smokesensor",
+            "temperaturesensor",
+            "accessoryextinfo",
+            "atmosphericpressuresensor",
+            "distancesensor",
+            "gassensor",
+            "noisesensor",
+            "tiltangle",
+            "ultravioletsensor",
         )
         val TOGGLE_MARKERS = listOf(
             "c_on",

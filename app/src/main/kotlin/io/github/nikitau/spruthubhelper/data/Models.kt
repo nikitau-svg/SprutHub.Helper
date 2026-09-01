@@ -118,6 +118,13 @@ data class SprutValue(
 }
 
 @Serializable
+data class SprutValueOption(
+    val value: SprutValue,
+    val key: String = "",
+    val name: String = "",
+)
+
+@Serializable
 data class SprutControl(
     val id: String,
     val accessoryId: String,
@@ -143,6 +150,8 @@ data class SprutControl(
     val rangeCharacteristicType: String = "",
     val servicePrimary: Boolean = false,
     val linkedServiceIds: List<String> = emptyList(),
+    /** Server-provided labels for enum/option values, when available. */
+    val valueOptions: List<SprutValueOption> = emptyList(),
     val valueField: String = "boolValue",
     val rangeValueField: String = "doubleValue",
 ) {

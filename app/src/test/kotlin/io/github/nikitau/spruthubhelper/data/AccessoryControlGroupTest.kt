@@ -72,6 +72,113 @@ class AccessoryControlGroupTest {
         assertEquals("Охлаждение", card.attributeValue(mode))
     }
 
+    @Test
+    fun mergesLinkedSensorServicesIntoPrimaryActionCard() {
+        val thermostat = control(id = "31:1:main", serviceId = "1", subtitle = "Климат").copy(
+            behavior = ControlBehavior.TOGGLE_RANGE,
+            serviceName = "Климат",
+            servicePrimary = true,
+            linkedServiceIds = listOf("2", "3"),
+        )
+        val temperature = control(id = "31:2:1", serviceId = "2", subtitle = "Температура").copy(
+            behavior = ControlBehavior.SENSOR,
+            writable = false,
+            characteristicId = "1",
+            characteristicType = "C_CURRENT_TEMPERATURE",
+            linkedServiceIds = listOf("1"),
+        )
+        val humidity = control(id = "31:3:1", serviceId = "3", subtitle = "Влажность").copy(
+            behavior = ControlBehavior.SENSOR,
+            writable = false,
+            characteristicId = "1",
+            characteristicType = "C_CURRENT_RELATIVE_HUMIDITY",
+            linkedServiceIds = listOf("1"),
+        )
+
+        val card = buildServiceControlCards(listOf(thermostat, temperature, humidity)).single()
+
+        assertEquals("service:31:1", card.id)
+        assertEquals("31:1:main", card.primaryControl.id)
+        assertEquals(listOf("1", "2", "3"), card.memberServiceIds)
+        assertEquals(listOf("31:2:1", "31:3:1"), card.availableAttributes().map(SprutControl::id))
+    }
+
+    @Test
+    fun preservesSeveralLinkedWritableServicesAsSeparateCards() {
+        val light = control(id = "42:1:1", serviceId = "1", subtitle = "Свет").copy(
+            linkedServiceIds = listOf("2", "3"),
+            servicePrimary = true,
+        )
+        val fan = control(id = "42:2:1", serviceId = "2", subtitle = "Вентилятор").copy(
+            linkedServiceIds = listOf("1", "3"),
+        )
+        val temperature = control(id = "42:3:1", serviceId = "3", subtitle = "Температура").copy(
+            behavior = ControlBehavior.SENSOR,
+            writable = false,
+            characteristicType = "C_CURRENT_TEMPERATURE",
+            linkedServiceIds = listOf("1", "2"),
+        )
+
+        val cards = buildServiceControlCards(listOf(light, fan, temperature))
+
+        assertEquals(listOf("service:42:1", "service:42:2", "service:42:3"), cards.map(ServiceControlCard::id))
+        assertEquals(listOf("1"), cards[0].memberServiceIds)
+        assertEquals(listOf("2"), cards[1].memberServiceIds)
+        assertEquals(listOf("3"), cards[2].memberServiceIds)
+    }
+
+    @Test
+    fun mergesLinkedReadOnlyServicesWithoutDroppingSameCharacteristicIds() {
+        val temperature = control(id = "55:8:1", serviceId = "8", subtitle = "Температура").copy(
+            behavior = ControlBehavior.SENSOR,
+            writable = false,
+            characteristicId = "1",
+            characteristicType = "C_CURRENT_TEMPERATURE",
+            servicePrimary = true,
+            linkedServiceIds = listOf("9"),
+        )
+        val humidity = control(id = "55:9:1", serviceId = "9", subtitle = "Влажность").copy(
+            behavior = ControlBehavior.SENSOR,
+            writable = false,
+            characteristicId = "1",
+            characteristicType = "C_CURRENT_RELATIVE_HUMIDITY",
+            linkedServiceIds = listOf("8"),
+        )
+
+        val card = buildServiceControlCards(listOf(temperature, humidity)).single()
+
+        assertEquals("service:55:8", card.id)
+        assertEquals(listOf("8", "9"), card.memberServiceIds)
+        assertEquals(listOf("55:9:1"), card.availableAttributes().map(SprutControl::id))
+        assertEquals(true, card.containsService("9"))
+        assertEquals("service:55:8", listOf(card).findCardForService("55", "9")?.id)
+    }
+
+    @Test
+    fun disambiguatesEqualAttributesWithLinkedServiceNames() {
+        val climate = control(id = "61:1:main", serviceId = "1", subtitle = "Климат").copy(
+            behavior = ControlBehavior.TOGGLE,
+            linkedServiceIds = listOf("2", "3"),
+        )
+        val indoor = control(id = "61:2:1", serviceId = "2", subtitle = "Внутри").copy(
+            behavior = ControlBehavior.SENSOR,
+            writable = false,
+            serviceName = "Внутри",
+            characteristicType = "C_CURRENT_TEMPERATURE",
+        )
+        val outdoor = control(id = "61:3:1", serviceId = "3", subtitle = "Снаружи").copy(
+            behavior = ControlBehavior.SENSOR,
+            writable = false,
+            serviceName = "Снаружи",
+            characteristicType = "C_CURRENT_TEMPERATURE",
+        )
+
+        val card = buildServiceControlCards(listOf(climate, indoor, outdoor)).single()
+
+        assertEquals("Внутри · Сейчас", card.attributeLabel(indoor))
+        assertEquals("Снаружи · Сейчас", card.attributeLabel(outdoor))
+    }
+
     private fun control(id: String, serviceId: String, subtitle: String) = SprutControl(
         id = id,
         accessoryId = id.substringBefore(':'),
