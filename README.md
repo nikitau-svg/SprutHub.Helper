@@ -5,15 +5,36 @@
 [![Android 11+](https://img.shields.io/badge/Android-11%2B-3DDC84)](docs/CAPABILITIES.md)
 [![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial-blue)](LICENSE)
 
-Неофициальное Android-приложение для управления устройствами SprutHub с главного экрана, из системной панели Android и быстрых настроек.
+## SprutHub прямо в Android
+
+**SprutHub.Helper** — бесплатное неофициальное приложение-помощник, которое переносит повседневное управление умным домом из веб-интерфейса SprutHub в системный интерфейс Android. Устройства, сценарии и датчики можно вынести на главный экран, в шторку, Android Device Controls или отдельную крупную панель.
+
+Приложение может работать и в обратную сторону: создавать в SprutHub виртуальные устройства «Телефон», «Здоровье» и «Присутствие». Какие именно показатели публиковать, выбирает сам пользователь.
+
+Helper подключается напрямую к локальному хабу или к поддерживаемому beta-облаку. **Home Assistant, Node-RED, Cloudflare или отдельный сервер не нужны.** Это не замена полного интерфейса SprutHub, а быстрый системный доступ к тому, чем вы пользуетесь каждый день.
+
+### Что даёт приложение
+
+- быстрое управление светом, климатом, розетками, шторами и сценариями без открытия браузера;
+- виджеты, плитки быстрых настроек, Device Controls и крупная адаптивная панель;
+- актуальные статусы через WebSocket, явная индикация потери связи и защита от случайных дублей;
+- выборочная передача в SprutHub состояния телефона, Health Connect и геозон;
+- работа дома и вне дома без промежуточного моста;
+- локальная диагностика без рекламы, аналитики и стороннего облачного бэкенда.
+
+### Скачать beta
+
+**[Скачать SprutHub.Helper 0.6.0-beta.7 (APK)](https://github.com/nikitau-svg/SprutHub.Helper/releases/download/v0.6.0-beta.7/SprutHub.Helper-0.6.0-beta.7.apk)**
+
+[Описание релиза](https://github.com/nikitau-svg/SprutHub.Helper/releases/tag/v0.6.0-beta.7) · [Как установить APK](docs/INSTALLATION.md) · [Возможности и совместимость](docs/CAPABILITIES.md)
 
 > Проект не связан с разработчиками SprutHub. Приложение использует внутренний WebSocket/JSON-RPC-протокол, который может измениться без предупреждения. Текущая beta-версия — [`0.6.0-beta.7`](https://github.com/nikitau-svg/SprutHub.Helper/releases/tag/v0.6.0-beta.7).
 
 > Активная разработка идёт в ветке [`beta`](https://github.com/nikitau-svg/SprutHub.Helper/tree/beta). В `main` попадает только версия, прошедшая аппаратный E2E; готовые APK всегда публикуются отдельными подписанными [GitHub Releases](https://github.com/nikitau-svg/SprutHub.Helper/releases).
 
-[Скачать APK](https://github.com/nikitau-svg/SprutHub.Helper/releases/tag/v0.6.0-beta.7) · [Установка](docs/INSTALLATION.md) · [Возможности](docs/CAPABILITIES.md) · [FAQ](docs/FAQ.md) · [Диагностика](docs/DIAGNOSTICS.md) · [Поддержка](SUPPORT.md) · [Приватность](PRIVACY.md)
+[Установка](docs/INSTALLATION.md) · [Возможности](docs/CAPABILITIES.md) · [FAQ](docs/FAQ.md) · [Диагностика](docs/DIAGNOSTICS.md) · [Поддержка](SUPPORT.md) · [Приватность](PRIVACY.md)
 
-## Что уже работает
+## Возможности
 
 - подключение к локальному или настроенному облачному адресу SprutHub;
 - режим «Авто»: сначала локальное соединение, затем облачное;
