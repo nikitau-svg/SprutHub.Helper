@@ -61,6 +61,15 @@ internal fun mergeControlUpdate(
     else -> null
 }
 
+internal fun optionWireValue(field: String, target: SprutValue): JsonPrimitive = when (field) {
+    "boolValue" -> JsonPrimitive(target.boolValue ?: error("Некорректное логическое значение"))
+    "intValue", "longValue", "uintValue" ->
+        JsonPrimitive(target.numberValue?.roundToLong() ?: error("Некорректное числовое значение"))
+    "floatValue", "doubleValue" ->
+        JsonPrimitive(target.numberValue ?: error("Некорректное числовое значение"))
+    else -> JsonPrimitive(target.stringValue ?: error("Некорректное текстовое значение"))
+}
+
 internal fun preserveConcurrentControlValues(
     parsedControls: List<SprutControl>,
     currentControls: List<SprutControl>,
@@ -319,6 +328,10 @@ class SprutRepository(
         writeRange(control, config, value)
     }
 
+    suspend fun setOption(controlId: String, value: SprutValue): Result<Unit> = perform(controlId) { control, config ->
+        writeOption(control, config, value)
+    }
+
     /** Chooses the opposite range endpoint only after refreshing the server value. */
     suspend fun toggleRangeEndpoint(controlId: String): Result<Unit> = perform(controlId) { control, config ->
         check(control.behavior == ControlBehavior.RANGE) { "Для устройства требуется открыть регулировку" }
@@ -482,6 +495,24 @@ class SprutRepository(
         }
     }
 
+    private suspend fun writeOption(control: SprutControl, config: HubConfig, requested: SprutValue) {
+        check(control.behavior == ControlBehavior.OPTIONS) { "Элемент больше не поддерживает выбор режима" }
+        val target = control.valueOptions.firstOrNull { option -> option.value.sameValueAs(requested) }
+            ?.value
+            ?: error("SprutHub больше не предлагает этот вариант")
+        if (control.value.sameValueAs(target)) return
+        val wireValue = optionWireValue(control.valueField, target)
+        val baseline = authoritativeVersion(control.id)
+        updateCharacteristic(
+            config = config,
+            control = control,
+            characteristicId = control.characteristicId,
+            field = control.valueField,
+            value = wireValue,
+        )
+        confirmCommand(control.id, baseline) { latest -> latest.value.sameValueAs(target) }
+    }
+
     private fun request(
         section: String,
         operation: String,
@@ -570,6 +601,7 @@ class SprutRepository(
             when (candidate.behavior) {
                 ControlBehavior.TOGGLE_RANGE -> 90
                 ControlBehavior.TOGGLE -> 80
+                ControlBehavior.OPTIONS -> 70
                 ControlBehavior.BUTTON -> 40
                 ControlBehavior.RANGE -> 25
                 ControlBehavior.SENSOR -> 0

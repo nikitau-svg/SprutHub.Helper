@@ -13,6 +13,8 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -24,6 +26,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
@@ -50,6 +53,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -84,12 +88,15 @@ import io.github.nikitau.spruthubhelper.data.CatalogFreshness
 import io.github.nikitau.spruthubhelper.data.CatalogFreshnessPolicy
 import io.github.nikitau.spruthubhelper.data.ConnectionPhase
 import io.github.nikitau.spruthubhelper.data.ControlBehavior
+import io.github.nikitau.spruthubhelper.data.DeviceKind
 import io.github.nikitau.spruthubhelper.data.PanelItem
 import io.github.nikitau.spruthubhelper.data.PanelItemSize
 import io.github.nikitau.spruthubhelper.data.ServiceControlCard
 import io.github.nikitau.spruthubhelper.data.SprutControl
+import io.github.nikitau.spruthubhelper.data.SprutValue
 import io.github.nikitau.spruthubhelper.data.buildServiceControlCards
 import io.github.nikitau.spruthubhelper.data.presentationFor
+import io.github.nikitau.spruthubhelper.data.sameValueAs
 import io.github.nikitau.spruthubhelper.diagnostics.DiagnosticCategory
 import io.github.nikitau.spruthubhelper.diagnostics.DiagnosticOutcome
 import io.github.nikitau.spruthubhelper.icons.CustomIconManager
@@ -193,6 +200,7 @@ private fun SprutDevicePanel(
     var busyCardId by remember { mutableStateOf<String?>(null) }
     var sentCardId by remember { mutableStateOf<String?>(null) }
     var rangeCard by remember { mutableStateOf<ServiceControlCard?>(null) }
+    var optionSelection by remember { mutableStateOf<Pair<ServiceControlCard, SprutControl>?>(null) }
 
     val cards = remember(catalog.controls) { buildServiceControlCards(catalog.controls) }
     val freshness = remember(catalog, connection, pendingControlIds) {
@@ -286,6 +294,7 @@ private fun SprutDevicePanel(
             }
             ControlBehavior.BUTTON -> runCommand(card, control) { repository.execute(control.id) }
             ControlBehavior.RANGE -> rangeCard = card
+            ControlBehavior.OPTIONS -> optionSelection = card to control
             ControlBehavior.SENSOR -> showMessage("${card.title}: ${card.headlineValue()}")
         }
     }
@@ -352,6 +361,7 @@ private fun SprutDevicePanel(
                                 sent = sentCardId == card.id,
                                 onClick = { primaryAction(card) },
                                 onAdjust = { rangeCard = card },
+                                onSelectOption = { option -> optionSelection = card to option },
                             )
                         }
                     }
@@ -379,6 +389,18 @@ private fun SprutDevicePanel(
             onConfirm = { value ->
                 rangeCard = null
                 runCommand(card, control) { repository.setRange(control.id, value.toDouble()) }
+            },
+        )
+    }
+
+    optionSelection?.let { (card, control) ->
+        OptionDialog(
+            card = card,
+            control = control,
+            onDismiss = { optionSelection = null },
+            onConfirm = { value ->
+                optionSelection = null
+                runCommand(card, control) { repository.setOption(control.id, value) }
             },
         )
     }
@@ -437,6 +459,7 @@ private fun ServiceGlassCard(
     sent: Boolean,
     onClick: () -> Unit,
     onAdjust: () -> Unit,
+    onSelectOption: (SprutControl) -> Unit,
 ) {
     val context = LocalContext.current
     val control = card.primaryControl
@@ -444,20 +467,28 @@ private fun ServiceGlassCard(
     val authoritative = presentation.stateIsAuthoritative
     val active = presentation.active
     val attributes = card.selectedAttributes(item)
+    val optionControls = card.optionControls().take(2)
+    val visibleAttributes = attributes.take((2 - optionControls.size).coerceAtLeast(0))
+    val hasDetails = optionControls.isNotEmpty() || visibleAttributes.isNotEmpty()
+    val cardHeight = if (card.supportsRange || hasDetails) 164.dp else 136.dp
     val customBitmap = remember(card.id, control.id) {
         val icons = CustomIconManager(context)
         icons.loadBitmap(card.id) ?: icons.loadBitmap(control.id)
     }
     val shape = RoundedCornerShape(16.dp)
-    val subtitle = listOf(card.serviceName, card.room)
+    val subtitle = listOf(card.displayServiceName(), card.room)
         .filter(String::isNotBlank)
         .distinctBy { it.lowercase() }
         .joinToString(" · ")
     val actionDescription = when (control.behavior) {
-        ControlBehavior.TOGGLE, ControlBehavior.TOGGLE_RANGE -> if (active) {
-            "Выключить ${card.title}"
-        } else {
-            "Включить ${card.title}"
+        ControlBehavior.TOGGLE, ControlBehavior.TOGGLE_RANGE -> when (control.kind) {
+            DeviceKind.LOCK -> if (active) "Открыть ${card.title}" else "Закрыть ${card.title}"
+            DeviceKind.CURTAIN, DeviceKind.BLINDS, DeviceKind.SHUTTER, DeviceKind.GARAGE ->
+                if (active) "Открыть ${card.title}" else "Закрыть ${card.title}"
+            DeviceKind.VALVE -> if (active) "Закрыть ${card.title}" else "Открыть ${card.title}"
+            DeviceKind.SECURITY -> if (active) "Снять с охраны" else "Поставить под охрану"
+            DeviceKind.VACUUM -> if (active) "Остановить ${card.title}" else "Запустить ${card.title}"
+            else -> if (active) "Выключить ${card.title}" else "Включить ${card.title}"
         }
         ControlBehavior.BUTTON -> "Запустить ${card.title}"
         else -> null
@@ -466,7 +497,7 @@ private fun ServiceGlassCard(
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(164.dp)
+            .height(cardHeight)
             .clip(shape)
             .background(
                 Brush.linearGradient(
@@ -565,10 +596,14 @@ private fun ServiceGlassCard(
                                 )
                             } else {
                                 Icon(
-                                    imageVector = if (control.behavior == ControlBehavior.BUTTON) {
-                                        Icons.Rounded.PlayArrow
-                                    } else {
-                                        Icons.Rounded.PowerSettingsNew
+                                    imageVector = when {
+                                        control.behavior == ControlBehavior.BUTTON -> Icons.Rounded.PlayArrow
+                                        control.kind in setOf(
+                                            DeviceKind.LOCK,
+                                            DeviceKind.SECURITY,
+                                            DeviceKind.GARAGE,
+                                        ) -> Icons.Rounded.Lock
+                                        else -> Icons.Rounded.PowerSettingsNew
                                     },
                                     contentDescription = actionDescription,
                                     tint = if (active) PanelAccent else PanelText,
@@ -630,10 +665,19 @@ private fun ServiceGlassCard(
                     }
                 }
             }
-            if (attributes.isNotEmpty()) {
+            if (hasDetails) {
                 Spacer(Modifier.height(6.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    attributes.forEach { attribute ->
+                    optionControls.forEach { option ->
+                        OptionPill(
+                            label = card.attributeLabel(option),
+                            value = card.attributeValue(option),
+                            enabled = !busy,
+                            onClick = { onSelectOption(option) },
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                    visibleAttributes.forEach { attribute ->
                         AttributePill(
                             label = card.attributeLabel(attribute),
                             value = card.attributeValue(attribute),
@@ -668,6 +712,48 @@ private fun AttributePill(label: String, value: String, modifier: Modifier = Mod
             style = MaterialTheme.typography.bodySmall,
             fontWeight = FontWeight.Medium,
             color = PanelText,
+        )
+    }
+}
+
+@Composable
+private fun OptionPill(
+    label: String,
+    value: String,
+    enabled: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(Color.White.copy(alpha = 0.075f))
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(start = 8.dp, end = 4.dp, top = 3.dp, bottom = 3.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(
+                label,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                style = MaterialTheme.typography.labelSmall,
+                color = PanelMutedText,
+            )
+            Text(
+                value,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                style = MaterialTheme.typography.bodySmall,
+                fontWeight = FontWeight.Medium,
+                color = PanelText,
+            )
+        }
+        Icon(
+            Icons.Rounded.ChevronRight,
+            "Выбрать $label",
+            modifier = Modifier.size(17.dp),
+            tint = PanelMutedText,
         )
     }
 }
@@ -732,6 +818,62 @@ private fun RangeDialog(
             }
         },
         confirmButton = { TextButton(onClick = { onConfirm(value) }) { Text("Установить") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Отмена") } },
+    )
+}
+
+@Composable
+private fun OptionDialog(
+    card: ServiceControlCard,
+    control: SprutControl,
+    onDismiss: () -> Unit,
+    onConfirm: (SprutValue) -> Unit,
+) {
+    var selected by remember(control.id, control.value) {
+        mutableStateOf(
+            control.valueOptions.firstOrNull { option -> option.value.sameValueAs(control.value) },
+        )
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = PanelSurface,
+        titleContentColor = PanelText,
+        textContentColor = PanelText,
+        title = { Text(card.title) },
+        text = {
+            Column {
+                Text(card.attributeLabel(control), color = PanelMutedText)
+                Spacer(Modifier.height(8.dp))
+                Column(
+                    modifier = Modifier
+                        .heightIn(max = 360.dp)
+                        .verticalScroll(rememberScrollState()),
+                ) {
+                    control.valueOptions.forEach { option ->
+                        val isSelected = selected?.value?.sameValueAs(option.value) == true
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .clickable { selected = option }
+                                .padding(horizontal = 6.dp, vertical = 2.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            RadioButton(selected = isSelected, onClick = { selected = option })
+                            Text(card.optionLabel(option), color = PanelText)
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = selected != null,
+                onClick = { selected?.value?.let(onConfirm) },
+            ) {
+                Text("Применить")
+            }
+        },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Отмена") } },
     )
 }

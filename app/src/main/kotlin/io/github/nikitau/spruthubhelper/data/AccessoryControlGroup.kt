@@ -1,8 +1,29 @@
 package io.github.nikitau.spruthubhelper.data
 
 import java.util.Locale
-import kotlin.math.abs
 import kotlin.math.roundToLong
+
+/**
+ * Stable visual contract for the app-owned panel. It intentionally describes
+ * a service role rather than a vendor model: names are user-editable, while
+ * SprutHub service type, control behavior and linked topology are structural.
+ */
+enum class ServiceCardTemplate {
+    LIGHT,
+    SWITCH,
+    OUTLET,
+    FAN,
+    COVER,
+    LOCK,
+    CLIMATE,
+    SECURITY,
+    VACUUM,
+    MEDIA,
+    SCENE,
+    SENSOR,
+    RANGE,
+    GENERIC,
+}
 
 /**
  * One logical SprutHub service card. Characteristics remain addressable by
@@ -24,6 +45,53 @@ data class ServiceControlCard(
     val memberServiceIds: List<String>,
     val isPrimaryService: Boolean,
 ) {
+    val template: ServiceCardTemplate
+        get() = when (kind) {
+            DeviceKind.LIGHT -> ServiceCardTemplate.LIGHT
+            DeviceKind.SWITCH -> ServiceCardTemplate.SWITCH
+            DeviceKind.OUTLET -> ServiceCardTemplate.OUTLET
+            DeviceKind.FAN -> ServiceCardTemplate.FAN
+            DeviceKind.CURTAIN, DeviceKind.BLINDS, DeviceKind.SHUTTER, DeviceKind.GARAGE ->
+                ServiceCardTemplate.COVER
+            DeviceKind.LOCK -> ServiceCardTemplate.LOCK
+            DeviceKind.THERMOSTAT -> ServiceCardTemplate.CLIMATE
+            DeviceKind.SECURITY -> ServiceCardTemplate.SECURITY
+            DeviceKind.VACUUM -> ServiceCardTemplate.VACUUM
+            DeviceKind.TELEVISION -> ServiceCardTemplate.MEDIA
+            DeviceKind.SCENE -> ServiceCardTemplate.SCENE
+            DeviceKind.SENSOR -> ServiceCardTemplate.SENSOR
+            DeviceKind.VALVE -> if (primaryControl.behavior == ControlBehavior.RANGE) {
+                ServiceCardTemplate.RANGE
+            } else {
+                ServiceCardTemplate.SWITCH
+            }
+            DeviceKind.OTHER -> when (primaryControl.behavior) {
+                ControlBehavior.RANGE, ControlBehavior.TOGGLE_RANGE -> ServiceCardTemplate.RANGE
+                ControlBehavior.BUTTON -> ServiceCardTemplate.SCENE
+                ControlBehavior.OPTIONS -> ServiceCardTemplate.GENERIC
+                ControlBehavior.SENSOR -> ServiceCardTemplate.SENSOR
+                ControlBehavior.TOGGLE -> ServiceCardTemplate.GENERIC
+            }
+        }
+
+    val recommendedAttributeCount: Int
+        get() = when (template) {
+            ServiceCardTemplate.SCENE -> 0
+            ServiceCardTemplate.LIGHT,
+            ServiceCardTemplate.SWITCH,
+            ServiceCardTemplate.FAN,
+            ServiceCardTemplate.VACUUM,
+            ServiceCardTemplate.MEDIA,
+            ServiceCardTemplate.RANGE,
+            ServiceCardTemplate.GENERIC -> 1
+            ServiceCardTemplate.OUTLET,
+            ServiceCardTemplate.COVER,
+            ServiceCardTemplate.LOCK,
+            ServiceCardTemplate.CLIMATE,
+            ServiceCardTemplate.SECURITY,
+            ServiceCardTemplate.SENSOR -> 2
+        }
+
     val isActive: Boolean?
         get() = when (primaryControl.behavior) {
             ControlBehavior.TOGGLE, ControlBehavior.TOGGLE_RANGE -> primaryControl.value.asBooleanOrNull()
@@ -35,25 +103,27 @@ data class ServiceControlCard(
             primaryControl.behavior == ControlBehavior.TOGGLE_RANGE
 
     fun headlineValue(): String = when (primaryControl.behavior) {
-        ControlBehavior.TOGGLE -> when (primaryControl.value.asBooleanOrNull()) {
-            true -> "Включено"
-            false -> "Выключено"
-            null -> "Нет данных"
-        }
-        ControlBehavior.TOGGLE_RANGE -> {
-            when (primaryControl.value.asBooleanOrNull()) {
-                true -> "Включено"
-                false -> "Выключено"
-                null -> "Нет данных"
-            }
-        }
-        ControlBehavior.RANGE, ControlBehavior.SENSOR -> formattedValue(primaryControl)
+        ControlBehavior.TOGGLE, ControlBehavior.TOGGLE_RANGE -> semanticToggleValue(
+            primaryControl.value.asBooleanOrNull(),
+        )
+        ControlBehavior.RANGE, ControlBehavior.OPTIONS, ControlBehavior.SENSOR -> formattedValue(primaryControl)
         ControlBehavior.BUTTON -> "Готово к запуску"
+    }
+
+    fun displayServiceName(): String {
+        val explicit = serviceName.trim()
+        if (explicit.isNotBlank() && !explicit.equals(title, ignoreCase = true)) {
+            localizedServiceLabel(explicit)?.let { return it }
+            if (normalizeType(explicit) != normalizeType(serviceType)) return explicit
+            readableType(explicit)?.let { return it }
+        }
+        return localizedServiceLabel(serviceType) ?: template.categoryLabel()
     }
 
     fun availableAttributes(): List<SprutControl> = controls
         .asSequence()
         .filterNot { it.id == primaryControl.id }
+        .filter { it.behavior == ControlBehavior.SENSOR }
         // Characteristic ids are only unique inside one service. Linked sensor
         // services commonly reuse ids such as `1`, so use the full control id.
         .distinctBy(SprutControl::id)
@@ -63,10 +133,17 @@ data class ServiceControlCard(
         )
         .toList()
 
-    fun defaultAttributes(limit: Int = DEFAULT_ATTRIBUTE_COUNT): List<SprutControl> =
+    fun optionControls(): List<SprutControl> = controls
+        .asSequence()
+        .filter { it.behavior == ControlBehavior.OPTIONS && it.writable && it.valueOptions.size > 1 }
+        .distinctBy(SprutControl::id)
+        .sortedBy { attributeLabel(it).lowercase() }
+        .toList()
+
+    fun defaultAttributes(limit: Int = recommendedAttributeCount): List<SprutControl> =
         availableAttributes().take(limit)
 
-    fun selectedAttributes(item: PanelItem, limit: Int = DEFAULT_ATTRIBUTE_COUNT): List<SprutControl> {
+    fun selectedAttributes(item: PanelItem, limit: Int = recommendedAttributeCount): List<SprutControl> {
         val selectedIds = item.attributeControlIds
         return if (selectedIds == null) {
             defaultAttributes(limit)
@@ -102,6 +179,14 @@ data class ServiceControlCard(
 
     fun attributeValue(control: SprutControl): String = formattedValue(control)
 
+    fun optionLabel(option: SprutValueOption): String = localizedValueToken(
+        option.name.takeIf(String::isNotBlank)
+            ?: option.key.takeIf(String::isNotBlank)
+            ?: option.value.stringValue
+            ?: option.value.numberValue?.let { formatNumber(it, "") }
+            ?: "Вариант",
+    )
+
     fun rangeLabel(): String {
         val type = normalizeType(
             primaryControl.rangeCharacteristicType.ifBlank { primaryControl.characteristicType },
@@ -112,7 +197,14 @@ data class ServiceControlCard(
             "targetposition", "currentposition" -> "Положение"
             "rotationspeed", "fanspeed", "speed" -> "Скорость"
             "volume" -> "Громкость"
-            else -> "Настроить"
+            else -> when (template) {
+                ServiceCardTemplate.LIGHT -> "Яркость"
+                ServiceCardTemplate.FAN -> "Скорость"
+                ServiceCardTemplate.COVER -> "Положение"
+                ServiceCardTemplate.CLIMATE -> "Задано"
+                ServiceCardTemplate.MEDIA -> "Громкость"
+                else -> "Настроить"
+            }
         }
     }
 
@@ -124,6 +216,37 @@ data class ServiceControlCard(
     companion object {
         const val DEFAULT_ATTRIBUTE_COUNT = 2
     }
+
+    private fun semanticToggleValue(active: Boolean?): String = when (active) {
+        null -> "Нет данных"
+        else -> when (kind) {
+            DeviceKind.LOCK -> if (active) "Закрыт" else "Открыт"
+            DeviceKind.CURTAIN, DeviceKind.BLINDS, DeviceKind.SHUTTER ->
+                if (active) "Закрыты" else "Открыты"
+            DeviceKind.GARAGE -> if (active) "Закрыты" else "Открыты"
+            DeviceKind.VALVE -> if (active) "Открыт" else "Закрыт"
+            DeviceKind.SECURITY -> if (active) "Под охраной" else "Снято с охраны"
+            DeviceKind.VACUUM -> if (active) "Убирает" else "Остановлен"
+            else -> if (active) "Включено" else "Выключено"
+        }
+    }
+}
+
+fun ServiceCardTemplate.categoryLabel(): String = when (this) {
+    ServiceCardTemplate.LIGHT -> "Свет"
+    ServiceCardTemplate.SWITCH -> "Выключатель"
+    ServiceCardTemplate.OUTLET -> "Розетка"
+    ServiceCardTemplate.FAN -> "Вентилятор"
+    ServiceCardTemplate.COVER -> "Шторы и приводы"
+    ServiceCardTemplate.LOCK -> "Замок"
+    ServiceCardTemplate.CLIMATE -> "Климат"
+    ServiceCardTemplate.SECURITY -> "Охрана"
+    ServiceCardTemplate.VACUUM -> "Уборка"
+    ServiceCardTemplate.MEDIA -> "Медиа"
+    ServiceCardTemplate.SCENE -> "Сценарий"
+    ServiceCardTemplate.SENSOR -> "Датчик"
+    ServiceCardTemplate.RANGE -> "Регулятор"
+    ServiceCardTemplate.GENERIC -> "Устройство"
 }
 
 /** Stable id persisted by the custom panel. */
@@ -357,24 +480,59 @@ fun groupControlsByAccessory(controls: List<SprutControl>): List<AccessoryContro
 private fun primaryPriority(control: SprutControl): Int = when (control.behavior) {
     ControlBehavior.TOGGLE_RANGE -> 1_000
     ControlBehavior.TOGGLE -> 900
+    ControlBehavior.OPTIONS -> 850
     ControlBehavior.BUTTON -> 800
     ControlBehavior.RANGE -> 700
     ControlBehavior.SENSOR -> 100 + attributePriority(control)
 }
 
-private fun attributePriority(control: SprutControl): Int = when (normalizeType(control.characteristicType)) {
-    "currenttemperature" -> 600
-    "currentheatercoolerstate", "currentheatingcoolingstate", "currentoperationalstate" -> 560
-    "targetheatercoolerstate", "targetheatingcoolingstate", "targetoperationalstate" -> 540
-    "currentrelativehumidity" -> 520
-    "fanspeed", "rotationspeed", "currentfanstate" -> 500
-    "currentposition", "positionstate" -> 480
-    "outletinuse", "inuse" -> 460
-    "airquality" -> 440
-    "statusfault", "statusjammed", "operationalerror" -> 420
-    "online", "statusactive" -> 400
-    "batterylevel", "statuslowbattery" -> 380
-    else -> if (!control.writable) 200 else 100
+private fun attributePriority(control: SprutControl): Int {
+    val type = normalizeType(control.characteristicType)
+    return when {
+        control.kind == DeviceKind.LOCK && type in setOf("lockcurrentstate", "locktargetstate") -> 680
+        control.kind == DeviceKind.SECURITY && type in setOf(
+            "securitysystemcurrentstate",
+            "securitysystemtargetstate",
+        ) -> 680
+        control.kind in setOf(
+            DeviceKind.CURTAIN,
+            DeviceKind.BLINDS,
+            DeviceKind.SHUTTER,
+            DeviceKind.GARAGE,
+        ) && type in setOf("currentdoorstate", "targetdoorstate", "currentposition", "positionstate") -> 660
+        control.kind == DeviceKind.OUTLET && type in setOf("outletinuse", "inuse") -> 640
+        control.kind == DeviceKind.OUTLET && listOf(
+            "watt",
+            "power",
+            "ampere",
+            "current",
+            "volt",
+            "consumption",
+        ).any(type::contains) -> 620
+        type == "currenttemperature" -> 600
+        type in setOf("currentheatercoolerstate", "currentheatingcoolingstate", "currentoperationalstate") -> 560
+        type in setOf("targetheatercoolerstate", "targetheatingcoolingstate", "targetoperationalstate") -> 540
+        type == "currentrelativehumidity" -> 520
+        type in setOf("fanspeed", "rotationspeed", "currentfanstate") -> 500
+        type in setOf("currentposition", "positionstate", "currentdoorstate", "targetdoorstate") -> 480
+        type in setOf("outletinuse", "inuse") -> 460
+        type in setOf(
+            "contactsensorstate",
+            "motiondetected",
+            "occupancydetected",
+            "leakdetected",
+            "smokedetected",
+            "carbondioxidedetected",
+            "carbonmonoxidedetected",
+            "gasdetected",
+            "noisedetected",
+        ) -> 450
+        type == "airquality" -> 440
+        type in setOf("statusfault", "statusjammed", "operationalerror", "obstructiondetected") -> 420
+        type in setOf("online", "statusactive") -> 400
+        type in setOf("batterylevel", "statuslowbattery", "chargingstate") -> 380
+        else -> if (!control.writable) 200 else 100
+    }
 }
 
 private fun characteristicLabel(control: SprutControl): String = when (normalizeType(control.characteristicType)) {
@@ -386,13 +544,30 @@ private fun characteristicLabel(control: SprutControl): String = when (normalize
     "fanspeed", "rotationspeed", "currentfanstate" -> "Вентилятор"
     "currentposition" -> "Положение"
     "positionstate" -> "Движение"
+    "currentdoorstate" -> "Состояние"
+    "targetdoorstate" -> "Команда"
+    "lockcurrentstate" -> "Состояние"
+    "locktargetstate" -> "Команда"
+    "securitysystemcurrentstate" -> "Охрана"
+    "securitysystemtargetstate" -> "Заданный режим"
     "outletinuse", "inuse" -> "Нагрузка"
+    "contactsensorstate" -> "Контакт"
+    "motiondetected" -> "Движение"
+    "occupancydetected" -> "Присутствие"
+    "leakdetected" -> "Протечка"
+    "smokedetected" -> "Дым"
+    "carbondioxidedetected" -> "CO₂"
+    "carbonmonoxidedetected" -> "CO"
+    "gasdetected" -> "Газ"
+    "noisedetected" -> "Шум"
     "airquality" -> "Воздух"
     "statusfault", "operationalerror" -> "Ошибка"
     "statusjammed" -> "Заклинивание"
+    "obstructiondetected" -> "Препятствие"
     "online", "statusactive" -> "Связь"
     "batterylevel" -> "Батарея"
     "statuslowbattery" -> "Низкий заряд"
+    "chargingstate" -> "Зарядка"
     else -> control.characteristicName
         .takeIf(String::isNotBlank)
         ?: readableType(control.characteristicType)
@@ -402,7 +577,7 @@ private fun characteristicLabel(control: SprutControl): String = when (normalize
 }
 
 private fun formattedValue(control: SprutControl): String {
-    control.valueOptions.firstOrNull { option -> option.value.matches(control.value) }
+    control.valueOptions.firstOrNull { option -> option.value.sameValueAs(control.value) }
         ?.let { option ->
             option.name.takeIf(String::isNotBlank)
                 ?: option.key.takeIf(String::isNotBlank)
@@ -418,6 +593,55 @@ private fun formattedValue(control: SprutControl): String {
             "targetheatingcoolingstate" -> mapOf(0L to "Выключен", 1L to "Нагрев", 2L to "Охлаждение", 3L to "Авто")[numeric.roundToLong()]
             "currentfanstate" -> mapOf(0L to "Выключен", 1L to "Ожидание", 2L to "Работает")[numeric.roundToLong()]
             "positionstate" -> mapOf(0L to "Опускается", 1L to "Поднимается", 2L to "Остановлено")[numeric.roundToLong()]
+            "currentdoorstate" -> mapOf(
+                0L to "Открыто",
+                1L to "Закрыто",
+                2L to "Открывается",
+                3L to "Закрывается",
+                4L to "Остановлено",
+            )[numeric.roundToLong()]
+            "targetdoorstate" -> mapOf(0L to "Открыть", 1L to "Закрыть")[numeric.roundToLong()]
+            "lockcurrentstate" -> mapOf(
+                0L to "Открыт",
+                1L to "Закрыт",
+                2L to "Заклинил",
+                3L to "Неизвестно",
+            )[numeric.roundToLong()]
+            "locktargetstate" -> mapOf(0L to "Открыть", 1L to "Закрыть")[numeric.roundToLong()]
+            "securitysystemcurrentstate" -> mapOf(
+                0L to "Дома",
+                1L to "Вне дома",
+                2L to "Ночь",
+                3L to "Снято с охраны",
+                4L to "Тревога",
+            )[numeric.roundToLong()]
+            "securitysystemtargetstate" -> mapOf(
+                0L to "Дома",
+                1L to "Вне дома",
+                2L to "Ночь",
+                3L to "Снять с охраны",
+            )[numeric.roundToLong()]
+            "contactsensorstate" -> mapOf(0L to "Замкнут", 1L to "Разомкнут")[numeric.roundToLong()]
+            "occupancydetected" -> mapOf(0L to "Нет", 1L to "Есть")[numeric.roundToLong()]
+            "leakdetected" -> mapOf(0L to "Нет", 1L to "Обнаружена")[numeric.roundToLong()]
+            "smokedetected" -> mapOf(0L to "Нет", 1L to "Обнаружен")[numeric.roundToLong()]
+            "carbondioxidedetected", "carbonmonoxidedetected", "gasdetected" ->
+                mapOf(0L to "Норма", 1L to "Обнаружено")[numeric.roundToLong()]
+            "airquality" -> mapOf(
+                0L to "Неизвестно",
+                1L to "Отлично",
+                2L to "Хорошо",
+                3L to "Средне",
+                4L to "Плохо",
+                5L to "Очень плохо",
+            )[numeric.roundToLong()]
+            "chargingstate" -> mapOf(
+                0L to "Не заряжается",
+                1L to "Заряжается",
+                2L to "Недоступно",
+            )[numeric.roundToLong()]
+            "statusfault" -> mapOf(0L to "Нет", 1L to "Есть")[numeric.roundToLong()]
+            "statuslowbattery" -> mapOf(0L to "Норма", 1L to "Низкий")[numeric.roundToLong()]
             else -> null
         }
         return mapped ?: formatNumber(numeric, control.unit)
@@ -427,13 +651,6 @@ private fun formattedValue(control: SprutControl): String {
     }
     control.value.boolValue?.let { return if (it) "Да" else "Нет" }
     return "—"
-}
-
-private fun SprutValue.matches(other: SprutValue): Boolean = when {
-    boolValue != null && other.boolValue != null -> boolValue == other.boolValue
-    numberValue != null && other.numberValue != null -> abs(numberValue - other.numberValue) < 0.000_001
-    stringValue != null && other.stringValue != null -> stringValue.equals(other.stringValue, ignoreCase = true)
-    else -> false
 }
 
 private fun localizedValueToken(value: String): String = when (value.uppercase(Locale.ROOT)) {

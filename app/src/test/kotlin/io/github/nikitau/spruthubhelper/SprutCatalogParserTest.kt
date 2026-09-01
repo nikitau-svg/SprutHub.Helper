@@ -2,6 +2,7 @@ package io.github.nikitau.spruthubhelper
 
 import io.github.nikitau.spruthubhelper.data.ControlBehavior
 import io.github.nikitau.spruthubhelper.data.DeviceKind
+import io.github.nikitau.spruthubhelper.data.ServiceCardTemplate
 import io.github.nikitau.spruthubhelper.data.SprutControl
 import io.github.nikitau.spruthubhelper.data.buildServiceControlCards
 import io.github.nikitau.spruthubhelper.sprut.SprutCatalogParser
@@ -299,6 +300,40 @@ class SprutCatalogParserTest {
         assertEquals(2, control.valueOptions.size)
         assertEquals("TURBO", control.valueOptions.last().key)
         assertEquals("Турбо", buildServiceControlCards(listOf(control)).single().headlineValue())
+    }
+
+    @Test
+    fun exposesWritableEnumerationsAsSafeOptionControls() {
+        val rooms = json.parseToJsonElement("""{"rooms":[{"id":1,"name":"Дом"}]}""")
+        val accessories = json.parseToJsonElement(
+            """
+            {"accessories":[{
+              "id":96,"name":"Охрана","roomId":1,"services":[
+                {"sId":4,"type":"SecuritySystem","name":"Сигнализация","characteristics":[
+                  {"cId":1,"type":"SecuritySystemCurrentState","control":{"write":false,"value":{"intValue":3}}},
+                  {"cId":2,"type":"SecuritySystemTargetState","control":{"write":true,
+                   "value":{"intValue":1},"validValues":[
+                     {"value":{"intValue":0},"key":"STAY","name":"Дома"},
+                     {"value":{"intValue":1},"key":"AWAY","name":"Вне дома"},
+                     {"value":{"intValue":2},"key":"NIGHT","name":"Ночь"},
+                     {"value":{"intValue":3},"key":"OFF","name":"Снять"}
+                   ]}}
+                ]}
+              ]
+            }]}
+            """.trimIndent(),
+        )
+
+        val controls = parser.parse(rooms, accessories).controls
+        val option = controls.single { it.behavior == ControlBehavior.OPTIONS }
+        val card = buildServiceControlCards(controls).single()
+
+        assertEquals(DeviceKind.SECURITY, option.kind)
+        assertEquals(true, option.writable)
+        assertEquals(4, option.valueOptions.size)
+        assertEquals(ServiceCardTemplate.SECURITY, card.template)
+        assertEquals("Вне дома", card.headlineValue())
+        assertEquals(listOf(option.id), card.optionControls().map(SprutControl::id))
     }
 
     @Test

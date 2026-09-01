@@ -150,11 +150,12 @@ class SprutCatalogParser {
         val range = parsed
             .filter { it.role == CharacteristicRole.RANGE && it.writable }
             .maxByOrNull { it.rangePriority(kind, thermostatMode) }
+        val options = parsed.filter { it.role == CharacteristicRole.OPTIONS && it.writable }
         val button = parsed.firstOrNull { it.role == CharacteristicRole.BUTTON && it.writable }
         val title = accessoryName
         val subtitle = serviceName.takeIf { it.isNotBlank() && it != accessoryName }.orEmpty()
 
-        val primaryActions = if (
+        val baseActions = if (
             toggle != null && range != null &&
             kind in setOf(
                 DeviceKind.LIGHT,
@@ -254,6 +255,21 @@ class SprutCatalogParser {
                 }
             }
         }
+        val primaryActions = baseActions + options.map { option ->
+            option.toControl(
+                accessoryId,
+                serviceId,
+                title,
+                actionSubtitle(subtitle, option),
+                room,
+                kind,
+                sourceType,
+                serviceName,
+                servicePrimary,
+                linkedServiceIds,
+                ControlBehavior.OPTIONS,
+            )
+        }
         val actionCharacteristicIds = primaryActions.flatMap { control ->
             listOfNotNull(control.characteristicId, control.rangeCharacteristicId)
         }.toSet()
@@ -334,15 +350,20 @@ class SprutCatalogParser {
         val value = extractValue(characteristic)
         val hasValue = findValueObject(characteristic) != null
         val field = extractValueField(characteristic)
+        val readOnly = findBoolean(characteristic, "readOnly") == true
+        val explicitWrite = findBoolean(characteristic, "write")
+        val writable = explicitWrite ?: (
+            !readOnly && !descriptor.contains("read_only") && !descriptor.contains("readonly")
+            )
+        val valueOptions = parseValueOptions(characteristic, field)
         val role = when {
             descriptor.containsMarker(BUTTON_MARKERS) -> CharacteristicRole.BUTTON
             (descriptor.containsMarker(TOGGLE_MARKERS) && !descriptor.containsMarker(NON_TOGGLE_MARKERS)) ||
                 field == "boolValue" -> CharacteristicRole.TOGGLE
+            writable && valueOptions.size > 1 -> CharacteristicRole.OPTIONS
             descriptor.containsMarker(RANGE_MARKERS) || field in NUMBER_FIELDS -> CharacteristicRole.RANGE
             else -> CharacteristicRole.SENSOR
         }
-        val readOnly = findBoolean(characteristic, "readOnly") == true
-        val explicitWrite = findBoolean(characteristic, "write")
         return ParsedCharacteristic(
             id = id,
             descriptor = descriptor,
@@ -352,15 +373,13 @@ class SprutCatalogParser {
             isNameMetadata = isNameType(typeName),
             role = role,
             value = value,
-            valueOptions = parseValueOptions(characteristic, field),
+            valueOptions = valueOptions,
             valueField = field,
             minimum = findNumber(characteristic, "minValue", "minimum", "min") ?: 0.0,
             maximum = findNumber(characteristic, "maxValue", "maximum", "max") ?: 100.0,
             step = findNumber(characteristic, "minStep", "step")?.takeIf { it > 0.0 } ?: 1.0,
             unit = findString(characteristic, "unit", "units").orEmpty(),
-            writable = explicitWrite ?: (
-                !readOnly && !descriptor.contains("read_only") && !descriptor.contains("readonly")
-                ),
+            writable = writable,
         )
     }
 
@@ -727,7 +746,7 @@ class SprutCatalogParser {
         val writable: Boolean,
     )
 
-    private enum class CharacteristicRole { TOGGLE, RANGE, BUTTON, SENSOR }
+    private enum class CharacteristicRole { TOGGLE, RANGE, OPTIONS, BUTTON, SENSOR }
 
     private enum class ThermostatMode { HEAT, COOL, AUTO }
 

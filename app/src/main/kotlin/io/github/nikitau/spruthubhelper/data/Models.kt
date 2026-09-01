@@ -2,6 +2,7 @@ package io.github.nikitau.spruthubhelper.data
 
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.Transient
+import kotlin.math.abs
 
 @Serializable
 enum class ConnectionMode {
@@ -70,6 +71,7 @@ enum class ControlBehavior {
     TOGGLE,
     RANGE,
     TOGGLE_RANGE,
+    OPTIONS,
     BUTTON,
     SENSOR,
 }
@@ -162,6 +164,13 @@ data class SprutControl(
                 append(value.asDouble().formatCompact())
                 if (unit.isNotBlank()) append(" ").append(unit)
             }
+            ControlBehavior.OPTIONS -> valueOptions
+                .firstOrNull { option -> option.value.sameValueAs(value) }
+                ?.let { option -> option.name.ifBlank { option.key } }
+                ?.takeIf(String::isNotBlank)
+                ?: value.stringValue
+                ?: value.numberValue?.formatCompact()
+                ?: "—"
             ControlBehavior.BUTTON -> "Готово к запуску"
             ControlBehavior.SENSOR -> buildString {
                 append(
@@ -173,6 +182,13 @@ data class SprutControl(
                 if (unit.isNotBlank() && value.numberValue != null) append(" ").append(unit)
             }
         }
+}
+
+internal fun SprutValue.sameValueAs(other: SprutValue): Boolean = when {
+    boolValue != null && other.boolValue != null -> boolValue == other.boolValue
+    numberValue != null && other.numberValue != null -> abs(numberValue - other.numberValue) < 0.000_001
+    stringValue != null && other.stringValue != null -> stringValue.equals(other.stringValue, ignoreCase = true)
+    else -> false
 }
 
 @Serializable

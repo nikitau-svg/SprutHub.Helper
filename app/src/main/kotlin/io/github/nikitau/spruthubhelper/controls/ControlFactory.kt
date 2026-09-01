@@ -91,7 +91,8 @@ object ControlFactory {
                 if (unit.isBlank()) "%.0f" else "%.0f $unit",
             ),
         )
-        ControlBehavior.BUTTON, ControlBehavior.SENSOR -> StatelessTemplate("command:$id")
+        ControlBehavior.OPTIONS, ControlBehavior.BUTTON, ControlBehavior.SENSOR ->
+            StatelessTemplate("command:$id")
     }
 
     private fun SprutControl.deviceType(): Int = when (kind) {

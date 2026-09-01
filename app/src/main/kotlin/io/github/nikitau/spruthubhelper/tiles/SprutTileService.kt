@@ -110,6 +110,11 @@ abstract class SprutTileService(private val slot: Int) : TileService() {
                     return
                 }
             }
+            ControlBehavior.OPTIONS -> {
+                openControl(control)
+                updateTile()
+                return
+            }
             ControlBehavior.BUTTON -> repository.execute(control.id)
             ControlBehavior.SENSOR -> Result.failure(IllegalStateException("Только чтение"))
         }
@@ -153,7 +158,7 @@ abstract class SprutTileService(private val slot: Int) : TileService() {
                 when (control.behavior) {
                     ControlBehavior.TOGGLE, ControlBehavior.TOGGLE_RANGE ->
                         if (presentation.active) Tile.STATE_ACTIVE else Tile.STATE_INACTIVE
-                    ControlBehavior.BUTTON, ControlBehavior.RANGE -> Tile.STATE_INACTIVE
+                    ControlBehavior.OPTIONS, ControlBehavior.BUTTON, ControlBehavior.RANGE -> Tile.STATE_INACTIVE
                     ControlBehavior.SENSOR -> Tile.STATE_UNAVAILABLE
                 }
             }

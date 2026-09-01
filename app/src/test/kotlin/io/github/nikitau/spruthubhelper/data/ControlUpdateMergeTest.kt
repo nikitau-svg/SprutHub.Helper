@@ -85,4 +85,12 @@ class ControlUpdateMergeTest {
 
         assertEquals(false, merged.single().value.boolValue)
     }
+
+    @Test
+    fun optionValuesKeepTheCharacteristicWireType() {
+        assertEquals("2", optionWireValue("intValue", SprutValue(numberValue = 2.0)).content)
+        assertEquals("2.5", optionWireValue("doubleValue", SprutValue(numberValue = 2.5)).content)
+        assertEquals("true", optionWireValue("boolValue", SprutValue(boolValue = true)).content)
+        assertEquals("COOL", optionWireValue("enumValue", SprutValue(stringValue = "COOL")).content)
+    }
 }

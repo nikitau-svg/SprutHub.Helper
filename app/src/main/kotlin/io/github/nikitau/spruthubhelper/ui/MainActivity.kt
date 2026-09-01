@@ -2049,16 +2049,21 @@ private fun PanelSummaryCard(
                                 enabled = index < items.lastIndex,
                             ) { Icon(Icons.Rounded.ArrowDownward, "Ниже") }
                         }
-                        if (card != null && card.availableAttributes().isNotEmpty()) {
+                        if (
+                            card != null &&
+                            card.availableAttributes().isNotEmpty() &&
+                            card.optionControls().take(2).size < 2
+                        ) {
+                            val attributeLimit = 2 - card.optionControls().take(2).size
                             val available = card.availableAttributes()
                             val availableIds = available.mapTo(mutableSetOf(), SprutControl::id)
                             val selectedIds = (
                                 item.attributeControlIds
                                     ?: card.defaultAttributes().map(SprutControl::id)
-                                ).filter(availableIds::contains)
+                                ).filter(availableIds::contains).take(attributeLimit)
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text(
-                                    "Показатели · до 2",
+                                    "Показатели · до $attributeLimit",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     modifier = Modifier.weight(1f),
@@ -2077,7 +2082,7 @@ private fun PanelSummaryCard(
                                     val selected = attribute.id in selectedIds
                                     FilterChip(
                                         selected = selected,
-                                        enabled = selected || selectedIds.size < 2,
+                                        enabled = selected || selectedIds.size < attributeLimit,
                                         onClick = {
                                             val next = if (selected) {
                                                 selectedIds - attribute.id

@@ -207,6 +207,100 @@ class AccessoryControlGroupTest {
         assertEquals("Снаружи · Сейчас", card.attributeLabel(outdoor))
     }
 
+    @Test
+    fun resolvesStableTemplatesFromKindsAndBehavior() {
+        val cases = listOf(
+            Triple(DeviceKind.LIGHT, ControlBehavior.TOGGLE_RANGE, ServiceCardTemplate.LIGHT),
+            Triple(DeviceKind.OUTLET, ControlBehavior.TOGGLE, ServiceCardTemplate.OUTLET),
+            Triple(DeviceKind.LOCK, ControlBehavior.TOGGLE, ServiceCardTemplate.LOCK),
+            Triple(DeviceKind.THERMOSTAT, ControlBehavior.TOGGLE_RANGE, ServiceCardTemplate.CLIMATE),
+            Triple(DeviceKind.SCENE, ControlBehavior.BUTTON, ServiceCardTemplate.SCENE),
+            Triple(DeviceKind.SENSOR, ControlBehavior.SENSOR, ServiceCardTemplate.SENSOR),
+            Triple(DeviceKind.OTHER, ControlBehavior.RANGE, ServiceCardTemplate.RANGE),
+        )
+
+        cases.forEachIndexed { index, (kind, behavior, expected) ->
+            val card = buildServiceControlCards(
+                listOf(
+                    control(id = "${80 + index}:1:1", serviceId = "1", subtitle = "Сервис").copy(
+                        kind = kind,
+                        behavior = behavior,
+                    ),
+                ),
+            ).single()
+
+            assertEquals(expected, card.template)
+        }
+    }
+
+    @Test
+    fun usesDeviceSemanticsInsteadOfGenericOnOffText() {
+        val locked = control(id = "91:1:1", serviceId = "1", subtitle = "Замок").copy(
+            kind = DeviceKind.LOCK,
+            behavior = ControlBehavior.TOGGLE,
+            value = SprutValue(boolValue = true),
+        )
+        val openedCover = control(id = "92:1:1", serviceId = "1", subtitle = "Шторы").copy(
+            kind = DeviceKind.CURTAIN,
+            behavior = ControlBehavior.TOGGLE,
+            value = SprutValue(boolValue = false),
+        )
+        val openedValve = control(id = "93:1:1", serviceId = "1", subtitle = "Клапан").copy(
+            kind = DeviceKind.VALVE,
+            behavior = ControlBehavior.TOGGLE,
+            value = SprutValue(boolValue = true),
+        )
+
+        assertEquals("Закрыт", buildServiceControlCards(listOf(locked)).single().headlineValue())
+        assertEquals("Открыты", buildServiceControlCards(listOf(openedCover)).single().headlineValue())
+        assertEquals("Открыт", buildServiceControlCards(listOf(openedValve)).single().headlineValue())
+    }
+
+    @Test
+    fun choosesUsefulOutletAttributesBeforeGenericMetadata() {
+        val outlet = control(id = "94:1:main", serviceId = "1", subtitle = "Розетка").copy(
+            kind = DeviceKind.OUTLET,
+            behavior = ControlBehavior.TOGGLE,
+        )
+        val inUse = control(id = "94:1:2", serviceId = "1", subtitle = "Нагрузка").copy(
+            kind = DeviceKind.OUTLET,
+            behavior = ControlBehavior.SENSOR,
+            characteristicType = "OutletInUse",
+            writable = false,
+        )
+        val power = control(id = "94:1:3", serviceId = "1", subtitle = "Мощность").copy(
+            kind = DeviceKind.OUTLET,
+            behavior = ControlBehavior.SENSOR,
+            characteristicType = "C_WattMeter",
+            writable = false,
+        )
+        val battery = control(id = "94:1:4", serviceId = "1", subtitle = "Батарея").copy(
+            kind = DeviceKind.OUTLET,
+            behavior = ControlBehavior.SENSOR,
+            characteristicType = "BatteryLevel",
+            writable = false,
+        )
+
+        val card = buildServiceControlCards(listOf(outlet, inUse, power, battery)).single()
+
+        assertEquals(ServiceCardTemplate.OUTLET, card.template)
+        assertEquals(listOf("94:1:2", "94:1:3"), card.defaultAttributes().map(SprutControl::id))
+    }
+
+    @Test
+    fun replacesRawSprutHubTypeWithTemplateLabel() {
+        val climate = control(id = "95:1:main", serviceId = "1", subtitle = "HeaterCooler").copy(
+            kind = DeviceKind.THERMOSTAT,
+            behavior = ControlBehavior.TOGGLE_RANGE,
+            serviceName = "HeaterCooler",
+            sourceType = "HeaterCooler",
+        )
+
+        val card = buildServiceControlCards(listOf(climate)).single()
+
+        assertEquals("Климат", card.displayServiceName())
+    }
+
     private fun control(id: String, serviceId: String, subtitle: String) = SprutControl(
         id = id,
         accessoryId = id.substringBefore(':'),
