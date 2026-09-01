@@ -97,7 +97,15 @@ import io.github.nikitau.spruthubhelper.diagnostics.DiagnosticOutcome
 import io.github.nikitau.spruthubhelper.icons.CustomIconManager
 import io.github.nikitau.spruthubhelper.tiles.TileIconResolver
 import io.github.nikitau.spruthubhelper.ui.MainActivity
+import io.github.nikitau.spruthubhelper.ui.SprutAccent
+import io.github.nikitau.spruthubhelper.ui.SprutAccentDim
+import io.github.nikitau.spruthubhelper.ui.SprutBackground
+import io.github.nikitau.spruthubhelper.ui.SprutHeaderIconButton
 import io.github.nikitau.spruthubhelper.ui.SprutHelperTheme
+import io.github.nikitau.spruthubhelper.ui.SprutSurface
+import io.github.nikitau.spruthubhelper.ui.SprutSurfaceLow
+import io.github.nikitau.spruthubhelper.ui.SprutText
+import io.github.nikitau.spruthubhelper.ui.SprutTextMuted
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -164,11 +172,11 @@ internal object DevicePanelSupport {
         Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE && hasSystemControls(context)
 }
 
-private val PanelText = Color(0xFFF1F7F4)
-private val PanelMutedText = Color(0xFFB6C8C0)
-private val PanelAccent = Color(0xFF86E8C2)
-private val PanelAccentDark = Color(0xFF173E32)
-private val PanelSurface = Color(0xFF13231F)
+private val PanelText = SprutText
+private val PanelMutedText = SprutTextMuted
+private val PanelAccent = SprutAccent
+private val PanelAccentDark = SprutAccentDim
+private val PanelSurface = SprutSurface
 
 @Composable
 private fun SprutDevicePanel(
@@ -388,14 +396,14 @@ private fun GlassBackground(content: @Composable BoxScope.() -> Unit) {
                 .fillMaxSize()
                 .background(
                     Brush.linearGradient(
-                        colors = listOf(Color(0xFF071411), Color(0xFF10231E), Color(0xFF081714)),
+                        colors = listOf(SprutBackground, Color(0xFF191713), SprutBackground),
                     ),
                 ),
         ) {
             Canvas(Modifier.fillMaxSize()) {
                 drawCircle(
                     brush = Brush.radialGradient(
-                        listOf(Color(0x4072DDB2), Color.Transparent),
+                        listOf(Color(0x28FFA805), Color.Transparent),
                         center = Offset(size.width * 0.14f, size.height * 0.18f),
                         radius = size.minDimension * 0.55f,
                     ),
@@ -404,7 +412,7 @@ private fun GlassBackground(content: @Composable BoxScope.() -> Unit) {
                 )
                 drawCircle(
                     brush = Brush.radialGradient(
-                        listOf(Color(0x305FA889), Color.Transparent),
+                        listOf(Color(0x20774E00), Color.Transparent),
                         center = Offset(size.width * 0.88f, size.height * 0.72f),
                         radius = size.minDimension * 0.62f,
                     ),
@@ -427,7 +435,7 @@ private fun PanelHeader(
 ) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         if (showBack) {
-            IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Назад") }
+            SprutHeaderIconButton(Icons.AutoMirrored.Rounded.ArrowBack, "Назад", onBack)
         }
         Column(Modifier.weight(1f)) {
             Text(
@@ -447,7 +455,7 @@ private fun PanelHeader(
         if (refreshing) {
             CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
         } else {
-            IconButton(onClick = onRefresh) { Icon(Icons.Rounded.Refresh, "Обновить") }
+            SprutHeaderIconButton(Icons.Rounded.Refresh, "Обновить", onRefresh)
         }
     }
 }
@@ -472,7 +480,7 @@ private fun ServiceGlassCard(
         val icons = CustomIconManager(context)
         icons.loadBitmap(card.id) ?: icons.loadBitmap(control.id)
     }
-    val shape = RoundedCornerShape(if (item.size == PanelItemSize.LARGE) 20.dp else 18.dp)
+    val shape = RoundedCornerShape(16.dp)
     val subtitle = listOf(card.serviceName, card.room)
         .filter(String::isNotBlank)
         .distinctBy { it.lowercase() }
@@ -495,14 +503,14 @@ private fun ServiceGlassCard(
             .background(
                 Brush.linearGradient(
                     colors = if (active) {
-                        listOf(Color(0x55346756), Color(0x33284B40), Color(0x242A3834))
+                        listOf(Color(0xFF332A18), Color(0xFF292218), SprutSurfaceLow)
                     } else {
-                        listOf(Color(0x24FFFFFF), Color(0x14FFFFFF), Color(0x2424332F))
+                        listOf(SprutSurfaceLow, SprutSurfaceLow)
                     },
                 ),
             )
             .border(
-                BorderStroke(1.dp, Color.White.copy(alpha = if (active) 0.26f else 0.16f)),
+                BorderStroke(1.dp, if (active) PanelAccent.copy(alpha = 0.82f) else Color.White.copy(alpha = 0.06f)),
                 shape,
             )
             .padding(12.dp),
@@ -512,8 +520,8 @@ private fun ServiceGlassCard(
                 Box(
                     modifier = Modifier
                         .size(40.dp)
-                        .clip(RoundedCornerShape(14.dp))
-                        .background(Color.White.copy(alpha = if (active) 0.14f else 0.08f)),
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(if (active) PanelAccentDark.copy(alpha = 0.72f) else Color.White.copy(alpha = 0.08f)),
                     contentAlignment = Alignment.Center,
                 ) {
                     if (customBitmap != null) {
@@ -573,7 +581,7 @@ private fun ServiceGlassCard(
                     Box(
                         modifier = Modifier
                             .size(40.dp)
-                            .clip(RoundedCornerShape(14.dp))
+                            .clip(RoundedCornerShape(12.dp))
                             .background(
                                 if (active) PanelAccent.copy(alpha = 0.20f)
                                 else Color.White.copy(alpha = 0.075f),
@@ -702,9 +710,9 @@ private fun EmptyPanel(modifier: Modifier, onOpenApp: () -> Unit) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(28.dp))
-                .background(Color.White.copy(alpha = 0.07f))
-                .border(1.dp, Color.White.copy(alpha = 0.16f), RoundedCornerShape(28.dp))
+                .clip(RoundedCornerShape(16.dp))
+                .background(SprutSurfaceLow)
+                .border(1.dp, Color.White.copy(alpha = 0.06f), RoundedCornerShape(16.dp))
                 .padding(28.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {

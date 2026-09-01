@@ -22,6 +22,8 @@ import androidx.compose.material.icons.rounded.LocationOn
 import androidx.compose.material.icons.rounded.MyLocation
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
@@ -29,7 +31,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
@@ -84,9 +85,10 @@ internal fun PresenceCard(
         }
     }
 
-    OutlinedCard(
+    Card(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-        shape = RoundedCornerShape(20.dp),
+        shape = SprutTileShape,
+        colors = CardDefaults.cardColors(containerColor = SprutSurfaceLow),
     ) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -201,6 +203,8 @@ internal fun PresenceCard(
                         label = { Text("Название") },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
+                        shape = SprutControlShape,
+                        colors = sprutTextFieldColors(),
                     )
                     OutlinedButton(
                         onClick = viewModel::requestCurrentCoordinates,
@@ -219,6 +223,8 @@ internal fun PresenceCard(
                             modifier = Modifier.weight(1f),
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                             singleLine = true,
+                            shape = SprutControlShape,
+                            colors = sprutTextFieldColors(),
                         )
                         OutlinedTextField(
                             value = longitude,
@@ -227,6 +233,8 @@ internal fun PresenceCard(
                             modifier = Modifier.weight(1f),
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                             singleLine = true,
+                            shape = SprutControlShape,
+                            colors = sprutTextFieldColors(),
                         )
                     }
                     OutlinedTextField(
@@ -237,6 +245,8 @@ internal fun PresenceCard(
                         modifier = Modifier.fillMaxWidth(),
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         singleLine = true,
+                        shape = SprutControlShape,
+                        colors = sprutTextFieldColors(),
                     )
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
@@ -324,7 +334,11 @@ private fun ZoneRow(
     viewModel: MainViewModel,
     onDelete: () -> Unit,
 ) {
-    OutlinedCard(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp)) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = SprutControlShape,
+        colors = CardDefaults.cardColors(containerColor = SprutSurface),
+    ) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {

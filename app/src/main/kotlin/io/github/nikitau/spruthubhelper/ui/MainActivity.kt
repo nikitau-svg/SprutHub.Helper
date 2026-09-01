@@ -76,9 +76,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -174,17 +172,6 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private val SprutGreen = Color(0xFF72DDB2)
-private val SprutDark = Color(0xFF0B1412)
-private val SprutSurface = Color(0xFF111D1A)
-private val SprutSurfaceElevated = Color(0xFF182824)
-private val SprutField = Color(0xFF20322D)
-private val SprutFieldFocused = Color(0xFF263D36)
-private val SprutText = Color(0xFFF1F7F4)
-private val SprutTextMuted = Color(0xFFB6C8C0)
-private val SprutOutline = Color(0xFF748A81)
-private val SprutError = Color(0xFFFFB4AB)
-
 private data class CloudEndpointPreset(val label: String, val url: String)
 
 private val CloudEndpointPresets = listOf(
@@ -192,63 +179,6 @@ private val CloudEndpointPresets = listOf(
     CloudEndpointPreset("beta.ru", "wss://beta.spruthub.ru/spruthub"),
     CloudEndpointPreset("web.com", "wss://web.spruthub.com/spruthub"),
     CloudEndpointPreset("beta.com", "wss://beta.spruthub.com/spruthub"),
-)
-
-@Composable
-internal fun SprutHelperTheme(content: @Composable () -> Unit) {
-    val scheme = androidx.compose.material3.darkColorScheme(
-        primary = SprutGreen,
-        onPrimary = Color(0xFF003827),
-        primaryContainer = Color(0xFF15513D),
-        onPrimaryContainer = Color(0xFFA7F2D1),
-        secondary = Color(0xFFB4CCBF),
-        onSecondary = Color(0xFF20352C),
-        secondaryContainer = Color(0xFF374B42),
-        onSecondaryContainer = Color(0xFFD0E8DA),
-        background = SprutDark,
-        surface = SprutSurface,
-        surfaceVariant = SprutSurfaceElevated,
-        onBackground = SprutText,
-        onSurface = SprutText,
-        onSurfaceVariant = SprutTextMuted,
-        outline = SprutOutline,
-        outlineVariant = Color(0xFF40544C),
-        error = SprutError,
-        onError = Color(0xFF690005),
-        errorContainer = Color(0xFF93000A),
-        onErrorContainer = Color(0xFFFFDAD6),
-    )
-    MaterialTheme(colorScheme = scheme, content = content)
-}
-
-@Composable
-private fun sprutTextFieldColors() = OutlinedTextFieldDefaults.colors(
-    focusedTextColor = SprutText,
-    unfocusedTextColor = SprutText,
-    disabledTextColor = SprutText.copy(alpha = 0.5f),
-    errorTextColor = SprutText,
-    focusedContainerColor = SprutFieldFocused,
-    unfocusedContainerColor = SprutField,
-    disabledContainerColor = SprutField.copy(alpha = 0.5f),
-    errorContainerColor = SprutField,
-    cursorColor = SprutGreen,
-    errorCursorColor = SprutError,
-    focusedBorderColor = SprutGreen,
-    unfocusedBorderColor = SprutOutline,
-    disabledBorderColor = SprutOutline.copy(alpha = 0.45f),
-    errorBorderColor = SprutError,
-    focusedLabelColor = SprutGreen,
-    unfocusedLabelColor = SprutTextMuted,
-    disabledLabelColor = SprutTextMuted.copy(alpha = 0.5f),
-    errorLabelColor = SprutError,
-    focusedLeadingIconColor = SprutGreen,
-    unfocusedLeadingIconColor = SprutTextMuted,
-    disabledLeadingIconColor = SprutTextMuted.copy(alpha = 0.5f),
-    errorLeadingIconColor = SprutError,
-    focusedSupportingTextColor = SprutTextMuted,
-    unfocusedSupportingTextColor = SprutTextMuted,
-    disabledSupportingTextColor = SprutTextMuted.copy(alpha = 0.5f),
-    errorSupportingTextColor = SprutError,
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -435,28 +365,30 @@ private fun MainScreen(viewModel: MainViewModel = viewModel()) {
                 },
                 navigationIcon = {
                     if (settingsOpen) {
-                        IconButton(
+                        SprutHeaderIconButton(
+                            icon = Icons.AutoMirrored.Rounded.ArrowBack,
+                            contentDescription = "Назад",
                             onClick = {
                                 if (settingsSection != null) settingsSectionName = null
                                 else settingsOpen = false
                             },
-                        ) {
-                            Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Назад")
-                        }
+                        )
                     }
                 },
                 actions = {
                     if (!settingsOpen) {
-                        IconButton(onClick = {
-                            settingsSectionName = null
-                            settingsOpen = true
-                        }) {
-                            Icon(Icons.Rounded.Menu, contentDescription = "Открыть настройки")
-                        }
+                        SprutHeaderIconButton(
+                            icon = Icons.Rounded.Menu,
+                            contentDescription = "Открыть настройки",
+                            onClick = {
+                                settingsSectionName = null
+                                settingsOpen = true
+                            },
+                        )
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = SprutDark,
+                    containerColor = SprutBackground,
                     titleContentColor = SprutText,
                 ),
             )
@@ -555,6 +487,7 @@ private fun HomeContent(
                     singleLine = true,
                     label = { Text("Поиск") },
                     leadingIcon = { Icon(Icons.Rounded.Search, null) },
+                    shape = SprutControlShape,
                     colors = sprutTextFieldColors(),
                 )
             }
@@ -647,14 +580,14 @@ private fun HomeReadinessCard(
     onOpenSettings: (SettingsSection) -> Unit,
 ) {
     val accent = when (readiness.tone) {
-        SetupTone.READY -> SprutGreen
-        SetupTone.ATTENTION -> Color(0xFFFFC857)
-        SetupTone.OPTIONAL -> Color(0xFF76B8FF)
+        SetupTone.READY -> SprutAccent
+        SetupTone.ATTENTION -> SprutWarning
+        SetupTone.OPTIONAL -> SprutInfo
     }
     Card(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-        shape = RoundedCornerShape(24.dp),
-        colors = CardDefaults.cardColors(containerColor = SprutSurfaceElevated),
+        shape = SprutTileShape,
+        colors = CardDefaults.cardColors(containerColor = SprutSurfaceLow),
     ) {
         Column(
             Modifier.padding(18.dp),
@@ -716,8 +649,8 @@ private fun SettingsHub(
         item {
             Card(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-                shape = RoundedCornerShape(20.dp),
-                colors = CardDefaults.cardColors(containerColor = SprutSurfaceElevated),
+                shape = SprutTileShape,
+                colors = CardDefaults.cardColors(containerColor = SprutSurfaceLow),
             ) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
                     Text("Всё служебное — здесь", fontWeight = FontWeight.Bold)
@@ -757,9 +690,10 @@ private fun SettingsEntryCard(
     onClick: () -> Unit,
 ) {
     val statusColor = setupToneColor(statusTone)
-    OutlinedCard(
+    Card(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).clickable(onClick = onClick),
-        shape = RoundedCornerShape(18.dp),
+        shape = SprutTileShape,
+        colors = CardDefaults.cardColors(containerColor = SprutSurfaceLow),
     ) {
         Row(
             modifier = Modifier.padding(15.dp),
@@ -790,7 +724,7 @@ private fun SettingsEntryCard(
 
 @Composable
 private fun setupToneColor(tone: SetupTone): Color = when (tone) {
-    SetupTone.READY -> SprutGreen
+    SetupTone.READY -> SprutAccent
     SetupTone.ATTENTION -> MaterialTheme.colorScheme.error
     SetupTone.OPTIONAL -> MaterialTheme.colorScheme.onSurfaceVariant
 }
@@ -811,8 +745,8 @@ internal fun NextActionCard(
     onAction: (GuidanceAction) -> Unit,
 ) {
     val accent = when (guidance.tone) {
-        SetupTone.READY -> SprutGreen
-        SetupTone.ATTENTION -> Color(0xFFFFC857)
+        SetupTone.READY -> SprutAccent
+        SetupTone.ATTENTION -> SprutWarning
         SetupTone.OPTIONAL -> MaterialTheme.colorScheme.onSurfaceVariant
     }
     Card(
@@ -925,9 +859,10 @@ private fun HealthCard(
         Unit
     }
 
-    OutlinedCard(
+    Card(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-        shape = RoundedCornerShape(20.dp),
+        shape = SprutTileShape,
+        colors = CardDefaults.cardColors(containerColor = SprutSurfaceLow),
     ) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -954,7 +889,7 @@ private fun HealthCard(
             Text(
                 "Выбранные показатели передаются только на настроенный локальный адрес. Облачный fallback для здоровья отключён.",
                 style = MaterialTheme.typography.bodySmall,
-                color = SprutGreen,
+                color = SprutAccent,
             )
             NextActionCard(
                 guidance = guidance,
@@ -1148,9 +1083,10 @@ private fun PhoneCard(
         bindingMatchesFields(phone.binding, phoneVirtualFields(selectedSensors))
     val guidance = phoneGuidance(phone, selectionMatchesDevice)
 
-    OutlinedCard(
+    Card(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-        shape = RoundedCornerShape(20.dp),
+        shape = SprutTileShape,
+        colors = CardDefaults.cardColors(containerColor = SprutSurfaceLow),
     ) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1174,7 +1110,7 @@ private fun PhoneCard(
             Text(
                 "Передаются только отмеченные показатели. В режиме «Авто» вне дома приложение может использовать настроенное облако SprutHub.",
                 style = MaterialTheme.typography.bodySmall,
-                color = SprutGreen,
+                color = SprutAccent,
             )
             NextActionCard(
                 guidance = guidance,
@@ -1300,7 +1236,7 @@ private fun PhoneCard(
                     HorizontalDivider()
                     Text("Что передавать", fontWeight = FontWeight.SemiBold)
                     PhoneSensorCategory.entries.forEach { category ->
-                        Text(category.title, color = SprutGreen, fontWeight = FontWeight.SemiBold)
+                        Text(category.title, color = SprutAccent, fontWeight = FontWeight.SemiBold)
                         PhoneSensor.entries.filter { it.category == category }.forEach { sensor ->
                             val required = sensor in REQUIRED_PHONE_SENSORS
                             val supported = Build.VERSION.SDK_INT >= sensor.minimumApi
@@ -1422,7 +1358,7 @@ private fun PhoneCard(
                                 "В SprutHub не найден сервис уведомлений: настройте Web Push, Telegram или e-mail"
                             },
                             style = MaterialTheme.typography.labelSmall,
-                            color = if (count > 0) SprutGreen else MaterialTheme.colorScheme.error,
+                            color = if (count > 0) SprutAccent else MaterialTheme.colorScheme.error,
                         )
                     }
                     OutlinedButton(
@@ -1583,7 +1519,7 @@ private fun ReliabilityRow(
         Text(
             if (ready) "✓ $readyText" else "• $missingText",
             style = MaterialTheme.typography.labelMedium,
-            color = if (ready) SprutGreen else MaterialTheme.colorScheme.error,
+            color = if (ready) SprutAccent else MaterialTheme.colorScheme.error,
         )
     }
 }
@@ -1633,8 +1569,8 @@ private fun ConnectionCard(
 
     Card(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-        shape = RoundedCornerShape(24.dp),
-        colors = CardDefaults.cardColors(containerColor = SprutSurfaceElevated),
+        shape = SprutTileShape,
+        colors = CardDefaults.cardColors(containerColor = SprutSurface),
     ) {
         Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1673,6 +1609,7 @@ private fun ConnectionCard(
                         modifier = Modifier.fillMaxWidth(),
                         label = { Text("Серийный номер хаба") },
                         singleLine = true,
+                        shape = SprutControlShape,
                         colors = sprutTextFieldColors(),
                     )
                     OutlinedTextField(
@@ -1682,6 +1619,7 @@ private fun ConnectionCard(
                         label = { Text("E-mail SprutHub") },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
                         singleLine = true,
+                        shape = SprutControlShape,
                         colors = sprutTextFieldColors(),
                     )
                     OutlinedTextField(
@@ -1691,6 +1629,7 @@ private fun ConnectionCard(
                         label = { Text("Локальный адрес") },
                         supportingText = { Text("IP, имя .local, http(s):// или полный ws(s):// адрес") },
                         singleLine = true,
+                        shape = SprutControlShape,
                         colors = sprutTextFieldColors(),
                     )
                     OutlinedTextField(
@@ -1709,6 +1648,7 @@ private fun ConnectionCard(
                             }
                         },
                         singleLine = true,
+                        shape = SprutControlShape,
                         colors = sprutTextFieldColors(),
                     )
                     Text("Облачный сервер", fontWeight = FontWeight.SemiBold)
@@ -1739,6 +1679,7 @@ private fun ConnectionCard(
                         label = { Text("Облачный адрес") },
                         supportingText = { Text("Можно выбрать пресет выше или ввести свой https/wss адрес") },
                         singleLine = true,
+                        shape = SprutControlShape,
                         colors = sprutTextFieldColors(),
                     )
                     OutlinedTextField(
@@ -1757,6 +1698,7 @@ private fun ConnectionCard(
                             }
                         },
                         singleLine = true,
+                        shape = SprutControlShape,
                         colors = sprutTextFieldColors(),
                     )
                 }
@@ -1789,7 +1731,7 @@ private fun ConnectionCard(
                 Text(
                     formProblem,
                     style = MaterialTheme.typography.labelMedium,
-                    color = Color(0xFFFFC857),
+                    color = SprutWarning,
                 )
             }
         }
@@ -1799,11 +1741,11 @@ private fun ConnectionCard(
 @Composable
 private fun StatusDot(phase: ConnectionPhase) {
     val color = when (phase) {
-        ConnectionPhase.CONNECTED_LOCAL -> Color(0xFF63D6A5)
-        ConnectionPhase.CONNECTED_CLOUD -> Color(0xFF76B8FF)
-        ConnectionPhase.CONNECTING -> Color(0xFFFFC857)
-        ConnectionPhase.ERROR -> Color(0xFFFF7B7B)
-        ConnectionPhase.IDLE -> Color(0xFF9AA8A1)
+        ConnectionPhase.CONNECTED_LOCAL -> SprutSuccess
+        ConnectionPhase.CONNECTED_CLOUD -> SprutInfo
+        ConnectionPhase.CONNECTING -> SprutWarning
+        ConnectionPhase.ERROR -> SprutError
+        ConnectionPhase.IDLE -> SprutTextFaint
     }
     Surface(modifier = Modifier.size(12.dp), shape = CircleShape, color = color) {}
 }
@@ -1828,21 +1770,22 @@ private fun PanelSummaryCard(
     var expanded by rememberSaveable { mutableStateOf(items.size <= 4) }
     var confirmClear by remember { mutableStateOf(false) }
 
-    OutlinedCard(
+    Card(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-        shape = RoundedCornerShape(20.dp),
+        shape = SprutTileShape,
+        colors = CardDefaults.cardColors(containerColor = SprutSurfaceLow),
     ) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Surface(shape = CircleShape, color = MaterialTheme.colorScheme.primaryContainer) {
-                    Icon(Icons.Rounded.DashboardCustomize, null, Modifier.padding(9.dp), tint = SprutGreen)
+                    Icon(Icons.Rounded.DashboardCustomize, null, Modifier.padding(9.dp), tint = SprutAccent)
                 }
                 Spacer(Modifier.size(10.dp))
                 Column(Modifier.weight(1f)) {
                     Text("Панель устройств", fontWeight = FontWeight.Bold)
                     Text(
                         when {
-                            hasEmbeddedPanel -> "Раскрытая Device Controls с нашим glassmorphism-интерфейсом"
+                            hasEmbeddedPanel -> "Компактная панель Helper внутри Device Controls"
                             hasSystemControls -> "Стандартная Device Controls этой версии Android"
                             else -> "Прошивка не сообщает о поддержке Device Controls"
                         },
@@ -2014,13 +1957,14 @@ private fun TileSummaryCard(
     val scope = rememberCoroutineScope()
     val names = controls.associateBy(SprutControl::id)
     var confirmClearAll by remember { mutableStateOf(false) }
-    OutlinedCard(
+    Card(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-        shape = RoundedCornerShape(20.dp),
+        shape = SprutTileShape,
+        colors = CardDefaults.cardColors(containerColor = SprutSurfaceLow),
     ) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Rounded.Tune, null, tint = SprutGreen)
+                Icon(Icons.Rounded.Tune, null, tint = SprutAccent)
                 Spacer(Modifier.size(8.dp))
                 Text("Плитки шторки", fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                 Text("${assignments.size}/12", style = MaterialTheme.typography.labelLarge)
@@ -2032,7 +1976,7 @@ private fun TileSummaryCard(
                     val control = names[assignment.controlId]
                     Column {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("${assignment.slot}", fontWeight = FontWeight.Bold, color = SprutGreen)
+                            Text("${assignment.slot}", fontWeight = FontWeight.Bold, color = SprutAccent)
                             Spacer(Modifier.size(10.dp))
                             Column(Modifier.weight(1f)) {
                                 Text(
@@ -2044,7 +1988,7 @@ private fun TileSummaryCard(
                                     if (assignment.slot in installedSlots) "✓ Добавлена в системную шторку"
                                     else "Только назначена внутри приложения",
                                     style = MaterialTheme.typography.labelSmall,
-                                    color = if (assignment.slot in installedSlots) SprutGreen
+                                    color = if (assignment.slot in installedSlots) SprutAccent
                                     else MaterialTheme.colorScheme.error,
                                 )
                             }
@@ -2105,14 +2049,15 @@ private fun AccessoryCard(
     iconRevision: Int,
     onPickIcon: (String) -> Unit,
 ) {
-    OutlinedCard(
+    Card(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-        shape = RoundedCornerShape(18.dp),
+        shape = SprutTileShape,
+        colors = CardDefaults.cardColors(containerColor = SprutSurfaceLow),
     ) {
         Column(Modifier.padding(15.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Surface(shape = CircleShape, color = MaterialTheme.colorScheme.primaryContainer) {
-                    Icon(group.controls.first().icon(), null, Modifier.padding(10.dp), tint = SprutGreen)
+                    Icon(group.controls.first().icon(), null, Modifier.padding(10.dp), tint = SprutAccent)
                 }
                 Spacer(Modifier.size(12.dp))
                 Column(Modifier.weight(1f)) {
@@ -2301,7 +2246,8 @@ private fun requestSystemTile(activity: ComponentActivity, slot: Int, control: S
 private fun EmptyCatalogCard(hasCache: Boolean, onRefresh: () -> Unit) {
     Card(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+        shape = SprutTileShape,
+        colors = CardDefaults.cardColors(containerColor = SprutSurfaceLow),
     ) {
         Column(Modifier.padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             Icon(Icons.Rounded.DevicesOther, null, Modifier.size(36.dp))
@@ -2317,9 +2263,10 @@ private fun DiagnosticsCard(ui: MainUiState, expandedByDefault: Boolean = false)
     val context = LocalContext.current
     val events by AppGraph.diagnostics.events.collectAsState()
     var expanded by rememberSaveable(expandedByDefault) { mutableStateOf(expandedByDefault) }
-    OutlinedCard(
+    Card(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-        shape = RoundedCornerShape(18.dp),
+        shape = SprutTileShape,
+        colors = CardDefaults.cardColors(containerColor = SprutSurfaceLow),
     ) {
         Column {
             Row(

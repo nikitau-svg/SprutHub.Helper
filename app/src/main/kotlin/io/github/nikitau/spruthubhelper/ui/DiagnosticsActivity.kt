@@ -18,7 +18,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.ContentCopy
@@ -32,10 +31,8 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -131,9 +128,7 @@ private fun DiagnosticsScreen(onBack: () -> Unit) {
             TopAppBar(
                 title = { Text("Диагностика", fontWeight = FontWeight.SemiBold) },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Назад")
-                    }
+                    SprutHeaderIconButton(Icons.AutoMirrored.Rounded.ArrowBack, "Назад", onBack)
                 },
             )
         },
@@ -172,7 +167,11 @@ private fun DiagnosticsScreen(onBack: () -> Unit) {
             }
             if (events.isEmpty()) {
                 item {
-                    OutlinedCard(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+                    Card(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                        shape = SprutTileShape,
+                        colors = CardDefaults.cardColors(containerColor = SprutSurfaceLow),
+                    ) {
                         Text("Событий пока нет", Modifier.padding(16.dp))
                     }
                 }
@@ -242,8 +241,8 @@ private fun DiagnosticsScreen(onBack: () -> Unit) {
 private fun PrivacyExplanationCard() {
     Card(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = SprutSurfaceLow),
+        shape = SprutTileShape,
     ) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text("Безопасный журнал приложения", fontWeight = FontWeight.SemiBold)
@@ -268,7 +267,11 @@ private fun PrivacyExplanationCard() {
 
 @Composable
 private fun SupportChecklistCard() {
-    OutlinedCard(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+    Card(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+        shape = SprutTileShape,
+        colors = CardDefaults.cardColors(containerColor = SprutSurfaceLow),
+    ) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text("Если что-то не работает", fontWeight = FontWeight.SemiBold)
             Text("1. Повторите проблему один раз и запомните примерное время.")
@@ -290,7 +293,11 @@ private fun DiagnosticActions(
     onCopy: () -> Unit,
     onClear: () -> Unit,
 ) {
-    OutlinedCard(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+    Card(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+        shape = SprutTileShape,
+        colors = CardDefaults.cardColors(containerColor = SprutSurfaceLow),
+    ) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = onShare, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
                 Icon(Icons.Rounded.Share, null)
@@ -347,7 +354,11 @@ private fun BackgroundRunsCard(events: List<DiagnosticEvent>) {
 
 @Composable
 private fun DiagnosticEventCard(event: DiagnosticEvent) {
-    OutlinedCard(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+    Card(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+        shape = SprutTileShape,
+        colors = CardDefaults.cardColors(containerColor = SprutSurfaceLow),
+    ) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             EventSummary(event)
             event.details.forEach { (key, value) -> DiagnosticRow(key, value) }
@@ -385,7 +396,11 @@ private fun EventSummary(event: DiagnosticEvent) {
 
 @Composable
 private fun DiagnosticSectionCard(title: String, content: @Composable () -> Unit) {
-    OutlinedCard(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+    Card(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+        shape = SprutTileShape,
+        colors = CardDefaults.cardColors(containerColor = SprutSurfaceLow),
+    ) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
             Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
             content()

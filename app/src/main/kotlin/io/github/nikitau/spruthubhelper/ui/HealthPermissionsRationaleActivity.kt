@@ -19,7 +19,7 @@ class HealthPermissionsRationaleActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            MaterialTheme {
+            SprutHelperTheme {
                 HealthPrivacyNotice(onClose = ::finish)
             }
         }

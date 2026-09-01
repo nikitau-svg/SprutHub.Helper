@@ -28,7 +28,6 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -126,12 +125,14 @@ private fun WidgetConfigureScreen(
             TopAppBar(
                 title = { Text("Виджет SprutHub") },
                 navigationIcon = {
-                    IconButton(onClick = onCancel) { Icon(Icons.Rounded.Close, "Отмена") }
+                    SprutHeaderIconButton(Icons.Rounded.Close, "Отмена", onCancel)
                 },
                 actions = {
-                    IconButton(onClick = { AppGraph.applicationScope.launch { AppGraph.repository.refresh(true) } }) {
-                        Icon(Icons.Rounded.Refresh, "Обновить каталог")
-                    }
+                    SprutHeaderIconButton(
+                        icon = Icons.Rounded.Refresh,
+                        contentDescription = "Обновить каталог",
+                        onClick = { AppGraph.applicationScope.launch { AppGraph.repository.refresh(true) } },
+                    )
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
             )
@@ -170,6 +171,8 @@ private fun WidgetConfigureScreen(
                 leadingIcon = { Icon(Icons.Rounded.Search, null) },
                 label = { Text("Поиск по устройствам и комнатам") },
                 singleLine = true,
+                shape = SprutControlShape,
+                colors = sprutTextFieldColors(),
             )
             Spacer(Modifier.height(12.dp))
 
@@ -232,11 +235,11 @@ private fun WidgetControlChoice(
     Card(
         onClick = onClick,
         modifier = Modifier.fillMaxWidth(),
+        shape = SprutTileShape,
         colors = CardDefaults.cardColors(
-            containerColor = if (selected) MaterialTheme.colorScheme.primaryContainer
-            else MaterialTheme.colorScheme.surfaceVariant,
+            containerColor = if (selected) SprutAccentDim else SprutSurfaceLow,
         ),
-        border = if (selected) BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else null,
+        border = if (selected) BorderStroke(1.dp, SprutAccent) else null,
     ) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(14.dp),
@@ -246,7 +249,7 @@ private fun WidgetControlChoice(
                 painter = painterResource(TileIconResolver.resource(control.kind)),
                 contentDescription = null,
                 modifier = Modifier.size(30.dp),
-                tint = if (selected) MaterialTheme.colorScheme.primary else Color.White,
+                tint = if (selected) SprutAccent else Color.White,
             )
             Spacer(Modifier.size(12.dp))
             Column(Modifier.weight(1f)) {
