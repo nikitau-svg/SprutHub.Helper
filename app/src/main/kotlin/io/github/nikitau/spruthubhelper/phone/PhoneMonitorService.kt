@@ -65,6 +65,8 @@ class PhoneMonitorService : Service() {
             val trigger = PhoneEventSyncPolicy.fromBroadcastAction(intent?.action)
             if (trigger == null) {
                 Log.d(LOG_TAG, "Phone event skipped: unsupported broadcast")
+            } else if (trigger == PhoneSyncTrigger.BATTERY_CHANGED) {
+                triggerBatterySync(intent)
             } else {
                 triggerSync(trigger)
             }
@@ -75,10 +77,10 @@ class PhoneMonitorService : Service() {
         override fun onAvailable(network: Network) = triggerSync(PhoneSyncTrigger.NETWORK_AVAILABLE)
         override fun onLost(network: Network) = triggerSync(PhoneSyncTrigger.NETWORK_LOST)
         override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) =
-            triggerSync(PhoneSyncTrigger.NETWORK_CAPABILITIES_CHANGED)
+            triggerNoisyNetworkSync(PhoneSyncTrigger.NETWORK_CAPABILITIES_CHANGED)
 
         override fun onLinkPropertiesChanged(network: Network, linkProperties: LinkProperties) =
-            triggerSync(PhoneSyncTrigger.NETWORK_ADDRESS_CHANGED)
+            triggerNoisyNetworkSync(PhoneSyncTrigger.NETWORK_ADDRESS_CHANGED)
     }
 
     override fun onCreate() {
@@ -222,6 +224,18 @@ class PhoneMonitorService : Service() {
 
     private fun triggerSync(trigger: PhoneSyncTrigger) {
         if (::eventSync.isInitialized) eventSync.submit(trigger)
+    }
+
+    private fun triggerBatterySync(intent: Intent?) {
+        val fingerprint = intent?.phoneBatteryFingerprint()
+        if (fingerprint != null && !batteryChangeGate.hasChanged(fingerprint)) return
+        triggerSync(PhoneSyncTrigger.BATTERY_CHANGED)
+    }
+
+    private fun triggerNoisyNetworkSync(trigger: PhoneSyncTrigger) {
+        val fingerprint = currentNetworkFingerprint()
+        if (fingerprint != null && !networkChangeGate.hasChanged(fingerprint)) return
+        triggerSync(trigger)
     }
 
     private suspend fun syncEventBatch(triggers: Set<PhoneSyncTrigger>): Result<Unit> {
