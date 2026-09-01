@@ -1785,9 +1785,9 @@ private fun PanelSummaryCard(
                     Text("Панель устройств", fontWeight = FontWeight.Bold)
                     Text(
                         when {
-                            hasEmbeddedPanel -> "Компактная панель Helper внутри Device Controls"
-                            hasSystemControls -> "Стандартная Device Controls этой версии Android"
-                            else -> "Прошивка не сообщает о поддержке Device Controls"
+                            hasEmbeddedPanel -> "Встроена в «Управление устройствами» шторки"
+                            hasSystemControls -> "Карточки в системном «Управлении устройствами»"
+                            else -> "Прошивка не поддерживает системную панель устройств"
                         },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1803,7 +1803,7 @@ private fun PanelSummaryCard(
 
             Text(
                 if (hasEmbeddedPanel) {
-                    "Android 14+ сможет встроить наш экран. Одна карточка соответствует независимому управлению SprutHub, а связанные показатели собираются внутри."
+                    "На Android 14+ совместимая оболочка откроет этот компактный экран прямо из шторки. Одна карточка соответствует независимому управлению SprutHub, а связанные показатели собираются внутри."
                 } else {
                     "Точный вид и место панели зависят от производителя. Предпросмотр работает даже если оболочка не показывает панель в шторке."
                 },
