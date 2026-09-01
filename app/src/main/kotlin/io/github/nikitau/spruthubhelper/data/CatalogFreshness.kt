@@ -49,15 +49,11 @@ object CatalogFreshnessPolicy {
         val authoritativeAt = catalog.refreshedAtEpochMs.takeIf { it > 0L }
         val age = authoritativeAt?.let { (nowEpochMs - it).coerceAtLeast(0L) }
         val phase = when {
-            catalog.controls.isEmpty() -> if (connection.phase == ConnectionPhase.CONNECTING) {
-                CatalogFreshnessPhase.REFRESHING
-            } else {
-                CatalogFreshnessPhase.EMPTY
-            }
             connection.phase == ConnectionPhase.CONNECTING -> CatalogFreshnessPhase.REFRESHING
+            connection.phase == ConnectionPhase.ERROR -> CatalogFreshnessPhase.OFFLINE
+            catalog.controls.isEmpty() -> CatalogFreshnessPhase.EMPTY
             connection.phase == ConnectionPhase.CONNECTED_LOCAL ||
                 connection.phase == ConnectionPhase.CONNECTED_CLOUD -> CatalogFreshnessPhase.LIVE
-            connection.phase == ConnectionPhase.ERROR -> CatalogFreshnessPhase.OFFLINE
             age != null && age <= DISPLAY_MAX_AGE_MS -> CatalogFreshnessPhase.RECENT
             else -> CatalogFreshnessPhase.STALE
         }

@@ -45,6 +45,34 @@ class CatalogFreshnessTest {
     }
 
     @Test
+    fun failedTransportWithoutCacheStillReportsOffline() {
+        val freshness = CatalogFreshnessPolicy.evaluate(
+            catalog = SprutCatalog(),
+            connection = ConnectionStatus(
+                phase = ConnectionPhase.ERROR,
+                message = "SprutHub недоступен",
+            ),
+            nowEpochMs = now,
+        )
+
+        assertEquals(CatalogFreshnessPhase.OFFLINE, freshness.phase)
+        assertEquals("Нет связи", freshness.shortLabel)
+        assertFalse(freshness.canDisplayAuthoritativeState)
+    }
+
+    @Test
+    fun connectedTransportWithoutCatalogDoesNotInventLiveState() {
+        val freshness = CatalogFreshnessPolicy.evaluate(
+            catalog = SprutCatalog(),
+            connection = ConnectionStatus(phase = ConnectionPhase.CONNECTED_LOCAL),
+            nowEpochMs = now,
+        )
+
+        assertEquals(CatalogFreshnessPhase.EMPTY, freshness.phase)
+        assertFalse(freshness.canDisplayAuthoritativeState)
+    }
+
+    @Test
     fun idleCacheExpiresAfterDisplayWindow() {
         val recent = CatalogFreshnessPolicy.evaluate(
             catalog = catalog,
