@@ -38,16 +38,17 @@ internal fun quickSettingsPresentation(
     val value = control.surfaceValue()
         .takeUnless { it.isBlank() || it == "—" }
         ?: "Нет данных"
-    val subtitle = unavailableReason ?: value
+    val status = unavailableReason ?: value
     val label = if (control.behavior == ControlBehavior.SENSOR) {
-        val subject = buildServiceControlCards(listOf(control)).single().displayServiceName()
+        val subject = sensorSubject(control)
         // Some OEM SystemUI implementations hide Tile.subtitle even in the
         // expanded shade. Keep a sensor's state visible in the primary label
         // while leaving actionable tile names stable.
-        "$subject · $subtitle"
+        "$subject · $status"
     } else {
         control.title
     }
+    val subtitle = if (control.behavior == ControlBehavior.SENSOR) control.title else status
     val visualState = when {
         unavailableReason != null -> QuickSettingsVisualState.UNAVAILABLE
         control.behavior == ControlBehavior.TOGGLE ||
@@ -59,13 +60,23 @@ internal fun quickSettingsPresentation(
     return QuickSettingsPresentation(
         label = label,
         subtitle = subtitle,
-        stateDescription = subtitle,
+        stateDescription = status,
         contentDescription = listOf(
             control.title,
             control.subtitle.ifBlank { control.room },
-            subtitle,
+            status,
             value.takeIf { unavailableReason != null }?.let { "Последнее значение: $it" },
         ).filterNotNull().filter(String::isNotBlank).distinct().joinToString(", "),
         visualState = visualState,
     )
 }
+
+private fun sensorSubject(control: SprutControl): String {
+    val card = buildServiceControlCards(listOf(control)).single()
+    val characteristic = card.characteristicValues().singleOrNull()?.label
+    return characteristic
+        ?.takeUnless { it in GENERIC_SENSOR_LABELS }
+        ?: card.displayServiceName()
+}
+
+private val GENERIC_SENSOR_LABELS = setOf("Сейчас", "Состояние", "Параметр")

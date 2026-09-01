@@ -20,7 +20,7 @@ class QuickSettingsPresentationTest {
         )
 
         assertEquals("Качество воздуха · Отличное", result.label)
-        assertEquals("Отличное", result.subtitle)
+        assertEquals("Qingping Air Monitor Lite", result.subtitle)
         assertEquals("Отличное", result.stateDescription)
         assertEquals(QuickSettingsVisualState.INACTIVE, result.visualState)
         assertEquals("Qingping Air Monitor Lite, Air Quality, Отличное", result.contentDescription)
@@ -57,8 +57,26 @@ class QuickSettingsPresentationTest {
         )
 
         assertEquals("Качество воздуха · Нет связи", result.label)
-        assertEquals("Нет связи", result.subtitle)
+        assertEquals("Qingping Air Monitor Lite", result.subtitle)
+        assertEquals("Нет связи", result.stateDescription)
         assertEquals(QuickSettingsVisualState.UNAVAILABLE, result.visualState)
+    }
+
+    @Test
+    fun `sensor title uses characteristic instead of ambiguous service name`() {
+        val result = quickSettingsPresentation(
+            control = control(
+                behavior = ControlBehavior.SENSOR,
+                value = SprutValue(numberValue = 8.0),
+            ).copy(
+                characteristicType = "PM2_5Density",
+                characteristicName = "Плотность PM2.5",
+            ),
+            surface = live(active = false),
+        )
+
+        assertEquals("PM2.5 · 8", result.label)
+        assertEquals("Qingping Air Monitor Lite", result.subtitle)
     }
 
     private fun control(behavior: ControlBehavior, value: SprutValue) = SprutControl(
