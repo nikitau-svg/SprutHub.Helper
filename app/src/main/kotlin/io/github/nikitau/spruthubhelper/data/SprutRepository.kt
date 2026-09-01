@@ -4,8 +4,15 @@ import android.util.Log
 import io.github.nikitau.spruthubhelper.sprut.CharacteristicUpdate
 import io.github.nikitau.spruthubhelper.sprut.SprutCatalogParser
 import io.github.nikitau.spruthubhelper.sprut.SprutRpcClient
+import io.github.nikitau.spruthubhelper.sprut.SprutTransportPhase
+import io.github.nikitau.spruthubhelper.sprut.SprutTransportStatus
+import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.math.abs
 import kotlin.math.roundToLong
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -15,6 +22,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
@@ -55,6 +63,25 @@ internal fun mergeControlUpdate(
     else -> null
 }
 
+internal fun preserveConcurrentControlValues(
+    parsedControls: List<SprutControl>,
+    currentControls: List<SprutControl>,
+    authoritativeAtStart: Map<String, Long>,
+    currentVersions: Map<String, Long>,
+): List<SprutControl> {
+    val currentById = currentControls.associateBy(SprutControl::id)
+    return parsedControls.map { parsedControl ->
+        val changedDuringRefresh = (currentVersions[parsedControl.id] ?: 0L) >
+            (authoritativeAtStart[parsedControl.id] ?: 0L)
+        val current = currentById[parsedControl.id]
+        if (changedDuringRefresh && current != null) {
+            parsedControl.copy(value = current.value)
+        } else {
+            parsedControl
+        }
+    }
+}
+
 class SprutRepository(
     private val settings: SettingsRepository,
     private val client: SprutRpcClient,
@@ -63,13 +90,23 @@ class SprutRepository(
     private val scope: CoroutineScope,
 ) {
     private val refreshMutex = Mutex()
+    private val staleRefreshMutex = Mutex()
     private val _catalog = MutableStateFlow(SprutCatalog())
     private val _connectionStatus = MutableStateFlow(ConnectionStatus())
     private val _diagnostics = MutableStateFlow<List<DiagnosticEvent>>(emptyList())
+    private val _pendingControlIds = MutableStateFlow<Set<String>>(emptySet())
+    private val _authoritativeVersions = MutableStateFlow<Map<String, Long>>(emptyMap())
+    private val cacheWriteRequests = Channel<Unit>(Channel.CONFLATED)
+    private val commandStateLock = Any()
+    private val catalogStateLock = Any()
+    private val authoritativeStateLock = Any()
+    private val catalogRefreshInProgress = AtomicBoolean(false)
+    private var authoritativeRevision = 0L
 
     val catalog: StateFlow<SprutCatalog> = _catalog.asStateFlow()
     val connectionStatus: StateFlow<ConnectionStatus> = _connectionStatus.asStateFlow()
     val diagnostics: StateFlow<List<DiagnosticEvent>> = _diagnostics.asStateFlow()
+    val pendingControlIds: StateFlow<Set<String>> = _pendingControlIds.asStateFlow()
     val tileAssignments: StateFlow<List<TileAssignment>> = settings.tileAssignments.stateIn(
         scope,
         SharingStarted.Eagerly,
@@ -84,7 +121,10 @@ class SprutRepository(
     init {
         scope.launch {
             val cached = cache.read()
-            if (cached.controls.isNotEmpty()) {
+            if (
+                cached.controls.isNotEmpty() &&
+                cached.refreshedAtEpochMs > _catalog.value.refreshedAtEpochMs
+            ) {
                 _catalog.value = cached
                 log("Загружен локальный кэш: ${cached.controls.size} элементов")
             }
@@ -94,92 +134,193 @@ class SprutRepository(
                 parser.parseUpdates(event).forEach(::applyUpdate)
             }
         }
+        scope.launch {
+            client.transportStatus.collect { transport ->
+                val current = _connectionStatus.value
+                val transportConnected = transport.phase == SprutTransportPhase.CONNECTED_LOCAL ||
+                    transport.phase == SprutTransportPhase.CONNECTED_CLOUD
+                val next = if (catalogRefreshInProgress.get() && transportConnected) {
+                    current.copy(
+                        phase = ConnectionPhase.CONNECTING,
+                        endpoint = transport.endpoint,
+                        message = "Загрузка актуального каталога…",
+                    )
+                } else {
+                    connectionStatusFromTransport(transport, current)
+                }
+                _connectionStatus.value = next
+                when {
+                    transport.phase == SprutTransportPhase.ERROR && current.phase != ConnectionPhase.ERROR ->
+                        log("Соединение со SprutHub потеряно: ${next.message}", isError = true)
+                    (transport.phase == SprutTransportPhase.CONNECTED_LOCAL ||
+                        transport.phase == SprutTransportPhase.CONNECTED_CLOUD) &&
+                        current.phase == ConnectionPhase.ERROR ->
+                        log("Соединение со SprutHub восстановлено")
+                }
+            }
+        }
+        scope.launch {
+            for (ignored in cacheWriteRequests) {
+                delay(CACHE_WRITE_DEBOUNCE_MS)
+                while (cacheWriteRequests.tryReceive().isSuccess) {
+                    // Collapse a burst of characteristic events into one atomic write.
+                }
+                cache.write(_catalog.value)
+            }
+        }
     }
 
     suspend fun refresh(forceConnection: Boolean = false): Result<SprutCatalog> = refreshMutex.withLock {
+        val connectionBeforeRefresh = _connectionStatus.value
+        catalogRefreshInProgress.set(true)
         _connectionStatus.value = ConnectionStatus(
             phase = ConnectionPhase.CONNECTING,
             message = "Подключение к SprutHub…",
         )
         val config = settings.currentConfig()
-        runCatching {
-            val endpoint = client.connect(config, force = forceConnection)
-            val versionResponse = runCatching { client.call(config, request("server", "version")) }
-                .recoverCatching { client.call(config, request("hub", "list")) }
-                .getOrDefault(JsonNull)
-            val rooms = client.call(config, request("room", "list"))
-            val accessories = client.call(
-                config,
-                request(
-                    section = "accessory",
-                    operation = "list",
-                    operationBody = buildJsonObject { put("expand", "services+characteristics") },
-                ),
-            )
-            val scenarios = runCatching { client.call(config, request("scenario", "list")) }
-                .getOrDefault(JsonNull)
-            val parsed = parser.parse(
-                roomsResponse = rooms,
-                accessoriesResponse = accessories,
-                scenariosResponse = scenarios,
-                hubVersion = findVersion(versionResponse),
-            )
-            check(parsed.controls.isNotEmpty()) {
-                "SprutHub ответил, но управляемые устройства не найдены"
+        val authoritativeAtStart = _authoritativeVersions.value
+        try {
+            runCatching {
+                val endpoint = client.connect(config, force = forceConnection)
+                val versionResponse = try {
+                    client.call(config, request("server", "version"))
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    try {
+                        client.call(config, request("hub", "list"))
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (_: Exception) {
+                        JsonNull
+                    }
+                }
+                val rooms = client.call(config, request("room", "list"))
+                val accessories = client.call(
+                    config,
+                    request(
+                        section = "accessory",
+                        operation = "list",
+                        operationBody = buildJsonObject { put("expand", "services+characteristics") },
+                    ),
+                )
+                val scenarios = try {
+                    client.call(config, request("scenario", "list"))
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    JsonNull
+                }
+                val parsedSnapshot = parser.parse(
+                    roomsResponse = rooms,
+                    accessoriesResponse = accessories,
+                    scenariosResponse = scenarios,
+                    hubVersion = findVersion(versionResponse),
+                )
+                check(parsedSnapshot.controls.isNotEmpty()) {
+                    "SprutHub ответил, но управляемые устройства не найдены"
+                }
+                reconcileAssignments(_catalog.value.controls, parsedSnapshot.controls)
+                val parsed = synchronized(catalogStateLock) {
+                    val merged = preserveConcurrentUpdates(parsedSnapshot, authoritativeAtStart)
+                    _catalog.value = merged
+                    markAuthoritative(merged.controls.map(SprutControl::id))
+                    merged
+                }
+                cache.write(parsed)
+                _connectionStatus.value = ConnectionStatus(
+                    phase = if (endpoint.isLocal) {
+                        ConnectionPhase.CONNECTED_LOCAL
+                    } else {
+                        ConnectionPhase.CONNECTED_CLOUD
+                    },
+                    endpoint = endpoint.url,
+                    message = if (endpoint.isLocal) {
+                        "Подключено напрямую по Wi‑Fi"
+                    } else {
+                        "Подключено через облако SprutHub"
+                    },
+                    lastSuccessEpochMs = System.currentTimeMillis(),
+                )
+                log("Каталог обновлён: ${parsed.controls.size} элементов")
+                parsed
+            }.onFailure { error ->
+                if (error is CancellationException) {
+                    val wasConnected = connectionBeforeRefresh.phase == ConnectionPhase.CONNECTED_LOCAL ||
+                        connectionBeforeRefresh.phase == ConnectionPhase.CONNECTED_CLOUD
+                    val transport = client.transportStatus.value
+                    val transportConnected = transport.phase == SprutTransportPhase.CONNECTED_LOCAL ||
+                        transport.phase == SprutTransportPhase.CONNECTED_CLOUD
+                    _connectionStatus.value = if (wasConnected && transportConnected) {
+                        connectionStatusFromTransport(transport, connectionBeforeRefresh)
+                    } else {
+                        ConnectionStatus(message = "Обновление прервано")
+                    }
+                    throw error
+                }
+                _connectionStatus.value = ConnectionStatus(
+                    phase = ConnectionPhase.ERROR,
+                    message = friendlyError(error),
+                )
+                log(friendlyError(error), isError = true)
             }
-            reconcileAssignments(_catalog.value.controls, parsed.controls)
-            _catalog.value = parsed
-            cache.write(parsed)
-            _connectionStatus.value = ConnectionStatus(
-                phase = if (endpoint.isLocal) ConnectionPhase.CONNECTED_LOCAL else ConnectionPhase.CONNECTED_CLOUD,
-                endpoint = endpoint.url,
-                message = if (endpoint.isLocal) "Подключено напрямую по Wi‑Fi" else "Подключено через облако SprutHub",
-                lastSuccessEpochMs = System.currentTimeMillis(),
-            )
-            log("Каталог обновлён: ${parsed.controls.size} элементов")
-            parsed
-        }.onFailure { error ->
-            _connectionStatus.value = ConnectionStatus(
-                phase = ConnectionPhase.ERROR,
-                message = friendlyError(error),
-            )
-            log(friendlyError(error), isError = true)
+        } finally {
+            catalogRefreshInProgress.set(false)
         }
     }
 
     suspend fun refreshIfStale(maxAgeMs: Long = 30_000): Result<SprutCatalog> {
-        val current = _catalog.value
-        return if (current.controls.isNotEmpty() && System.currentTimeMillis() - current.refreshedAtEpochMs < maxAgeMs) {
-            Result.success(current)
-        } else {
+        freshCatalog(maxAgeMs)?.let { return Result.success(it) }
+        return staleRefreshMutex.withLock {
+            // Several TileService instances can start together when the shade
+            // opens. Only the first one performs I/O; the rest reuse it.
+            freshCatalog(maxAgeMs)?.let { return@withLock Result.success(it) }
             refresh()
         }
     }
 
-    suspend fun setBoolean(controlId: String, value: Boolean): Result<Unit> = perform(controlId) { control, config ->
-        updateCharacteristic(
-            config = config,
-            control = control,
-            characteristicId = control.characteristicId,
-            field = control.valueField,
-            value = booleanWireValue(control.valueField, value),
+    private fun freshCatalog(maxAgeMs: Long): SprutCatalog? {
+        val current = _catalog.value
+        val connected = _connectionStatus.value.phase == ConnectionPhase.CONNECTED_LOCAL ||
+            _connectionStatus.value.phase == ConnectionPhase.CONNECTED_CLOUD
+        return current.takeIf {
+            connected &&
+                it.controls.isNotEmpty() &&
+                System.currentTimeMillis() - it.refreshedAtEpochMs < maxAgeMs
+        }
+    }
+
+    fun freshness(nowEpochMs: Long = System.currentTimeMillis()): CatalogFreshness =
+        CatalogFreshnessPolicy.evaluate(
+            catalog = _catalog.value,
+            connection = _connectionStatus.value,
+            pendingControlIds = _pendingControlIds.value,
+            nowEpochMs = nowEpochMs,
         )
-        updateOptimistically(control.id, control.value.copy(boolValue = value))
+
+    suspend fun setBoolean(controlId: String, value: Boolean): Result<Unit> = perform(controlId) { control, config ->
+        writeBoolean(control, config, value)
+    }
+
+    /** Derives the opposite value only after the mandatory server freshness check. */
+    suspend fun toggleBoolean(controlId: String): Result<Unit> = perform(controlId) { control, config ->
+        writeBoolean(control, config, !control.value.asBoolean())
     }
 
     suspend fun setRange(controlId: String, value: Double): Result<Unit> = perform(controlId) { control, config ->
-        val bounded = value.coerceIn(control.minimum, control.maximum)
-        val field = if (control.behavior == ControlBehavior.TOGGLE_RANGE) control.rangeValueField else control.valueField
-        val characteristicId = control.rangeCharacteristicId ?: control.characteristicId
-        val wireValue = when (field) {
-            "intValue", "longValue", "uintValue" -> JsonPrimitive(bounded.roundToLong())
-            else -> JsonPrimitive(bounded)
-        }
-        updateCharacteristic(config, control, characteristicId, field, wireValue)
-        updateOptimistically(control.id, control.value.copy(numberValue = bounded))
+        writeRange(control, config, value)
+    }
+
+    /** Chooses the opposite range endpoint only after refreshing the server value. */
+    suspend fun toggleRangeEndpoint(controlId: String): Result<Unit> = perform(controlId) { control, config ->
+        check(control.behavior == ControlBehavior.RANGE) { "Для устройства требуется открыть регулировку" }
+        val midpoint = (control.minimum + control.maximum) / 2.0
+        val target = if (control.value.asDouble() > midpoint) control.minimum else control.maximum
+        writeRange(control, config, target)
     }
 
     suspend fun execute(controlId: String): Result<Unit> = perform(controlId) { control, config ->
+        check(control.behavior == ControlBehavior.BUTTON) { "Элемент больше не является кнопкой" }
         if (control.kind == DeviceKind.SCENE) {
             client.call(
                 config,
@@ -260,15 +401,25 @@ class SprutRepository(
     private suspend fun perform(
         controlId: String,
         block: suspend (SprutControl, HubConfig) -> Unit,
-    ): Result<Unit> = runCatching {
-        if (_catalog.value.controls.isEmpty()) refreshIfStale().getOrThrow()
-        val control = _catalog.value.controls.firstOrNull { it.id == controlId }
-            ?: error("Элемент больше не найден в SprutHub")
-        check(control.writable) { "Элемент доступен только для чтения" }
-        block(control, settings.currentConfig())
-        log("Команда отправлена: ${control.title}")
-    }.onFailure { error ->
-        log("Команда не выполнена: ${friendlyError(error)}", isError = true)
+    ): Result<Unit> {
+        if (!beginCommand(controlId)) {
+            return Result.failure(IllegalStateException("Предыдущая команда ещё подтверждается SprutHub"))
+        }
+        return try {
+            runCatching {
+                refreshIfStale(CatalogFreshnessPolicy.COMMAND_MAX_AGE_MS).getOrThrow()
+                val control = _catalog.value.controls.firstOrNull { it.id == controlId }
+                    ?: error("Элемент больше не найден в SprutHub")
+                check(control.writable) { "Элемент доступен только для чтения" }
+                block(control, settings.currentConfig())
+                log("Команда подтверждена SprutHub: ${control.title}")
+            }.onFailure { error ->
+                if (error is CancellationException) throw error
+                log("Команда не выполнена: ${friendlyError(error)}", isError = true)
+            }
+        } finally {
+            finishCommand(controlId)
+        }
     }
 
     private suspend fun updateCharacteristic(
@@ -287,6 +438,45 @@ class SprutRepository(
             })
         }
         client.call(config, request("characteristic", "update", body))
+    }
+
+    private suspend fun writeBoolean(control: SprutControl, config: HubConfig, value: Boolean) {
+        check(
+            control.behavior == ControlBehavior.TOGGLE || control.behavior == ControlBehavior.TOGGLE_RANGE,
+        ) { "Элемент больше не является переключателем" }
+        if (control.value.asBooleanOrNull() == value) return
+        val baseline = authoritativeVersion(control.id)
+        updateCharacteristic(
+            config = config,
+            control = control,
+            characteristicId = control.characteristicId,
+            field = control.valueField,
+            value = booleanWireValue(control.valueField, value),
+        )
+        confirmCommand(control.id, baseline) { latest -> latest.value.asBooleanOrNull() == value }
+    }
+
+    private suspend fun writeRange(control: SprutControl, config: HubConfig, value: Double) {
+        check(
+            control.behavior == ControlBehavior.RANGE || control.behavior == ControlBehavior.TOGGLE_RANGE,
+        ) { "Элемент не поддерживает регулировку" }
+        val bounded = value.coerceIn(control.minimum, control.maximum)
+        if (abs(control.value.asDouble() - bounded) <= confirmationTolerance(control)) return
+        val baseline = authoritativeVersion(control.id)
+        val field = if (control.behavior == ControlBehavior.TOGGLE_RANGE) {
+            control.rangeValueField
+        } else {
+            control.valueField
+        }
+        val characteristicId = control.rangeCharacteristicId ?: control.characteristicId
+        val wireValue = when (field) {
+            "intValue", "longValue", "uintValue" -> JsonPrimitive(bounded.roundToLong())
+            else -> JsonPrimitive(bounded)
+        }
+        updateCharacteristic(config, control, characteristicId, field, wireValue)
+        confirmCommand(control.id, baseline) { latest ->
+            abs(latest.value.asDouble() - bounded) <= confirmationTolerance(latest)
+        }
     }
 
     private fun request(
@@ -387,22 +577,93 @@ class SprutRepository(
             }
 
     private fun applyUpdate(update: CharacteristicUpdate) {
-        val current = _catalog.value
-        var changed = false
-        val controls = current.controls.map { control ->
-            if (control.accessoryId != update.accessoryId || control.serviceId != update.serviceId) return@map control
-            mergeControlUpdate(control, update.characteristicId, update.value)?.also { changed = true } ?: control
+        synchronized(catalogStateLock) {
+            val current = _catalog.value
+            var changed = false
+            val changedControlIds = mutableListOf<String>()
+            val controls = current.controls.map { control ->
+                if (control.accessoryId != update.accessoryId || control.serviceId != update.serviceId) return@map control
+                mergeControlUpdate(control, update.characteristicId, update.value)?.also {
+                    changed = true
+                    changedControlIds += control.id
+                } ?: control
+            }
+            if (changed) {
+                _catalog.value = current.copy(controls = controls, refreshedAtEpochMs = System.currentTimeMillis())
+                markAuthoritative(changedControlIds)
+                cacheWriteRequests.trySend(Unit)
+            }
         }
-        if (changed) _catalog.value = current.copy(controls = controls, refreshedAtEpochMs = System.currentTimeMillis())
     }
 
-    private fun updateOptimistically(controlId: String, value: SprutValue) {
-        val current = _catalog.value
-        _catalog.value = current.copy(
-            controls = current.controls.map { if (it.id == controlId) it.copy(value = value) else it },
-            refreshedAtEpochMs = System.currentTimeMillis(),
-        )
+    private fun preserveConcurrentUpdates(
+        parsed: SprutCatalog,
+        authoritativeAtStart: Map<String, Long>,
+    ): SprutCatalog = parsed.copy(
+        controls = preserveConcurrentControlValues(
+            parsedControls = parsed.controls,
+            currentControls = _catalog.value.controls,
+            authoritativeAtStart = authoritativeAtStart,
+            currentVersions = _authoritativeVersions.value,
+        ),
+    )
+
+    private suspend fun confirmCommand(
+        controlId: String,
+        baselineVersion: Long,
+        matches: (SprutControl) -> Boolean,
+    ) {
+        val eventConfirmed = withTimeoutOrNull(COMMAND_EVENT_TIMEOUT_MS) {
+            _authoritativeVersions.first { versions ->
+                (versions[controlId] ?: 0L) > baselineVersion &&
+                    _catalog.value.controls.firstOrNull { it.id == controlId }?.let(matches) == true
+            }
+        } != null
+        if (eventConfirmed) return
+
+        var lastFailure: Throwable? = null
+        COMMAND_READBACK_DELAYS_MS.forEach { readbackDelay ->
+            delay(readbackDelay)
+            val refreshed = refresh(forceConnection = false)
+            lastFailure = refreshed.exceptionOrNull()
+            if (refreshed.isSuccess) {
+                val confirmed = _catalog.value.controls.firstOrNull { it.id == controlId }
+                    ?: error("Элемент исчез из каталога после команды")
+                if (matches(confirmed)) return
+            }
+        }
+        lastFailure?.let { throw it }
+        error("SprutHub принял команду, но не подтвердил новое состояние")
     }
+
+    private fun authoritativeVersion(controlId: String): Long = _authoritativeVersions.value[controlId] ?: 0L
+
+    private fun markAuthoritative(controlIds: Collection<String>) {
+        if (controlIds.isEmpty()) return
+        synchronized(authoritativeStateLock) {
+            val updated = _authoritativeVersions.value.toMutableMap()
+            controlIds.distinct().forEach { controlId ->
+                authoritativeRevision += 1L
+                updated[controlId] = authoritativeRevision
+            }
+            _authoritativeVersions.value = updated
+        }
+    }
+
+    private fun beginCommand(controlId: String): Boolean = synchronized(commandStateLock) {
+        if (controlId in _pendingControlIds.value) {
+            false
+        } else {
+            _pendingControlIds.value = _pendingControlIds.value + controlId
+            true
+        }
+    }
+
+    private fun finishCommand(controlId: String) = synchronized(commandStateLock) {
+        _pendingControlIds.value = _pendingControlIds.value - controlId
+    }
+
+    private fun confirmationTolerance(control: SprutControl): Double = (control.step / 2.0).coerceAtLeast(0.01)
 
     private fun findVersion(element: JsonElement): String {
         fun search(current: JsonElement): String? = when (current) {
@@ -414,6 +675,43 @@ class SprutRepository(
             else -> null
         }
         return search(element).orEmpty()
+    }
+
+    private fun connectionStatusFromTransport(
+        transport: SprutTransportStatus,
+        current: ConnectionStatus,
+    ): ConnectionStatus = when (transport.phase) {
+        SprutTransportPhase.IDLE -> if (
+            current.phase == ConnectionPhase.CONNECTED_LOCAL ||
+            current.phase == ConnectionPhase.CONNECTED_CLOUD ||
+            current.phase == ConnectionPhase.CONNECTING
+        ) {
+            ConnectionStatus(message = "Соединение закрыто")
+        } else {
+            current
+        }
+        SprutTransportPhase.CONNECTING -> current.copy(
+            phase = ConnectionPhase.CONNECTING,
+            message = "Подключение к SprutHub…",
+        )
+        SprutTransportPhase.CONNECTED_LOCAL -> ConnectionStatus(
+            phase = ConnectionPhase.CONNECTED_LOCAL,
+            endpoint = transport.endpoint,
+            message = "Подключено напрямую по Wi‑Fi",
+            lastSuccessEpochMs = System.currentTimeMillis(),
+        )
+        SprutTransportPhase.CONNECTED_CLOUD -> ConnectionStatus(
+            phase = ConnectionPhase.CONNECTED_CLOUD,
+            endpoint = transport.endpoint,
+            message = "Подключено через облако SprutHub",
+            lastSuccessEpochMs = System.currentTimeMillis(),
+        )
+        SprutTransportPhase.ERROR -> ConnectionStatus(
+            phase = ConnectionPhase.ERROR,
+            endpoint = transport.endpoint,
+            message = friendlyError(IllegalStateException(transport.message)),
+            lastSuccessEpochMs = current.lastSuccessEpochMs,
+        )
     }
 
     private fun friendlyError(error: Throwable): String {
@@ -435,5 +733,8 @@ class SprutRepository(
     private companion object {
         const val LOG_TAG = "SprutHubHelper"
         const val MIN_REPLACEMENT_SCORE = 120
+        const val CACHE_WRITE_DEBOUNCE_MS = 250L
+        const val COMMAND_EVENT_TIMEOUT_MS = 2_000L
+        val COMMAND_READBACK_DELAYS_MS = longArrayOf(300L, 800L)
     }
 }

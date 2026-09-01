@@ -14,8 +14,10 @@ import android.widget.Toast
 import androidx.core.content.ContextCompat
 import io.github.nikitau.spruthubhelper.AppGraph
 import io.github.nikitau.spruthubhelper.R
+import io.github.nikitau.spruthubhelper.data.CatalogFreshness
 import io.github.nikitau.spruthubhelper.data.ControlBehavior
 import io.github.nikitau.spruthubhelper.data.SprutControl
+import io.github.nikitau.spruthubhelper.data.presentationFor
 import io.github.nikitau.spruthubhelper.diagnostics.DiagnosticCategory
 import io.github.nikitau.spruthubhelper.diagnostics.DiagnosticOutcome
 import io.github.nikitau.spruthubhelper.icons.CustomIconManager
@@ -92,16 +94,11 @@ class SprutAppWidgetProvider : AppWidgetProvider() {
         val pendingResult = goAsync()
         AppGraph.applicationScope.launch {
             try {
-                val refresh = AppGraph.repository.refreshIfStale()
-                if (AppGraph.repository.catalog.value.controls.isEmpty()) refresh.getOrThrow()
                 val control = AppGraph.repository.catalog.value.controls.firstOrNull { it.id == controlId }
                     ?: error("Устройство больше не найдено в SprutHub")
                 val decision = WidgetActionResolver.resolve(control)
                 val result = when (decision.action) {
-                    WidgetPrimaryAction.TOGGLE -> AppGraph.repository.setBoolean(
-                        control.id,
-                        requireNotNull(decision.booleanValue),
-                    )
+                    WidgetPrimaryAction.TOGGLE -> AppGraph.repository.toggleBoolean(control.id)
                     WidgetPrimaryAction.EXECUTE -> AppGraph.repository.execute(control.id)
                     WidgetPrimaryAction.OPEN_APP -> Result.success(Unit)
                 }
@@ -190,13 +187,14 @@ class SprutAppWidgetProvider : AppWidgetProvider() {
         private fun updateWidget(context: Context, manager: AppWidgetManager, appWidgetId: Int) {
             val assignment = WidgetAssignmentStore.controlId(context, appWidgetId)
             val catalog = AppGraph.repository.catalog.value
+            val freshness = AppGraph.repository.freshness()
             val control = assignment?.let { id -> catalog.controls.firstOrNull { it.id == id } }
             val views = RemoteViews(context.packageName, R.layout.widget_sprut_control)
 
             when {
                 assignment == null -> renderUnconfigured(context, views, appWidgetId)
                 control == null -> renderMissing(context, views, appWidgetId, catalog.controls.isEmpty())
-                else -> renderControl(context, views, appWidgetId, control)
+                else -> renderControl(context, views, appWidgetId, control, freshness)
             }
             manager.updateAppWidget(appWidgetId, views)
         }
@@ -234,27 +232,37 @@ class SprutAppWidgetProvider : AppWidgetProvider() {
             views: RemoteViews,
             appWidgetId: Int,
             control: SprutControl,
+            freshness: CatalogFreshness,
         ) {
-            val active = (control.behavior == ControlBehavior.TOGGLE ||
-                control.behavior == ControlBehavior.TOGGLE_RANGE) && control.value.asBoolean()
+            val presentation = freshness.presentationFor(control)
+            val pending = presentation.pending
+            val authoritative = presentation.stateIsAuthoritative
+            val active = presentation.active
             views.setInt(
                 R.id.widget_root,
                 "setBackgroundResource",
                 if (active) R.drawable.bg_widget_sprut_active else R.drawable.bg_widget_sprut,
             )
             views.setTextViewText(R.id.widget_title, control.title)
+            val statusPrefix = presentation.statusLabel.orEmpty()
             views.setTextViewText(
                 R.id.widget_subtitle,
-                listOf(control.subtitle, control.room)
+                listOf(statusPrefix, control.subtitle, control.room)
                     .filter(String::isNotBlank)
                     .distinct()
                     .joinToString(" · "),
             )
-            views.setTextViewText(R.id.widget_value, widgetValue(control))
+            val visibleValue = when {
+                pending -> "Ожидаем SprutHub"
+                !authoritative && control.behavior == ControlBehavior.BUTTON -> "Команда недоступна"
+                !authoritative -> "Последнее: ${widgetValue(control)}"
+                else -> widgetValue(control)
+            }
+            views.setTextViewText(R.id.widget_value, visibleValue)
             views.setViewVisibility(R.id.widget_value, View.VISIBLE)
             views.setContentDescription(
                 R.id.widget_root,
-                listOf(control.title, control.subtitle, control.room, widgetValue(control))
+                listOf(control.title, statusPrefix, control.subtitle, control.room, visibleValue)
                     .filter(String::isNotBlank)
                     .joinToString(", "),
             )

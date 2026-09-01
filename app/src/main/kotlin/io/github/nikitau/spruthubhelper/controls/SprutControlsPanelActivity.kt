@@ -82,6 +82,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowCompat
 import io.github.nikitau.spruthubhelper.AppGraph
+import io.github.nikitau.spruthubhelper.data.CatalogFreshness
+import io.github.nikitau.spruthubhelper.data.CatalogFreshnessPolicy
 import io.github.nikitau.spruthubhelper.data.ConnectionPhase
 import io.github.nikitau.spruthubhelper.data.ControlBehavior
 import io.github.nikitau.spruthubhelper.data.PanelItem
@@ -89,6 +91,7 @@ import io.github.nikitau.spruthubhelper.data.PanelItemSize
 import io.github.nikitau.spruthubhelper.data.ServiceControlCard
 import io.github.nikitau.spruthubhelper.data.SprutControl
 import io.github.nikitau.spruthubhelper.data.buildServiceControlCards
+import io.github.nikitau.spruthubhelper.data.presentationFor
 import io.github.nikitau.spruthubhelper.diagnostics.DiagnosticCategory
 import io.github.nikitau.spruthubhelper.diagnostics.DiagnosticOutcome
 import io.github.nikitau.spruthubhelper.icons.CustomIconManager
@@ -180,6 +183,7 @@ private fun SprutDevicePanel(
     val catalog by repository.catalog.collectAsState()
     val panelItems by repository.panelItems.collectAsState()
     val connection by repository.connectionStatus.collectAsState()
+    val pendingControlIds by repository.pendingControlIds.collectAsState()
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
     var busyCardId by remember { mutableStateOf<String?>(null) }
@@ -187,6 +191,9 @@ private fun SprutDevicePanel(
     var rangeCard by remember { mutableStateOf<ServiceControlCard?>(null) }
 
     val cards = remember(catalog.controls) { buildServiceControlCards(catalog.controls) }
+    val freshness = remember(catalog, connection, pendingControlIds) {
+        CatalogFreshnessPolicy.evaluate(catalog, connection, pendingControlIds)
+    }
     val cardsById = remember(cards) { cards.associateBy(ServiceControlCard::id) }
     val controlsById = remember(catalog.controls) { catalog.controls.associateBy(SprutControl::id) }
     val resolvedItems = remember(panelItems, cardsById, controlsById) {
@@ -256,7 +263,7 @@ private fun SprutDevicePanel(
                 )
                 result.onSuccess {
                     sentCardId = card.id
-                    showMessage("${card.title}: команда отправлена")
+                    showMessage("${card.title}: SprutHub подтвердил команду")
                     scope.launch {
                         delay(1_600)
                         if (sentCardId == card.id) sentCardId = null
@@ -271,7 +278,7 @@ private fun SprutDevicePanel(
         when (control.behavior) {
             ControlBehavior.TOGGLE,
             ControlBehavior.TOGGLE_RANGE -> runCommand(card, control) {
-                repository.setBoolean(control.id, !control.value.asBoolean())
+                repository.toggleBoolean(control.id)
             }
             ControlBehavior.BUTTON -> runCommand(card, control) { repository.execute(control.id) }
             ControlBehavior.RANGE -> rangeCard = card
@@ -295,11 +302,10 @@ private fun SprutDevicePanel(
                 showBack = showBack,
                 onBack = onBack,
                 connectionText = when (connection.phase) {
-                    ConnectionPhase.CONNECTED_LOCAL -> "Подключено локально"
-                    ConnectionPhase.CONNECTED_CLOUD -> "Подключено через облако"
-                    ConnectionPhase.CONNECTING -> "Обновление…"
-                    ConnectionPhase.ERROR -> connection.message
-                    ConnectionPhase.IDLE -> "Ожидание подключения"
+                    ConnectionPhase.CONNECTED_LOCAL -> "Онлайн · локально"
+                    ConnectionPhase.CONNECTED_CLOUD -> "Онлайн · через облако"
+                    ConnectionPhase.ERROR -> "${freshness.shortLabel} · ${connection.message}"
+                    else -> freshness.shortLabel
                 },
                 refreshing = connection.phase == ConnectionPhase.CONNECTING,
                 onRefresh = {
@@ -337,7 +343,8 @@ private fun SprutDevicePanel(
                             ServiceGlassCard(
                                 item = item,
                                 card = card,
-                                busy = busyCardId == card.id,
+                                freshness = freshness,
+                                busy = busyCardId == card.id || freshness.isPending(card.primaryControl.id),
                                 sent = sentCardId == card.id,
                                 onClick = { primaryAction(card) },
                                 onAdjust = { rangeCard = card },
@@ -449,6 +456,7 @@ private fun PanelHeader(
 private fun ServiceGlassCard(
     item: PanelItem,
     card: ServiceControlCard,
+    freshness: CatalogFreshness,
     busy: Boolean,
     sent: Boolean,
     onClick: () -> Unit,
@@ -456,7 +464,9 @@ private fun ServiceGlassCard(
 ) {
     val context = LocalContext.current
     val control = card.primaryControl
-    val active = card.isActive == true
+    val presentation = freshness.presentationFor(control)
+    val authoritative = presentation.stateIsAuthoritative
+    val active = presentation.active
     val attributes = card.selectedAttributes(item)
     val customBitmap = remember(card.id, control.id) {
         val icons = CustomIconManager(context)
@@ -545,7 +555,7 @@ private fun ServiceGlassCard(
                 if (sent) {
                     Icon(
                         Icons.Rounded.CheckCircle,
-                        "Команда отправлена",
+                        "Команда подтверждена",
                         modifier = Modifier.size(19.dp),
                         tint = PanelAccent,
                     )
@@ -595,7 +605,12 @@ private fun ServiceGlassCard(
             Spacer(Modifier.height(7.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    if (busy) "Отправляем…" else card.headlineValue(),
+                    when {
+                        busy -> "Подтверждаем…"
+                        !authoritative && control.behavior == ControlBehavior.BUTTON -> freshness.shortLabel
+                        !authoritative -> "Последнее: ${card.headlineValue()}"
+                        else -> card.headlineValue()
+                    },
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     style = MaterialTheme.typography.titleSmall,

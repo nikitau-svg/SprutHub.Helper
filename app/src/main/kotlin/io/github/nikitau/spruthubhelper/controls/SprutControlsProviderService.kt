@@ -7,6 +7,7 @@ import android.service.controls.actions.CommandAction
 import android.service.controls.actions.ControlAction
 import android.service.controls.actions.FloatAction
 import io.github.nikitau.spruthubhelper.AppGraph
+import io.github.nikitau.spruthubhelper.data.CatalogFreshnessPolicy
 import io.github.nikitau.spruthubhelper.data.buildServiceControlCards
 import io.github.nikitau.spruthubhelper.diagnostics.DiagnosticCategory
 import io.github.nikitau.spruthubhelper.diagnostics.DiagnosticOutcome
@@ -16,6 +17,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.jdk9.asPublisher
@@ -47,11 +49,19 @@ class SprutControlsProviderService : ControlsProviderService() {
     }.asPublisher(scope.coroutineContext)
 
     override fun createPublisherFor(controlIds: MutableList<String>): Publisher<Control> = flow {
-        repository.refreshIfStale()
-        repository.catalog.collect { catalog ->
+        // SystemUI may dispose its subscription quickly; the refresh still
+        // needs to finish so the next opening does not start from stale data.
+        AppGraph.applicationScope.launch { repository.refreshIfStale() }
+        combine(
+            repository.catalog,
+            repository.connectionStatus,
+            repository.pendingControlIds,
+        ) { catalog, connection, pending ->
+            catalog to CatalogFreshnessPolicy.evaluate(catalog, connection, pending)
+        }.collect { (catalog, freshness) ->
             val byId = catalog.controls.associateBy { it.id }
             controlIds.mapNotNull(byId::get).forEach {
-                emit(ControlFactory.stateful(this@SprutControlsProviderService, it))
+                emit(ControlFactory.stateful(this@SprutControlsProviderService, it, freshness))
             }
         }
     }.asPublisher(scope.coroutineContext)

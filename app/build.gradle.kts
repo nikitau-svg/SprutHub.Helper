@@ -24,8 +24,8 @@ android {
         applicationId = "io.github.nikitau.spruthubhelper"
         minSdk = 30
         targetSdk = 35
-        versionCode = 19
-        versionName = "0.6.0-beta.3"
+        versionCode = 20
+        versionName = "0.6.0-beta.4"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true

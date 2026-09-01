@@ -3,6 +3,7 @@ package io.github.nikitau.spruthubhelper
 import android.app.Application
 import android.content.Context
 import io.github.nikitau.spruthubhelper.data.CatalogCache
+import io.github.nikitau.spruthubhelper.data.CatalogFreshnessPolicy
 import io.github.nikitau.spruthubhelper.data.SettingsRepository
 import io.github.nikitau.spruthubhelper.data.SprutRepository
 import io.github.nikitau.spruthubhelper.data.ConnectionPhase
@@ -31,6 +32,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 
 class SprutHelperApplication : Application() {
@@ -109,12 +111,33 @@ object AppGraph {
             }
         }
         applicationScope.launch {
-            repository.catalog.collectLatest { catalog ->
-                delay(200)
-                if (catalog.controls.isNotEmpty()) {
+            combine(
+                repository.catalog,
+                repository.connectionStatus,
+                repository.pendingControlIds,
+            ) { catalog, connection, pending -> Triple(catalog, connection, pending) }
+                .collectLatest { (catalog, connection, _) ->
+                    delay(100)
                     SprutAppWidgetProvider.updateAll(appContext)
+
+                    // A recently loaded disk cache becomes stale after 30
+                    // seconds even if no other flow emits in the meantime.
+                    if (
+                        connection.phase == ConnectionPhase.IDLE &&
+                        catalog.refreshedAtEpochMs > 0L
+                    ) {
+                        val untilStale = catalog.refreshedAtEpochMs +
+                            CatalogFreshnessPolicy.DISPLAY_MAX_AGE_MS -
+                            System.currentTimeMillis()
+                        if (untilStale >= 0L) delay(untilStale + 100L)
+                        if (
+                            repository.connectionStatus.value.phase == ConnectionPhase.IDLE &&
+                            repository.catalog.value.refreshedAtEpochMs == catalog.refreshedAtEpochMs
+                        ) {
+                            SprutAppWidgetProvider.updateAll(appContext)
+                        }
+                    }
                 }
-            }
         }
         applicationScope.launch {
             var lastMirroredEvent: io.github.nikitau.spruthubhelper.data.DiagnosticEvent? = null
