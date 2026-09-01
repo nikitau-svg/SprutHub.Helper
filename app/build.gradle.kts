@@ -9,7 +9,7 @@ val signingStoreFilePath = System.getenv("ANDROID_SIGNING_STORE_FILE").orEmpty()
 val signingStorePassword = System.getenv("ANDROID_SIGNING_STORE_PASSWORD").orEmpty()
 val signingKeyAlias = System.getenv("ANDROID_SIGNING_KEY_ALIAS").orEmpty()
 val signingKeyPassword = System.getenv("ANDROID_SIGNING_KEY_PASSWORD").orEmpty()
-val stableSigningAvailable = listOf(
+val stableSigningAvailable = java.io.File(signingStoreFilePath).isFile && listOf(
     signingStoreFilePath,
     signingStorePassword,
     signingKeyAlias,
