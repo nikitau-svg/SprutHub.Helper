@@ -9,12 +9,12 @@ val signingStoreFilePath = System.getenv("ANDROID_SIGNING_STORE_FILE").orEmpty()
 val signingStorePassword = System.getenv("ANDROID_SIGNING_STORE_PASSWORD").orEmpty()
 val signingKeyAlias = System.getenv("ANDROID_SIGNING_KEY_ALIAS").orEmpty()
 val signingKeyPassword = System.getenv("ANDROID_SIGNING_KEY_PASSWORD").orEmpty()
-val stableSigningAvailable = file(signingStoreFilePath).isFile && listOf(
+val stableSigningAvailable = listOf(
     signingStoreFilePath,
     signingStorePassword,
     signingKeyAlias,
     signingKeyPassword,
-).all(String::isNotBlank)
+).all(String::isNotBlank) && file(signingStoreFilePath).isFile
 
 android {
     namespace = "io.github.nikitau.spruthubhelper"
