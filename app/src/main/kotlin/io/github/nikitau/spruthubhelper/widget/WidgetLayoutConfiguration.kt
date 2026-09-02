@@ -224,6 +224,8 @@ internal object WidgetLayoutConfigurationCodec {
 }
 
 internal enum class WidgetSizeClass {
+    /** A one-cell landscape slot whose height cannot fit the regular card. */
+    STRIP,
     ICON,
     COMPACT,
     WIDE,
@@ -242,24 +244,71 @@ internal data class WidgetGridLayout(
     val hiddenItemCount: Int,
 )
 
+internal const val MAX_RESPONSIVE_WIDGET_SIZES = 16
+
 internal fun WidgetHostSize.sizeClass(): WidgetSizeClass = when {
+    heightDp < 72f -> WidgetSizeClass.STRIP
     widthDp < 120f -> WidgetSizeClass.ICON
     heightDp >= 150f -> WidgetSizeClass.TALL
     widthDp >= 320f -> WidgetSizeClass.WIDE
     else -> WidgetSizeClass.COMPACT
 }
 
+/**
+ * Launcher supplied sizes are external input. Keep only finite, useful values
+ * and respect RemoteViews.MAX_INIT_VIEW_COUNT before constructing a responsive
+ * RemoteViews map. The original order is retained because some OEM launchers
+ * put their currently active size first.
+ */
+internal fun boundedWidgetHostSizes(sizes: List<WidgetHostSize>): List<WidgetHostSize> = sizes
+    .filter { size ->
+        size.widthDp.isFinite() &&
+            size.heightDp.isFinite() &&
+            size.widthDp > 0f &&
+            size.heightDp > 0f &&
+            size.widthDp <= 4_096f &&
+            size.heightDp <= 4_096f
+    }
+    .distinct()
+    .take(MAX_RESPONSIVE_WIDGET_SIZES)
+
+internal fun safeWidgetHostSize(
+    widthDp: Float,
+    heightDp: Float,
+    fallback: WidgetHostSize = WidgetHostSize(widthDp = 226f, heightDp = 102f),
+): WidgetHostSize = WidgetHostSize(
+    widthDp = widthDp.takeIf { it.isFinite() && it > 0f && it <= 4_096f } ?: fallback.widthDp,
+    heightDp = heightDp.takeIf { it.isFinite() && it > 0f && it <= 4_096f } ?: fallback.heightDp,
+)
+
+internal fun shouldShowWidgetRefresh(
+    hostSize: WidgetHostSize,
+    requested: Boolean,
+    fontScale: Float = 1f,
+): Boolean {
+    if (!requested || hostSize.sizeClass() == WidgetSizeClass.ICON || hostSize.sizeClass() == WidgetSizeClass.STRIP) {
+        return false
+    }
+    val safeFontScale = fontScale.takeIf { it.isFinite() && it > 0f }?.coerceIn(1f, 2f) ?: 1f
+    return hostSize.widthDp >= 180f + ((safeFontScale - 1f) * 40f)
+}
+
 internal fun widgetGridLayout(
     hostSize: WidgetHostSize,
     itemCount: Int,
     density: WidgetInformationDensity,
+    fontScale: Float = 1f,
 ): WidgetGridLayout {
-    val maximumRows = if (hostSize.heightDp >= 150f) 2 else 1
-    val maximumColumns = when {
-        hostSize.widthDp >= 440f -> 4
-        hostSize.widthDp >= 300f -> 3
-        else -> 2
-    }
+    val safeHostSize = safeWidgetHostSize(hostSize.widthDp, hostSize.heightDp)
+    val safeFontScale = fontScale.takeIf { it.isFinite() && it > 0f }?.coerceIn(1f, 2f) ?: 1f
+    val minimumColumnWidth = 86f + ((safeFontScale - 1f) * 40f)
+    val minimumRowHeight = 84f + ((safeFontScale - 1f) * 30f)
+    val maximumRows = (safeHostSize.heightDp / minimumRowHeight)
+        .toInt()
+        .coerceIn(1, 2)
+    val maximumColumns = (safeHostSize.widthDp / minimumColumnWidth)
+        .toInt()
+        .coerceIn(1, 4)
     val densityLimit = when (density) {
         WidgetInformationDensity.COMPACT -> 2
         WidgetInformationDensity.BALANCED -> 4
@@ -286,6 +335,7 @@ internal fun widgetGridLayout(
 }
 
 internal fun previewHostSize(sizeClass: WidgetSizeClass): WidgetHostSize = when (sizeClass) {
+    WidgetSizeClass.STRIP -> WidgetHostSize(widthDp = 269f, heightDp = 51f)
     WidgetSizeClass.ICON -> WidgetHostSize(widthDp = 92f, heightDp = 102f)
     WidgetSizeClass.COMPACT -> WidgetHostSize(widthDp = 226f, heightDp = 102f)
     WidgetSizeClass.WIDE -> WidgetHostSize(widthDp = 496f, heightDp = 102f)
@@ -295,10 +345,30 @@ internal fun previewHostSize(sizeClass: WidgetSizeClass): WidgetHostSize = when 
 internal fun widgetOverflowLabel(hiddenItemCount: Int): String =
     hiddenItemCount.takeIf { it > 0 }?.let { "+$it ещё" }.orEmpty()
 
-internal fun compactWidgetValue(value: String, hiddenItemCount: Int): String =
-    listOf(value, hiddenItemCount.takeIf { it > 0 }?.let { "+$it" }.orEmpty())
+internal fun compactWidgetValue(
+    value: String,
+    hiddenItemCount: Int,
+    narrow: Boolean = false,
+): String =
+    listOf(
+        if (narrow) narrowWidgetValue(value) else value,
+        hiddenItemCount.takeIf { it > 0 }?.let { "+$it" }.orEmpty(),
+    )
         .filter(String::isNotBlank)
-        .joinToString(" · ")
+        .joinToString(if (narrow) " " else " · ")
+
+private fun narrowWidgetValue(value: String): String {
+    val normalized = value.trim()
+    return when (normalized.lowercase()) {
+        "включено" -> "Вкл."
+        "выключено" -> "Выкл."
+        "открыто" -> "Откр."
+        "закрыто" -> "Закр."
+        "ожидаем spruthub", "ожидание…", "подтверждаем…" -> "…"
+        "команда недоступна" -> "—"
+        else -> normalized.substringAfter("Последнее: ", normalized)
+    }
+}
 
 internal data class WidgetContentLine(
     val block: WidgetContentBlock,
@@ -364,15 +434,17 @@ internal fun visibleWidgetLines(
     content: WidgetResolvedContent,
     configuration: WidgetLayoutConfiguration,
     sizeClass: WidgetSizeClass,
+    fontScale: Float = 1f,
 ): List<WidgetContentLine> {
     if (content.lines.isEmpty()) return emptyList()
-    if (sizeClass == WidgetSizeClass.ICON) {
+    if (sizeClass == WidgetSizeClass.ICON || sizeClass == WidgetSizeClass.STRIP) {
         return listOf(
             content.lines.firstOrNull { it.block == WidgetContentBlock.PRIMARY_VALUE }
                 ?: content.lines.first(),
         )
     }
     val hostCapacity = when (sizeClass) {
+        WidgetSizeClass.STRIP -> 1
         WidgetSizeClass.ICON -> 1
         WidgetSizeClass.COMPACT -> 2
         WidgetSizeClass.WIDE -> 3
@@ -383,7 +455,15 @@ internal fun visibleWidgetLines(
         WidgetInformationDensity.BALANCED -> 3
         WidgetInformationDensity.DETAILED -> 4
     }
-    val capacity = minOf(hostCapacity, densityCapacity)
+    val safeFontScale = fontScale.takeIf { it.isFinite() && it > 0f }?.coerceIn(1f, 2f) ?: 1f
+    val fontCapacity = when {
+        safeFontScale >= 1.75f && sizeClass == WidgetSizeClass.TALL -> 2
+        safeFontScale >= 1.75f -> 1
+        safeFontScale >= 1.3f && sizeClass == WidgetSizeClass.TALL -> 3
+        safeFontScale >= 1.3f -> 2
+        else -> 4
+    }
+    val capacity = minOf(hostCapacity, densityCapacity, fontCapacity)
     val selected = content.lines.take(capacity).toMutableList()
     val primary = content.lines.firstOrNull { it.block == WidgetContentBlock.PRIMARY_VALUE }
     if (primary != null && selected.none { it.block == WidgetContentBlock.PRIMARY_VALUE }) {

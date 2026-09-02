@@ -6,6 +6,7 @@ import io.github.nikitau.spruthubhelper.data.SprutControl
 import io.github.nikitau.spruthubhelper.data.SprutValue
 import io.github.nikitau.spruthubhelper.data.buildServiceControlCards
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -52,7 +53,16 @@ class WidgetLayoutConfigurationTest {
     }
 
     @Test
-    fun `size buckets match one ui and preserve primary line`() {
+    fun `size buckets cover one ui pixel portrait and pixel landscape`() {
+        assertEquals(WidgetSizeClass.ICON, WidgetHostSize(57f, 102f).sizeClass())
+        assertEquals(WidgetSizeClass.STRIP, WidgetHostSize(127f, 51f).sizeClass())
+        assertEquals(WidgetSizeClass.COMPACT, WidgetHostSize(130f, 102f).sizeClass())
+        assertEquals(WidgetSizeClass.STRIP, WidgetHostSize(269f, 51f).sizeClass())
+        assertEquals(WidgetSizeClass.COMPACT, WidgetHostSize(276f, 102f).sizeClass())
+        assertEquals(WidgetSizeClass.STRIP, WidgetHostSize(554f, 51f).sizeClass())
+        assertEquals(WidgetSizeClass.WIDE, WidgetHostSize(349f, 102f).sizeClass())
+        assertEquals(WidgetSizeClass.TALL, WidgetHostSize(349f, 220f).sizeClass())
+
         assertEquals(WidgetSizeClass.ICON, WidgetHostSize(91f, 101f).sizeClass())
         assertEquals(WidgetSizeClass.COMPACT, WidgetHostSize(226f, 101f).sizeClass())
         assertEquals(WidgetSizeClass.WIDE, WidgetHostSize(496f, 101f).sizeClass())
@@ -86,6 +96,43 @@ class WidgetLayoutConfigurationTest {
         assertEquals(
             WidgetContentBlock.PRIMARY_VALUE,
             visibleWidgetLines(content, configuration, WidgetSizeClass.ICON).single().block,
+        )
+        assertEquals(
+            WidgetContentBlock.PRIMARY_VALUE,
+            visibleWidgetLines(content, configuration, WidgetSizeClass.STRIP).single().block,
+        )
+        assertEquals(
+            listOf(WidgetContentBlock.PRIMARY_VALUE),
+            visibleWidgetLines(
+                content = content,
+                configuration = configuration,
+                sizeClass = WidgetSizeClass.WIDE,
+                fontScale = 2f,
+            ).map(WidgetContentLine::block),
+        )
+    }
+
+    @Test
+    fun `launcher sizes are validated deduplicated and capped`() {
+        val valid = (1..20).map { WidgetHostSize(widthDp = 100f + it, heightDp = 102f) }
+        val bounded = boundedWidgetHostSizes(
+            listOf(
+                WidgetHostSize(Float.NaN, 100f),
+                WidgetHostSize(100f, Float.POSITIVE_INFINITY),
+                WidgetHostSize(0f, 100f),
+                WidgetHostSize(5_000f, 100f),
+            ) + valid + valid.first(),
+        )
+
+        assertEquals(MAX_RESPONSIVE_WIDGET_SIZES, bounded.size)
+        assertEquals(valid.take(MAX_RESPONSIVE_WIDGET_SIZES), bounded)
+        assertEquals(
+            WidgetHostSize(226f, 102f),
+            safeWidgetHostSize(Float.NaN, -1f),
+        )
+        assertEquals(
+            WidgetHostSize(226f, 102f),
+            safeWidgetHostSize(5_000f, Float.POSITIVE_INFINITY),
         )
     }
 
@@ -164,6 +211,33 @@ class WidgetLayoutConfigurationTest {
         )
         assertEquals("+3 ещё", widgetOverflowLabel(3))
         assertEquals("Включено · +3", compactWidgetValue("Включено", 3))
+        assertEquals("Вкл. +3", compactWidgetValue("Включено", 3, narrow = true))
+        assertEquals("23.4 °C +3", compactWidgetValue("Последнее: 23.4 °C", 3, narrow = true))
+    }
+
+    @Test
+    fun `large font reduces card count before text starts clipping`() {
+        assertEquals(
+            WidgetGridLayout(columns = 4, rows = 2, visibleItemCount = 8, hiddenItemCount = 0),
+            widgetGridLayout(
+                hostSize = WidgetHostSize(349f, 220f),
+                itemCount = 8,
+                density = WidgetInformationDensity.DETAILED,
+                fontScale = 1f,
+            ),
+        )
+        assertEquals(
+            WidgetGridLayout(columns = 3, rows = 2, visibleItemCount = 6, hiddenItemCount = 2),
+            widgetGridLayout(
+                hostSize = WidgetHostSize(349f, 220f),
+                itemCount = 8,
+                density = WidgetInformationDensity.DETAILED,
+                fontScale = 1.6f,
+            ),
+        )
+        assertFalse(shouldShowWidgetRefresh(WidgetHostSize(130f, 102f), requested = true))
+        assertFalse(shouldShowWidgetRefresh(WidgetHostSize(269f, 51f), requested = true))
+        assertTrue(shouldShowWidgetRefresh(WidgetHostSize(226f, 102f), requested = true))
     }
 
     @Test

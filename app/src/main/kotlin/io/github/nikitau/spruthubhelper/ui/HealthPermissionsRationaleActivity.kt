@@ -6,9 +6,12 @@ import androidx.activity.compose.setContent
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -34,7 +37,10 @@ class HealthPermissionsRationaleActivity : ComponentActivity() {
 private fun HealthPrivacyNotice(onClose: () -> Unit) {
     SprutBackdrop {
         Column(
-            modifier = Modifier.fillMaxSize().padding(20.dp),
+            modifier = Modifier
+                .fillMaxSize()
+                .windowInsetsPadding(WindowInsets.safeDrawing)
+                .padding(20.dp),
             verticalArrangement = Arrangement.Center,
         ) {
             Card(

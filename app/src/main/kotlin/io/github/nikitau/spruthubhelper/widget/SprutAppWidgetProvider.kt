@@ -347,18 +347,18 @@ class SprutAppWidgetProvider : AppWidgetProvider() {
             options: Bundle,
         ): RemoteViews {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                val sizes = exactWidgetSizes(options)
+                val sizes = exactWidgetHostSizes(options)
                 if (sizes.isNotEmpty()) {
                     return responsiveRemoteViews(
                         sizes = sizes,
-                        factory = { size ->
+                        factory = { hostSize ->
                             createResponsiveView(
                                 context = context,
                                 appWidgetId = appWidgetId,
                                 items = items,
                                 freshness = freshness,
                                 configuration = configuration,
-                                hostSize = WidgetHostSize(size.width, size.height),
+                                hostSize = hostSize,
                             )
                         },
                     )
@@ -383,7 +383,8 @@ class SprutAppWidgetProvider : AppWidgetProvider() {
             hostSize: WidgetHostSize,
         ): RemoteViews {
             val sizeClass = hostSize.sizeClass()
-            return if (items.size > 1 && sizeClass != WidgetSizeClass.ICON) {
+            val minimal = sizeClass == WidgetSizeClass.ICON || sizeClass == WidgetSizeClass.STRIP
+            return if (items.size > 1 && !minimal) {
                 createGridView(
                     context = context,
                     appWidgetId = appWidgetId,
@@ -399,18 +400,18 @@ class SprutAppWidgetProvider : AppWidgetProvider() {
                     item = items.first(),
                     freshness = freshness,
                     configuration = configuration,
-                    sizeClass = sizeClass,
-                    hiddenItemCount = if (sizeClass == WidgetSizeClass.ICON) items.size - 1 else 0,
+                    hostSize = hostSize,
+                    hiddenItemCount = if (minimal) items.size - 1 else 0,
                 )
             }
         }
 
         @RequiresApi(Build.VERSION_CODES.S)
         private fun responsiveRemoteViews(
-            sizes: List<SizeF>,
-            factory: (SizeF) -> RemoteViews,
+            sizes: List<WidgetHostSize>,
+            factory: (WidgetHostSize) -> RemoteViews,
         ): RemoteViews = RemoteViews(
-            sizes.distinct().associateWith(factory),
+            sizes.associate { size -> SizeF(size.widthDp, size.heightDp) to factory(size) },
         )
 
         private fun createComposedView(
@@ -419,13 +420,17 @@ class SprutAppWidgetProvider : AppWidgetProvider() {
             item: WidgetRenderItem,
             freshness: CatalogFreshness,
             configuration: WidgetLayoutConfiguration,
-            sizeClass: WidgetSizeClass,
+            hostSize: WidgetHostSize,
             hiddenItemCount: Int,
         ): RemoteViews {
-            val layout = if (sizeClass == WidgetSizeClass.ICON) {
-                R.layout.widget_sprut_icon
-            } else {
-                R.layout.widget_sprut_composed
+            val sizeClass = hostSize.sizeClass()
+            val layout = when (sizeClass) {
+                WidgetSizeClass.STRIP -> R.layout.widget_sprut_strip
+                WidgetSizeClass.ICON -> R.layout.widget_sprut_icon
+                WidgetSizeClass.COMPACT,
+                WidgetSizeClass.WIDE,
+                WidgetSizeClass.TALL,
+                -> R.layout.widget_sprut_composed
             }
             val views = RemoteViews(context.packageName, layout)
             val control = item.control
@@ -451,9 +456,23 @@ class SprutAppWidgetProvider : AppWidgetProvider() {
                 sharedPreference = item.preference,
                 primaryValueOverride = visibleValue,
             )
-            val lines = visibleWidgetLines(content, configuration, sizeClass).map { line ->
-                if (sizeClass == WidgetSizeClass.ICON && line.block == WidgetContentBlock.PRIMARY_VALUE) {
-                    line.copy(text = compactWidgetValue(visibleValue, hiddenItemCount))
+            val lines = visibleWidgetLines(
+                content = content,
+                configuration = configuration,
+                sizeClass = sizeClass,
+                fontScale = context.resources.configuration.fontScale,
+            ).map { line ->
+                if (
+                    (sizeClass == WidgetSizeClass.ICON || sizeClass == WidgetSizeClass.STRIP) &&
+                    line.block == WidgetContentBlock.PRIMARY_VALUE
+                ) {
+                    line.copy(
+                        text = compactWidgetValue(
+                            value = visibleValue,
+                            hiddenItemCount = hiddenItemCount,
+                            narrow = sizeClass == WidgetSizeClass.ICON && hostSize.widthDp < 72f,
+                        ),
+                    )
                 } else {
                     line
                 }
@@ -471,7 +490,7 @@ class SprutAppWidgetProvider : AppWidgetProvider() {
                 views.setTextViewTextSize(
                     id,
                     TypedValue.COMPLEX_UNIT_SP,
-                    widgetLineTextSize(line.block, sizeClass),
+                    widgetLineTextSize(line.block, sizeClass, hostSize),
                 )
                 views.setTextColor(
                     id,
@@ -513,7 +532,11 @@ class SprutAppWidgetProvider : AppWidgetProvider() {
                     ),
                 )
             }
-            val showRefresh = configuration.showRefresh && sizeClass != WidgetSizeClass.ICON
+            val showRefresh = shouldShowWidgetRefresh(
+                hostSize = hostSize,
+                requested = configuration.showRefresh,
+                fontScale = context.resources.configuration.fontScale,
+            )
             views.setViewVisibility(R.id.widget_refresh, if (showRefresh) View.VISIBLE else View.GONE)
             views.setOnClickPendingIntent(
                 R.id.widget_refresh,
@@ -546,7 +569,12 @@ class SprutAppWidgetProvider : AppWidgetProvider() {
             hostSize: WidgetHostSize,
         ): RemoteViews {
             val views = RemoteViews(context.packageName, R.layout.widget_sprut_grid)
-            val grid = widgetGridLayout(hostSize, items.size, configuration.density)
+            val grid = widgetGridLayout(
+                hostSize = hostSize,
+                itemCount = items.size,
+                density = configuration.density,
+                fontScale = context.resources.configuration.fontScale,
+            )
             val visibleItems = items.take(grid.visibleItemCount)
             views.removeAllViews(R.id.widget_items_row_1)
             views.removeAllViews(R.id.widget_items_row_2)
@@ -560,7 +588,7 @@ class SprutAppWidgetProvider : AppWidgetProvider() {
                     allItems = items,
                     freshness = freshness,
                     configuration = configuration,
-                    showSecondary = hostSize.heightDp >= 150f &&
+                    showSecondary = grid.rows > 1 &&
                         configuration.density == WidgetInformationDensity.DETAILED,
                     hiddenItemCount = if (index == visibleItems.lastIndex) grid.hiddenItemCount else 0,
                 )
@@ -690,35 +718,40 @@ class SprutAppWidgetProvider : AppWidgetProvider() {
             }
         }
 
-        private fun widgetLineTextSize(block: WidgetContentBlock, sizeClass: WidgetSizeClass): Float = when {
-            sizeClass == WidgetSizeClass.ICON && block == WidgetContentBlock.PRIMARY_VALUE -> 11f
+        private fun widgetLineTextSize(
+            block: WidgetContentBlock,
+            sizeClass: WidgetSizeClass,
+            hostSize: WidgetHostSize,
+        ): Float = when {
+            sizeClass == WidgetSizeClass.ICON && hostSize.widthDp < 72f -> 10f
+            (sizeClass == WidgetSizeClass.ICON || sizeClass == WidgetSizeClass.STRIP) &&
+                block == WidgetContentBlock.PRIMARY_VALUE -> 11f
             block == WidgetContentBlock.PRIMARY_VALUE -> 15f
             block == WidgetContentBlock.TITLE -> 14f
             else -> 11f
         }
 
         private fun widgetSizeSignature(options: Bundle): String {
-            val exact = exactWidgetSizes(options)
+            val exact = exactWidgetHostSizes(options)
             if (exact.isNotEmpty()) {
                 return exact
-                    .distinct()
-                    .sortedWith(compareBy(SizeF::getWidth, SizeF::getHeight))
+                    .sortedWith(compareBy(WidgetHostSize::widthDp, WidgetHostSize::heightDp))
                     .joinToString("|") { size ->
-                        "${size.width.toInt()}x${size.height.toInt()}:${WidgetHostSize(size.width, size.height).sizeClass()}"
+                        "${size.widthDp.toInt()}x${size.heightDp.toInt()}:${size.sizeClass()}"
                     }
             }
             val fallback = fallbackWidgetSize(options)
             return "${fallback.widthDp.toInt()}x${fallback.heightDp.toInt()}:${fallback.sizeClass()}"
         }
 
-        private fun fallbackWidgetSize(options: Bundle): WidgetHostSize = WidgetHostSize(
+        private fun fallbackWidgetSize(options: Bundle): WidgetHostSize = safeWidgetHostSize(
             widthDp = options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, 226).toFloat(),
-            heightDp = options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT, 101).toFloat(),
+            heightDp = options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT, 102).toFloat(),
         )
 
-        private fun exactWidgetSizes(options: Bundle): List<SizeF> {
+        private fun exactWidgetHostSizes(options: Bundle): List<WidgetHostSize> {
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return emptyList()
-            return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val sizes = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 options.getParcelableArrayList(
                     AppWidgetManager.OPTION_APPWIDGET_SIZES,
                     SizeF::class.java,
@@ -727,6 +760,9 @@ class SprutAppWidgetProvider : AppWidgetProvider() {
                 @Suppress("DEPRECATION")
                 options.getParcelableArrayList<SizeF>(AppWidgetManager.OPTION_APPWIDGET_SIZES).orEmpty()
             }
+            return boundedWidgetHostSizes(
+                sizes.map { size -> WidgetHostSize(size.width, size.height) },
+            )
         }
 
         private fun renderUnconfigured(context: Context, views: RemoteViews, appWidgetId: Int) {

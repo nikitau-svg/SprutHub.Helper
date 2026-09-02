@@ -71,6 +71,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -103,6 +104,7 @@ import io.github.nikitau.spruthubhelper.widget.resolveWidgetContent
 import io.github.nikitau.spruthubhelper.widget.recommendedWidgetTemplateDescription
 import io.github.nikitau.spruthubhelper.widget.recommendedWidgetTemplateLabel
 import io.github.nikitau.spruthubhelper.widget.visibleWidgetLines
+import io.github.nikitau.spruthubhelper.widget.shouldShowWidgetRefresh
 import io.github.nikitau.spruthubhelper.widget.widgetGridLayout
 import io.github.nikitau.spruthubhelper.widget.widgetOverflowLabel
 import kotlinx.coroutines.launch
@@ -514,6 +516,7 @@ private fun WidgetLayoutEditor(
             Spacer(Modifier.height(10.dp))
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 listOf(
+                    WidgetSizeClass.STRIP to "Низкий",
                     WidgetSizeClass.ICON to "1×1",
                     WidgetSizeClass.COMPACT to "2×1",
                     WidgetSizeClass.WIDE to "Широкий",
@@ -917,14 +920,17 @@ private fun WidgetLivePreview(
     val resolvedItems = configuration.items.mapNotNull { item ->
         cards.cardForControl(item.controlId)?.let { card -> PreviewItem(item, card) }
     }
+    val hostSize = previewHostSize(sizeClass)
     val previewWidth = when (sizeClass) {
+        WidgetSizeClass.STRIP -> hostSize.widthDp.dp
         WidgetSizeClass.ICON -> 92.dp
         WidgetSizeClass.COMPACT -> 226.dp
         WidgetSizeClass.WIDE -> null
         WidgetSizeClass.TALL -> 226.dp
     }
-    val height = if (sizeClass == WidgetSizeClass.TALL) 220.dp else 102.dp
-    val singleCard = resolvedItems.size == 1 || sizeClass == WidgetSizeClass.ICON
+    val height = hostSize.heightDp.dp
+    val minimal = sizeClass == WidgetSizeClass.ICON || sizeClass == WidgetSizeClass.STRIP
+    val singleCard = resolvedItems.size == 1 || minimal
     val activeSingleCard = singleCard && resolvedItems.firstOrNull()?.card?.isActive == true
     val widgetBackground = if (activeSingleCard) {
         listOf(Color(0xE026231D), Color(0xE026231D))
@@ -982,7 +988,12 @@ private fun WidgetSinglePreview(
 ) {
     val card = previewItem.card
     val content = resolveWidgetContent(card, configuration, previewItem.configuration, preference)
-    val lines = visibleWidgetLines(content, configuration, sizeClass)
+    val lines = visibleWidgetLines(
+        content = content,
+        configuration = configuration,
+        sizeClass = sizeClass,
+        fontScale = LocalDensity.current.fontScale,
+    )
     if (sizeClass == WidgetSizeClass.ICON) {
         Column(
             Modifier.fillMaxSize(),
@@ -1000,6 +1011,30 @@ private fun WidgetSinglePreview(
         }
         return
     }
+    if (sizeClass == WidgetSizeClass.STRIP) {
+        Row(
+            Modifier.fillMaxSize(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            PreviewDeviceIcon(card, Modifier.size(30.dp))
+            Spacer(Modifier.size(6.dp))
+            Text(
+                compactWidgetValue(content.headline.value, configuration.items.size - 1),
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        return
+    }
+    val hostSize = previewHostSize(sizeClass)
+    val showRefresh = shouldShowWidgetRefresh(
+        hostSize = hostSize,
+        requested = configuration.showRefresh,
+        fontScale = LocalDensity.current.fontScale,
+    )
     Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
         PreviewDeviceIcon(card, Modifier.size(42.dp))
         Spacer(Modifier.size(10.dp))
@@ -1026,7 +1061,7 @@ private fun WidgetSinglePreview(
                 )
             }
         }
-        if (configuration.showRefresh) {
+        if (showRefresh) {
             Icon(Icons.Rounded.Refresh, null, Modifier.size(22.dp), tint = SprutTextMuted)
         }
     }
@@ -1040,7 +1075,12 @@ private fun WidgetGridPreview(
     sizeClass: WidgetSizeClass,
 ) {
     val hostSize = previewHostSize(sizeClass)
-    val grid = widgetGridLayout(hostSize, items.size, configuration.density)
+    val grid = widgetGridLayout(
+        hostSize = hostSize,
+        itemCount = items.size,
+        density = configuration.density,
+        fontScale = LocalDensity.current.fontScale,
+    )
     val visible = items.take(grid.visibleItemCount)
     val showRefresh = configuration.showRefresh && hostSize.widthDp >= 440f
     Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
