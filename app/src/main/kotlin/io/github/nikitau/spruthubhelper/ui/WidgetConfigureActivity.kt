@@ -92,11 +92,16 @@ import io.github.nikitau.spruthubhelper.widget.WidgetInformationDensity
 import io.github.nikitau.spruthubhelper.widget.WidgetItemConfiguration
 import io.github.nikitau.spruthubhelper.widget.WidgetLayoutConfiguration
 import io.github.nikitau.spruthubhelper.widget.WidgetLayoutConfigurationCodec
+import io.github.nikitau.spruthubhelper.widget.WidgetQuickTemplate
 import io.github.nikitau.spruthubhelper.widget.WidgetSizeClass
+import io.github.nikitau.spruthubhelper.widget.applyWidgetQuickTemplate
 import io.github.nikitau.spruthubhelper.widget.compactWidgetValue
+import io.github.nikitau.spruthubhelper.widget.matchesQuickTemplate
 import io.github.nikitau.spruthubhelper.widget.normalized
 import io.github.nikitau.spruthubhelper.widget.previewHostSize
 import io.github.nikitau.spruthubhelper.widget.resolveWidgetContent
+import io.github.nikitau.spruthubhelper.widget.recommendedWidgetTemplateDescription
+import io.github.nikitau.spruthubhelper.widget.recommendedWidgetTemplateLabel
 import io.github.nikitau.spruthubhelper.widget.visibleWidgetLines
 import io.github.nikitau.spruthubhelper.widget.widgetGridLayout
 import io.github.nikitau.spruthubhelper.widget.widgetOverflowLabel
@@ -479,6 +484,10 @@ private fun WidgetLayoutEditor(
         ?: configuration.items.firstOrNull()
     val activeCard = activeItem?.let { item -> cards.cardForControl(item.controlId) }
     val preferenceByCard = servicePreferences.associateBy(ServicePresentationPreference::cardId)
+    val selectedCards = configuration.items.mapNotNull { item -> cards.cardForControl(item.controlId) }
+    val matchedTemplate = WidgetQuickTemplate.entries.firstOrNull { template ->
+        configuration.matchesQuickTemplate(template, selectedCards)
+    }
 
     LazyColumn(
         modifier = modifier.fillMaxSize(),
@@ -528,6 +537,49 @@ private fun WidgetLayoutEditor(
                 style = MaterialTheme.typography.bodySmall,
                 color = SprutTextMuted,
             )
+        }
+
+        item {
+            WidgetEditorSection(
+                title = "Готовая компоновка",
+                subtitle = "Начните с подходящего шаблона и при желании измените любой параметр ниже.",
+            ) {
+                Text(
+                    "Рекомендуется: ${recommendedWidgetTemplateLabel(selectedCards)}",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = SprutAccent,
+                )
+                Text(
+                    recommendedWidgetTemplateDescription(selectedCards),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = SprutTextMuted,
+                )
+                Spacer(Modifier.height(8.dp))
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    WidgetQuickTemplate.entries.forEach { template ->
+                        val label = when (template) {
+                            WidgetQuickTemplate.RECOMMENDED -> "Авто · ${recommendedWidgetTemplateLabel(selectedCards)}"
+                            WidgetQuickTemplate.COMPACT -> "Компактно"
+                            WidgetQuickTemplate.INFORMATIVE -> "Больше данных"
+                        }
+                        FilterChip(
+                            selected = matchedTemplate == template,
+                            onClick = {
+                                onConfigurationChange(
+                                    applyWidgetQuickTemplate(configuration, template, selectedCards),
+                                )
+                            },
+                            label = { Text(label) },
+                            leadingIcon = if (matchedTemplate == template) {
+                                { Icon(Icons.Rounded.Check, null, Modifier.size(16.dp)) }
+                            } else {
+                                null
+                            },
+                            colors = sprutFilterChipColors(),
+                        )
+                    }
+                }
+            }
         }
 
         item {

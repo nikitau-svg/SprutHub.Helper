@@ -152,10 +152,10 @@ class MainViewModel : ViewModel() {
     fun addPanelItem(controlId: String) = launchWork(null) {
         repository.addPanelItem(controlId).getOrThrow()
         _panelAddRequests.emit(controlId)
-        _notice.value = "Добавлено в крупную панель"
+        _notice.value = "Добавлено в панель устройств"
     }
 
-    fun removePanelItem(controlId: String) = launchWork("Удалено из крупной панели") {
+    fun removePanelItem(controlId: String) = launchWork("Удалено из панели устройств") {
         repository.removePanelItem(controlId).getOrThrow()
     }
 

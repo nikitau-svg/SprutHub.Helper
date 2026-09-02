@@ -1,6 +1,7 @@
 package io.github.nikitau.spruthubhelper.widget
 
 import io.github.nikitau.spruthubhelper.data.CharacteristicDisplayValue
+import io.github.nikitau.spruthubhelper.data.ServiceCardTemplate
 import io.github.nikitau.spruthubhelper.data.ServiceControlCard
 import io.github.nikitau.spruthubhelper.data.ServicePresentationPreference
 import kotlinx.serialization.Serializable
@@ -20,6 +21,12 @@ enum class WidgetContentBlock {
     PRIMARY_VALUE,
     SECONDARY_VALUES,
     CONTEXT,
+}
+
+internal enum class WidgetQuickTemplate {
+    RECOMMENDED,
+    COMPACT,
+    INFORMATIVE,
 }
 
 @Serializable
@@ -55,6 +62,107 @@ internal val DEFAULT_WIDGET_BLOCKS = listOf(
     WidgetContentBlock.SECONDARY_VALUES,
     WidgetContentBlock.CONTEXT,
 )
+
+internal fun recommendedWidgetTemplateLabel(cards: List<ServiceControlCard>): String {
+    val template = cards.singleOrNull()?.template
+        ?: cards.map(ServiceControlCard::template).distinct().singleOrNull()
+    return when (template) {
+        ServiceCardTemplate.CLIMATE -> "Климат"
+        ServiceCardTemplate.LIGHT -> "Свет"
+        ServiceCardTemplate.SENSOR -> "Датчик"
+        ServiceCardTemplate.SCENE -> "Сценарий"
+        ServiceCardTemplate.OUTLET -> "Розетка"
+        ServiceCardTemplate.COVER -> "Шторы и приводы"
+        ServiceCardTemplate.LOCK,
+        ServiceCardTemplate.SECURITY,
+        -> "Безопасность"
+        ServiceCardTemplate.FAN -> "Вентиляция"
+        ServiceCardTemplate.VACUUM -> "Уборка"
+        ServiceCardTemplate.MEDIA -> "Медиа"
+        ServiceCardTemplate.SWITCH,
+        ServiceCardTemplate.RANGE,
+        ServiceCardTemplate.GENERIC,
+        null,
+        -> if (cards.size > 1) "Несколько устройств" else "Устройство"
+    }
+}
+
+internal fun recommendedWidgetTemplateDescription(cards: List<ServiceControlCard>): String {
+    val template = cards.singleOrNull()?.template
+        ?: cards.map(ServiceControlCard::template).distinct().singleOrNull()
+    return when (template) {
+        ServiceCardTemplate.CLIMATE -> "Температура и связанные показатели без лишних подписей"
+        ServiceCardTemplate.LIGHT -> "Название, состояние и яркость, если она доступна"
+        ServiceCardTemplate.SENSOR -> "Главное измерение первым и дополнительные показатели ниже"
+        ServiceCardTemplate.SCENE -> "Компактный запуск без пустых служебных строк"
+        ServiceCardTemplate.OUTLET -> "Состояние и электрические показатели"
+        ServiceCardTemplate.COVER -> "Текущее положение и состояние движения"
+        ServiceCardTemplate.LOCK,
+        ServiceCardTemplate.SECURITY,
+        -> "Главное состояние и важные связанные датчики"
+        ServiceCardTemplate.FAN -> "Состояние и скорость вентилятора"
+        ServiceCardTemplate.VACUUM -> "Текущий режим и состояние уборки"
+        ServiceCardTemplate.MEDIA -> "Состояние и выбранный режим устройства"
+        ServiceCardTemplate.SWITCH,
+        ServiceCardTemplate.RANGE,
+        ServiceCardTemplate.GENERIC,
+        null,
+        -> if (cards.size > 1) {
+            "Сбалансированная сетка; при большом составе доступны все восемь объектов"
+        } else {
+            "Универсальная карточка с названием и главным состоянием"
+        }
+    }
+}
+
+internal fun applyWidgetQuickTemplate(
+    configuration: WidgetLayoutConfiguration,
+    template: WidgetQuickTemplate,
+    cards: List<ServiceControlCard>,
+): WidgetLayoutConfiguration {
+    val cardTemplate = cards.singleOrNull()?.template
+        ?: cards.map(ServiceControlCard::template).distinct().singleOrNull()
+    val (density, blocks) = when (template) {
+        WidgetQuickTemplate.COMPACT -> WidgetInformationDensity.COMPACT to listOf(
+            WidgetContentBlock.TITLE,
+            WidgetContentBlock.PRIMARY_VALUE,
+        )
+        WidgetQuickTemplate.INFORMATIVE -> WidgetInformationDensity.DETAILED to DEFAULT_WIDGET_BLOCKS
+        WidgetQuickTemplate.RECOMMENDED -> when {
+            cards.size > 4 -> WidgetInformationDensity.DETAILED to listOf(
+                WidgetContentBlock.TITLE,
+                WidgetContentBlock.PRIMARY_VALUE,
+                WidgetContentBlock.SECONDARY_VALUES,
+            )
+            cardTemplate == ServiceCardTemplate.SENSOR -> WidgetInformationDensity.DETAILED to listOf(
+                WidgetContentBlock.PRIMARY_VALUE,
+                WidgetContentBlock.TITLE,
+                WidgetContentBlock.SECONDARY_VALUES,
+                WidgetContentBlock.CONTEXT,
+            )
+            cardTemplate == ServiceCardTemplate.CLIMATE -> WidgetInformationDensity.DETAILED to
+                DEFAULT_WIDGET_BLOCKS
+            cardTemplate == ServiceCardTemplate.SCENE -> WidgetInformationDensity.COMPACT to listOf(
+                WidgetContentBlock.TITLE,
+                WidgetContentBlock.PRIMARY_VALUE,
+            )
+            else -> WidgetInformationDensity.BALANCED to listOf(
+                WidgetContentBlock.TITLE,
+                WidgetContentBlock.PRIMARY_VALUE,
+                WidgetContentBlock.SECONDARY_VALUES,
+            )
+        }
+    }
+    return configuration.copy(density = density, orderedBlocks = blocks).normalized()
+}
+
+internal fun WidgetLayoutConfiguration.matchesQuickTemplate(
+    template: WidgetQuickTemplate,
+    cards: List<ServiceControlCard>,
+): Boolean {
+    val candidate = applyWidgetQuickTemplate(this, template, cards)
+    return density == candidate.density && orderedBlocks == candidate.orderedBlocks
+}
 
 internal fun WidgetItemConfiguration.normalized(): WidgetItemConfiguration {
     val headline = headlineValueKey?.trim()?.takeIf(String::isNotBlank)

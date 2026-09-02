@@ -34,6 +34,7 @@ import io.github.nikitau.spruthubhelper.data.ConnectionPhase
 
 internal enum class OnboardingStep {
     WELCOME,
+    SURFACES,
     CONNECTION,
     READY,
 }
@@ -50,6 +51,7 @@ internal fun advanceOnboardingStep(
 
 internal fun OnboardingStep.subtitle(): String = when (this) {
     OnboardingStep.WELCOME -> "Короткое знакомство"
+    OnboardingStep.SURFACES -> "Три места для управления"
     OnboardingStep.CONNECTION -> "Единственный обязательный шаг"
     OnboardingStep.READY -> "Подключение подтверждено"
 }
@@ -61,7 +63,7 @@ internal fun OnboardingContent(
     busy: Boolean,
     viewModel: MainViewModel,
     modifier: Modifier = Modifier,
-    onContinue: () -> Unit,
+    onStepChange: (OnboardingStep) -> Unit,
     onComplete: () -> Unit,
 ) {
     LazyColumn(
@@ -71,7 +73,16 @@ internal fun OnboardingContent(
     ) {
         when (step) {
             OnboardingStep.WELCOME -> item {
-                OnboardingWelcomeCard(onContinue = onContinue)
+                OnboardingWelcomeCard(
+                    onContinue = { onStepChange(OnboardingStep.SURFACES) },
+                )
+            }
+
+            OnboardingStep.SURFACES -> item {
+                OnboardingSurfaceGuideCard(
+                    onContinue = { onStepChange(OnboardingStep.CONNECTION) },
+                    onSkip = { onStepChange(OnboardingStep.CONNECTION) },
+                )
             }
 
             OnboardingStep.CONNECTION -> {
@@ -153,8 +164,8 @@ private fun OnboardingWelcomeCard(onContinue: () -> Unit) {
             )
             OnboardingFeatureRow(
                 icon = Icons.Rounded.Settings,
-                title = "Один обязательный шаг",
-                detail = "Сначала проверим подключение. Виджеты, панель и плитки можно добавлять уже после него.",
+                title = "Три понятных формата",
+                detail = "Сначала покажем разницу между виджетом, быстрой кнопкой и панелью. Затем останется один обязательный шаг подключения.",
             )
             Button(
                 onClick = onContinue,
@@ -233,7 +244,7 @@ private fun OnboardingReadyCard(
                 ) {
                     Text("Что дальше", fontWeight = FontWeight.SemiBold)
                     Text(
-                        "На главном экране можно назначить устройства в панель и плитки. Виджеты добавляются через меню рабочего стола. Телефон, здоровье и зоны находятся в настройках.",
+                        "На главном экране выберите «В панель» или «В шторку». Виджет добавляется через меню рабочего стола. Наглядную инструкцию всегда можно снова открыть в настройках.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )

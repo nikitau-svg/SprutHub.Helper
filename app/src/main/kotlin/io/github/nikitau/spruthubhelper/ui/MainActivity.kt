@@ -338,8 +338,16 @@ private fun MainScreen(
         if (advanced != onboardingStep) onboardingStepName = advanced.name
     }
 
-    BackHandler(enabled = onboardingActive && onboardingStep == OnboardingStep.CONNECTION) {
-        onboardingStepName = OnboardingStep.WELCOME.name
+    BackHandler(
+        enabled = onboardingActive && onboardingStep in setOf(
+            OnboardingStep.SURFACES,
+            OnboardingStep.CONNECTION,
+        ),
+    ) {
+        onboardingStepName = when (onboardingStep) {
+            OnboardingStep.CONNECTION -> OnboardingStep.SURFACES.name
+            else -> OnboardingStep.WELCOME.name
+        }
     }
 
     BackHandler(enabled = settingsOpen && !onboardingActive) {
@@ -424,11 +432,21 @@ private fun MainScreen(
                         }
                     },
                     navigationIcon = {
-                        if (onboardingActive && onboardingStep == OnboardingStep.CONNECTION) {
+                        if (
+                            onboardingActive && onboardingStep in setOf(
+                                OnboardingStep.SURFACES,
+                                OnboardingStep.CONNECTION,
+                            )
+                        ) {
                             SprutHeaderIconButton(
                                 icon = Icons.AutoMirrored.Rounded.ArrowBack,
                                 contentDescription = "Назад",
-                                onClick = { onboardingStepName = OnboardingStep.WELCOME.name },
+                                onClick = {
+                                    onboardingStepName = when (onboardingStep) {
+                                        OnboardingStep.CONNECTION -> OnboardingStep.SURFACES.name
+                                        else -> OnboardingStep.WELCOME.name
+                                    }
+                                },
                             )
                         } else if (settingsOpen) {
                             SprutHeaderIconButton(
@@ -477,7 +495,7 @@ private fun MainScreen(
                     busy = busy,
                     viewModel = viewModel,
                     modifier = Modifier.fillMaxSize().padding(padding),
-                    onContinue = { onboardingStepName = OnboardingStep.CONNECTION.name },
+                    onStepChange = { onboardingStepName = it.name },
                     onComplete = viewModel::completeOnboarding,
                 )
             } else if (!settingsOpen) {
@@ -539,8 +557,19 @@ private fun HomeContent(
     targetControlId: String?,
     onTargetConsumed: () -> Unit,
 ) {
+    val context = LocalContext.current
     var search by rememberSaveable { mutableStateOf("") }
+    var managementExpanded by rememberSaveable { mutableStateOf(false) }
     val listState = rememberLazyListState()
+    val compatibility = remember {
+        buildControlSurfaceCompatibility(
+            apiLevel = Build.VERSION.SDK_INT,
+            manufacturer = Build.MANUFACTURER.orEmpty(),
+            model = Build.MODEL.orEmpty(),
+            hasSystemControls = DevicePanelSupport.hasSystemControls(context),
+            hasEmbeddedPanel = DevicePanelSupport.hasEmbeddedPanel(context),
+        )
+    }
     val filtered = remember(ui.catalog.controls, search) {
         groupControlsByAccessory(ui.catalog.controls).filter { it.matches(search) }
     }
@@ -554,7 +583,8 @@ private fun HomeContent(
             group.controls.any { it.id == target } || group.serviceCards.any { it.id == target }
         }
         if (groupIndex >= 0) {
-            listState.animateScrollToItem(4 + groupIndex)
+            val catalogStartIndex = if (managementExpanded) 5 else 3
+            listState.animateScrollToItem(catalogStartIndex + groupIndex)
             onTargetConsumed()
         } else if (ui.catalog.controls.isNotEmpty()) {
             onTargetConsumed()
@@ -573,31 +603,44 @@ private fun HomeContent(
             )
         }
         item {
-            PanelSummaryCard(
-                items = ui.panelItems,
-                controls = ui.catalog.controls,
-                presentations = ui.servicePresentations,
-                viewModel = viewModel,
+            ControlSurfaceOverviewCard(
+                panelCount = ui.panelItems.size,
+                tileAssignmentCount = ui.assignments.size,
+                installedTileCount = ui.assignments.count { it.slot in installedTileSlots },
+                compatibility = compatibility,
+                managementExpanded = managementExpanded,
+                onToggleManagement = { managementExpanded = !managementExpanded },
+                onOpenGuide = { onOpenSettings(SettingsSection.GUIDE) },
             )
         }
-        item {
-            TileSummaryCard(
-                assignments = ui.assignments,
-                controls = ui.catalog.controls,
-                installedSlots = installedTileSlots,
-                viewModel = viewModel,
-            )
+        if (managementExpanded) {
+            item {
+                PanelSummaryCard(
+                    items = ui.panelItems,
+                    controls = ui.catalog.controls,
+                    presentations = ui.servicePresentations,
+                    viewModel = viewModel,
+                )
+            }
+            item {
+                TileSummaryCard(
+                    assignments = ui.assignments,
+                    controls = ui.catalog.controls,
+                    installedSlots = installedTileSlots,
+                    viewModel = viewModel,
+                )
+            }
         }
         item {
             Column(Modifier.padding(horizontal = 16.dp)) {
                 Text(
-                    "Устройства",
+                    "Устройства SprutHub",
                     style = MaterialTheme.typography.headlineSmall,
                     color = SprutText,
                     fontWeight = FontWeight.Bold,
                 )
                 Text(
-                    "Добавьте сервисы в панель устройств или назначьте отдельные плитки шторки.",
+                    "Выберите, где показать уже существующий сервис. Это не создаёт копию устройства в SprutHub.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -692,6 +735,7 @@ private fun SettingsContent(
                     onOpenBackgroundLocationSettings = onOpenBackgroundLocationSettings,
                     expandedByDefault = true,
                 )
+                SettingsSection.GUIDE -> ControlSurfaceFaq()
                 SettingsSection.DIAGNOSTICS -> DiagnosticsCard(ui, expandedByDefault = true)
             }
         }
@@ -811,6 +855,14 @@ private fun SettingsHub(
         }
         item {
             SettingsEntryCard(
+                section = SettingsSection.GUIDE,
+                status = "3 способа управления",
+                statusTone = SetupTone.READY,
+                onClick = { onSelectSection(SettingsSection.GUIDE) },
+            )
+        }
+        item {
+            SettingsEntryCard(
                 section = SettingsSection.DIAGNOSTICS,
                 status = if (hasDiagnosticErrors) "Есть ошибки в журнале" else "Журнал и проверка состояния",
                 statusTone = if (hasDiagnosticErrors) SetupTone.ERROR else SetupTone.READY,
@@ -901,6 +953,7 @@ private fun SettingsSection.icon(): ImageVector = when (this) {
     SettingsSection.HEALTH -> Icons.Rounded.Favorite
     SettingsSection.PHONE -> Icons.Rounded.Smartphone
     SettingsSection.PRESENCE -> Icons.Rounded.LocationOn
+    SettingsSection.GUIDE -> Icons.Rounded.DevicesOther
     SettingsSection.DIAGNOSTICS -> Icons.Rounded.BugReport
 }
 
@@ -2028,7 +2081,7 @@ private fun PanelSummaryCard(
                 }
                 Spacer(Modifier.size(10.dp))
                 Column(Modifier.weight(1f)) {
-                    Text("Панель устройств", fontWeight = FontWeight.Bold)
+                    Text("Панель из шторки", fontWeight = FontWeight.Bold)
                     Text(
                         when {
                             hasEmbeddedPanel -> "Встроена в «Управление устройствами» шторки"
@@ -2066,7 +2119,7 @@ private fun PanelSummaryCard(
                     }
                     if (items.isEmpty()) {
                         Text(
-                            "Пока пусто. Нажмите «Панель» у нужного сервиса ниже.",
+                            "Пока пусто. Нажмите «В панель» у нужного сервиса ниже.",
                             style = MaterialTheme.typography.bodySmall,
                         )
                     }
@@ -2213,7 +2266,7 @@ private fun TileSummaryCard(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Rounded.Tune, null, tint = SprutAccent)
                 Spacer(Modifier.size(8.dp))
-                Text("Плитки шторки", fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                Text("Быстрые кнопки в шторке", fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                 Text("${assignments.size}/12", style = MaterialTheme.typography.labelLarge)
                 if (assignments.isNotEmpty()) {
                     IconButton(onClick = { expanded = !expanded }) {
@@ -2222,7 +2275,7 @@ private fun TileSummaryCard(
                 }
             }
             if (assignments.isEmpty()) {
-                Text("Пока не назначены. Выберите «Плитка» у нужного сервиса.", style = MaterialTheme.typography.bodySmall)
+                Text("Пока не назначены. Выберите «В шторку» у нужного сервиса.", style = MaterialTheme.typography.bodySmall)
             }
             AnimatedVisibility(expanded && assignments.isNotEmpty()) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -2453,7 +2506,7 @@ private fun ControlActions(
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             PlacementAction(
-                label = if (inPanel) "Панель ✓" else "Панель",
+                label = if (inPanel) "В панели ✓" else "В панель",
                 icon = Icons.Rounded.DashboardCustomize,
                 selected = inPanel,
                 onClick = {
@@ -2464,7 +2517,7 @@ private fun ControlActions(
             )
             Box(Modifier.weight(1f)) {
                 PlacementAction(
-                    label = assignedSlot?.let { "Плитка $it" } ?: "Плитка",
+                    label = assignedSlot?.let { "В шторке · $it" } ?: "В шторку",
                     icon = Icons.Rounded.Tune,
                     selected = assignedSlot != null,
                     onClick = { tileMenuExpanded = true },

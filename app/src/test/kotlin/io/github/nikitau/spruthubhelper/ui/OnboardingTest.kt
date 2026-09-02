@@ -65,5 +65,9 @@ class OnboardingTest {
             OnboardingStep.WELCOME,
             advanceOnboardingStep(OnboardingStep.WELCOME, ready),
         )
+        assertEquals(
+            OnboardingStep.SURFACES,
+            advanceOnboardingStep(OnboardingStep.SURFACES, ready),
+        )
     }
 }

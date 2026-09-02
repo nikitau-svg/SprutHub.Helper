@@ -166,6 +166,57 @@ class WidgetLayoutConfigurationTest {
         assertEquals("Включено · +3", compactWidgetValue("Включено", 3))
     }
 
+    @Test
+    fun `quick templates adapt to device role and preserve selected items`() {
+        val climate = card()
+        val initial = WidgetLayoutConfiguration(
+            items = listOf(WidgetItemConfiguration("power", "temperature", listOf("humidity"))),
+            showRefresh = false,
+        )
+
+        val recommended = applyWidgetQuickTemplate(
+            initial,
+            WidgetQuickTemplate.RECOMMENDED,
+            listOf(climate),
+        )
+        assertEquals("Климат", recommendedWidgetTemplateLabel(listOf(climate)))
+        assertEquals(WidgetInformationDensity.DETAILED, recommended.density)
+        assertEquals(initial.items, recommended.items)
+        assertEquals(false, recommended.showRefresh)
+        assertTrue(recommended.matchesQuickTemplate(WidgetQuickTemplate.RECOMMENDED, listOf(climate)))
+
+        val compact = applyWidgetQuickTemplate(
+            initial,
+            WidgetQuickTemplate.COMPACT,
+            listOf(climate),
+        )
+        assertEquals(WidgetInformationDensity.COMPACT, compact.density)
+        assertEquals(
+            listOf(WidgetContentBlock.TITLE, WidgetContentBlock.PRIMARY_VALUE),
+            compact.orderedBlocks,
+        )
+    }
+
+    @Test
+    fun `recommended template names cover scenes and mixed compositions`() {
+        val climate = card()
+        val scene = climate.copy(kind = DeviceKind.SCENE)
+
+        assertEquals("Сценарий", recommendedWidgetTemplateLabel(listOf(scene)))
+        assertEquals(
+            "Несколько устройств",
+            recommendedWidgetTemplateLabel(listOf(climate, scene)),
+        )
+        assertEquals(
+            WidgetInformationDensity.COMPACT,
+            applyWidgetQuickTemplate(
+                WidgetLayoutConfiguration(items = listOf(WidgetItemConfiguration("power"))),
+                WidgetQuickTemplate.RECOMMENDED,
+                listOf(scene),
+            ).density,
+        )
+    }
+
     private fun card() = buildServiceControlCards(
         listOf(
             SprutControl(
