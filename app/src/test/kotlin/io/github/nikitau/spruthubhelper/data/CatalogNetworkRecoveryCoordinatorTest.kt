@@ -10,6 +10,34 @@ import org.junit.Test
 @OptIn(ExperimentalCoroutinesApi::class)
 class CatalogNetworkRecoveryCoordinatorTest {
     @Test
+    fun `fresh worker process uses persisted connection instead of empty in memory catalog`() {
+        assertTrue(
+            hasCatalogRecoveryConfiguration(
+                HubConfig(
+                    mode = ConnectionMode.LOCAL,
+                    localUrl = "ws://192.168.1.2/spruthub",
+                    serial = "0123456789ABCDEF",
+                ),
+            ),
+        )
+        assertTrue(
+            hasCatalogRecoveryConfiguration(
+                HubConfig(
+                    mode = ConnectionMode.CLOUD,
+                    cloudUrl = "wss://beta.spruthub.com/spruthub",
+                    serial = "0123456789ABCDEF",
+                ),
+            ),
+        )
+        assertFalse(hasCatalogRecoveryConfiguration(HubConfig()))
+        assertFalse(
+            hasCatalogRecoveryConfiguration(
+                HubConfig(mode = ConnectionMode.LOCAL, serial = "0123456789ABCDEF"),
+            ),
+        )
+    }
+
+    @Test
     fun `initial available callback does not create background catalog traffic`() = runTest {
         var refreshes = 0
         val coordinator = coordinator { refreshes += 1; Result.success(Unit) }

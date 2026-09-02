@@ -36,6 +36,18 @@ internal fun catalogRecoveredAfter(
     catalog.controls.isNotEmpty()
 
 /**
+ * Uses persisted connection intent rather than process-local catalog state.
+ * Immediately after a Worker recreates the process, the cache-loading coroutine
+ * may not have populated [SprutRepository.catalog] yet.
+ */
+internal fun hasCatalogRecoveryConfiguration(config: HubConfig): Boolean =
+    config.serial.isNotBlank() && when (config.mode) {
+        ConnectionMode.AUTO -> config.localUrl.isNotBlank() || config.cloudUrl.isNotBlank()
+        ConnectionMode.LOCAL -> config.localUrl.isNotBlank()
+        ConnectionMode.CLOUD -> config.cloudUrl.isNotBlank()
+    }
+
+/**
  * Collapses Android network callbacks into one controlled catalog recovery.
  *
  * The phone-data publisher has its own SprutRpcClient, so its successful retry
@@ -171,10 +183,8 @@ class CatalogRecoveryWorker(
     override suspend fun doWork(): Result {
         AppGraph.initialize(applicationContext)
         val repository = AppGraph.repository
-        if (
-            repository.connectionStatus.value.phase == ConnectionPhase.IDLE &&
-            repository.catalog.value.controls.isEmpty()
-        ) {
+        val config = AppGraph.settings.currentConfig()
+        if (!hasCatalogRecoveryConfiguration(config)) {
             return Result.success()
         }
 
