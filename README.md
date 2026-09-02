@@ -1,7 +1,7 @@
 # SprutHub.Helper
 
 [![Android CI](https://github.com/nikitau-svg/SprutHub.Helper/actions/workflows/android.yml/badge.svg?branch=beta)](https://github.com/nikitau-svg/SprutHub.Helper/actions/workflows/android.yml)
-[![Latest beta](https://img.shields.io/badge/beta-0.7.0--beta.6-orange)](https://github.com/nikitau-svg/SprutHub.Helper/releases/tag/v0.7.0-beta.6)
+[![Latest beta](https://img.shields.io/badge/beta-0.7.0--beta.7-orange)](https://github.com/nikitau-svg/SprutHub.Helper/releases/tag/v0.7.0-beta.7)
 [![Android 11+](https://img.shields.io/badge/Android-11%2B-3DDC84)](docs/CAPABILITIES.md)
 [![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial-blue)](LICENSE)
 
@@ -24,11 +24,11 @@ Helper подключается напрямую к локальному хаб�
 
 ### Скачать beta
 
-**[Скачать SprutHub.Helper 0.7.0-beta.6 (APK)](https://github.com/nikitau-svg/SprutHub.Helper/releases/download/v0.7.0-beta.6/SprutHub.Helper-0.7.0-beta.6.apk)**
+**[Скачать SprutHub.Helper 0.7.0-beta.7 (APK)](https://github.com/nikitau-svg/SprutHub.Helper/releases/download/v0.7.0-beta.7/SprutHub.Helper-0.7.0-beta.7.apk)**
 
-[Описание релиза](https://github.com/nikitau-svg/SprutHub.Helper/releases/tag/v0.7.0-beta.6) · [Как установить APK](docs/INSTALLATION.md) · [Возможности и совместимость](docs/CAPABILITIES.md)
+[Описание релиза](https://github.com/nikitau-svg/SprutHub.Helper/releases/tag/v0.7.0-beta.7) · [Как установить APK](docs/INSTALLATION.md) · [Возможности и совместимость](docs/CAPABILITIES.md)
 
-> Проект не связан с разработчиками SprutHub. Приложение использует внутренний WebSocket/JSON-RPC-протокол, который может измениться без предупреждения. Текущая опубликованная beta-версия — [`0.7.0-beta.6`](https://github.com/nikitau-svg/SprutHub.Helper/releases/tag/v0.7.0-beta.6); разработка `0.7.0-beta.7` идёт в ветке `beta`.
+> Проект не связан с разработчиками SprutHub. Приложение использует внутренний WebSocket/JSON-RPC-протокол, который может измениться без предупреждения. Текущая опубликованная beta-версия — [`0.7.0-beta.7`](https://github.com/nikitau-svg/SprutHub.Helper/releases/tag/v0.7.0-beta.7); дальнейшая разработка идёт в ветке `beta`.
 
 > Активная разработка идёт в ветке [`beta`](https://github.com/nikitau-svg/SprutHub.Helper/tree/beta). В `main` попадает только версия, прошедшая аппаратный E2E; готовые APK всегда публикуются отдельными подписанными [GitHub Releases](https://github.com/nikitau-svg/SprutHub.Helper/releases).
 
