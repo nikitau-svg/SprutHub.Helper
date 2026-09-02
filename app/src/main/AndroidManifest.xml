@@ -163,7 +163,7 @@
         <service
             android:name=".tiles.Tile1Service"
             android:exported="true"
-            android:icon="@drawable/ic_tile"
+            android:icon="@drawable/ic_device_other"
             android:label="@string/tile_1"
             android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
             <intent-filter>
@@ -173,7 +173,7 @@
         <service
             android:name=".tiles.Tile2Service"
             android:exported="true"
-            android:icon="@drawable/ic_tile"
+            android:icon="@drawable/ic_device_other"
             android:label="@string/tile_2"
             android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
             <intent-filter>
@@ -183,7 +183,7 @@
         <service
             android:name=".tiles.Tile3Service"
             android:exported="true"
-            android:icon="@drawable/ic_tile"
+            android:icon="@drawable/ic_device_other"
             android:label="@string/tile_3"
             android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
             <intent-filter>
@@ -193,7 +193,7 @@
         <service
             android:name=".tiles.Tile4Service"
             android:exported="true"
-            android:icon="@drawable/ic_tile"
+            android:icon="@drawable/ic_device_other"
             android:label="@string/tile_4"
             android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
             <intent-filter>
@@ -204,7 +204,7 @@
             android:name=".tiles.Tile5Service"
             android:enabled="false"
             android:exported="true"
-            android:icon="@drawable/ic_tile"
+            android:icon="@drawable/ic_device_other"
             android:label="@string/tile_5"
             android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
             <intent-filter>
@@ -215,7 +215,7 @@
             android:name=".tiles.Tile6Service"
             android:enabled="false"
             android:exported="true"
-            android:icon="@drawable/ic_tile"
+            android:icon="@drawable/ic_device_other"
             android:label="@string/tile_6"
             android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
             <intent-filter>
@@ -226,7 +226,7 @@
             android:name=".tiles.Tile7Service"
             android:enabled="false"
             android:exported="true"
-            android:icon="@drawable/ic_tile"
+            android:icon="@drawable/ic_device_other"
             android:label="@string/tile_7"
             android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
             <intent-filter>
@@ -237,7 +237,7 @@
             android:name=".tiles.Tile8Service"
             android:enabled="false"
             android:exported="true"
-            android:icon="@drawable/ic_tile"
+            android:icon="@drawable/ic_device_other"
             android:label="@string/tile_8"
             android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
             <intent-filter>
@@ -248,7 +248,7 @@
             android:name=".tiles.Tile9Service"
             android:enabled="false"
             android:exported="true"
-            android:icon="@drawable/ic_tile"
+            android:icon="@drawable/ic_device_other"
             android:label="@string/tile_9"
             android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
             <intent-filter>
@@ -259,7 +259,7 @@
             android:name=".tiles.Tile10Service"
             android:enabled="false"
             android:exported="true"
-            android:icon="@drawable/ic_tile"
+            android:icon="@drawable/ic_device_other"
             android:label="@string/tile_10"
             android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
             <intent-filter>
@@ -270,7 +270,7 @@
             android:name=".tiles.Tile11Service"
             android:enabled="false"
             android:exported="true"
-            android:icon="@drawable/ic_tile"
+            android:icon="@drawable/ic_device_other"
             android:label="@string/tile_11"
             android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
             <intent-filter>
@@ -281,7 +281,7 @@
             android:name=".tiles.Tile12Service"
             android:enabled="false"
             android:exported="true"
-            android:icon="@drawable/ic_tile"
+            android:icon="@drawable/ic_device_other"
             android:label="@string/tile_12"
             android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
             <intent-filter>

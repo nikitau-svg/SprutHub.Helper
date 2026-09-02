@@ -547,7 +547,7 @@ private fun ServiceGlassCard(
                         )
                     } else {
                         Icon(
-                            painter = painterResource(TileIconResolver.resource(control.kind)),
+                            painter = painterResource(TileIconResolver.resource(card)),
                             contentDescription = null,
                             modifier = Modifier.size(27.dp),
                             tint = if (active) PanelAccent else PanelText,

@@ -28,6 +28,10 @@ class WidgetRenderFingerprintTest {
         )
         assertNotEquals(first, fingerprint(control, CatalogFreshness(CatalogFreshnessPhase.OFFLINE)))
         assertNotEquals(first, fingerprint(control, live, iconRevision = "200:2"))
+        assertNotEquals(
+            first,
+            fingerprint(control.copy(sourceType = "S.BatteryService"), live),
+        )
     }
 
     @Test

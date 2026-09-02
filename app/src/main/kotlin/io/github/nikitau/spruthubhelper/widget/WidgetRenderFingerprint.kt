@@ -8,6 +8,7 @@ import io.github.nikitau.spruthubhelper.data.ServicePresentationPreference
 import io.github.nikitau.spruthubhelper.data.buildServiceControlCards
 import io.github.nikitau.spruthubhelper.data.presentationFor
 import io.github.nikitau.spruthubhelper.data.surfaceValue
+import io.github.nikitau.spruthubhelper.icons.DefaultServiceIconResolver
 
 internal enum class WidgetRenderMode {
     UNCONFIGURED,
@@ -31,6 +32,7 @@ internal data class WidgetRenderFingerprint(
     val headlineKey: String = "",
     val secondaryValues: String = "",
     val kind: String = "",
+    val defaultIcon: String = "",
     val behavior: String = "",
     val freshnessPhase: String = "",
     val authoritative: Boolean = false,
@@ -78,6 +80,7 @@ internal fun widgetRenderFingerprint(
             headlineKey = headline.key,
             secondaryValues = secondary.joinToString("|") { "${it.key}=${it.value}" },
             kind = control.kind.name,
+            defaultIcon = DefaultServiceIconResolver.resolve(resolvedCard).name,
             behavior = control.behavior.name,
             freshnessPhase = freshness.phase.name,
             authoritative = presentation.stateIsAuthoritative,

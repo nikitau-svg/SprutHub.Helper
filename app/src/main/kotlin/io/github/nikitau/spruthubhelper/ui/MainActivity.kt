@@ -49,19 +49,14 @@ import androidx.compose.material.icons.rounded.ArrowUpward
 import androidx.compose.material.icons.rounded.ExpandLess
 import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.rounded.Favorite
-import androidx.compose.material.icons.rounded.Lightbulb
 import androidx.compose.material.icons.rounded.Image
-import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.LocationOn
 import androidx.compose.material.icons.rounded.Menu
 import androidx.compose.material.icons.rounded.MoreVert
-import androidx.compose.material.icons.rounded.PlayArrow
-import androidx.compose.material.icons.rounded.PowerSettingsNew
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Smartphone
-import androidx.compose.material.icons.rounded.Thermostat
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.Visibility
 import androidx.compose.material.icons.rounded.VisibilityOff
@@ -106,6 +101,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -2322,7 +2318,12 @@ private fun AccessoryCard(
                     color = Color.White.copy(alpha = 0.065f),
                     border = BorderStroke(1.dp, SprutGlassBorder),
                 ) {
-                    Icon(group.controls.first().icon(), null, Modifier.padding(10.dp), tint = SprutAccent)
+                    Icon(
+                        painter = painterResource(TileIconResolver.resource(group.controls.first())),
+                        contentDescription = null,
+                        modifier = Modifier.padding(10.dp),
+                        tint = SprutAccent,
+                    )
                 }
                 Spacer(Modifier.size(12.dp))
                 Column(Modifier.weight(1f)) {
@@ -2860,7 +2861,7 @@ private fun requestSystemTile(activity: ComponentActivity, slot: Int, control: S
     manager.requestAddTileService(
         TileComponents.component(activity, slot),
         control.title,
-        CustomIconManager(activity).loadIcon(control.id) ?: TileIconResolver.icon(activity, control.kind),
+        CustomIconManager(activity).loadIcon(control.id) ?: TileIconResolver.icon(activity, control),
         activity.mainExecutor,
     ) { result ->
         when (result) {
@@ -2959,13 +2960,4 @@ private fun DiagnosticsCard(ui: MainUiState, expandedByDefault: Boolean = false)
             }
         }
     }
-}
-
-private fun SprutControl.icon(): ImageVector = when (kind) {
-    DeviceKind.LIGHT -> Icons.Rounded.Lightbulb
-    DeviceKind.LOCK, DeviceKind.SECURITY -> Icons.Rounded.Lock
-    DeviceKind.THERMOSTAT -> Icons.Rounded.Thermostat
-    DeviceKind.SCENE -> Icons.Rounded.PlayArrow
-    DeviceKind.SWITCH, DeviceKind.OUTLET -> Icons.Rounded.PowerSettingsNew
-    else -> Icons.Rounded.DevicesOther
 }

@@ -178,7 +178,8 @@ abstract class SprutTileService(private val slot: Int) : TileService() {
             tile.stateDescription = presentation.stateDescription
             tile.icon = card?.let { CustomIconManager(this).loadIcon(it.id) }
                 ?: CustomIconManager(this).loadIcon(control.id)
-                ?: TileIconResolver.icon(this, control.kind)
+                ?: card?.let { TileIconResolver.icon(this, it) }
+                ?: TileIconResolver.icon(this, control)
             tile.state = when (presentation.visualState) {
                 QuickSettingsVisualState.ACTIVE -> Tile.STATE_ACTIVE
                 QuickSettingsVisualState.INACTIVE -> Tile.STATE_INACTIVE

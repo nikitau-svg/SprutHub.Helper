@@ -253,7 +253,7 @@ class SprutAppWidgetProvider : AppWidgetProvider() {
             views.setTextViewText(R.id.widget_subtitle, context.getString(R.string.widget_tap_to_configure))
             views.setTextViewText(R.id.widget_value, "")
             views.setViewVisibility(R.id.widget_value, View.GONE)
-            views.setImageViewResource(R.id.widget_icon, R.drawable.ic_tile)
+            views.setImageViewResource(R.id.widget_icon, R.drawable.ic_device_other)
             views.setOnClickPendingIntent(R.id.widget_root, configurePendingIntent(context, appWidgetId))
             views.setOnClickPendingIntent(R.id.widget_refresh, refreshPendingIntent(context, appWidgetId))
         }
@@ -271,7 +271,7 @@ class SprutAppWidgetProvider : AppWidgetProvider() {
             )
             views.setTextViewText(R.id.widget_value, "")
             views.setViewVisibility(R.id.widget_value, View.GONE)
-            views.setImageViewResource(R.id.widget_icon, R.drawable.ic_tile)
+            views.setImageViewResource(R.id.widget_icon, R.drawable.ic_device_other)
             views.setOnClickPendingIntent(R.id.widget_root, configurePendingIntent(context, appWidgetId))
             views.setOnClickPendingIntent(R.id.widget_refresh, refreshPendingIntent(context, appWidgetId))
         }
@@ -330,7 +330,7 @@ class SprutAppWidgetProvider : AppWidgetProvider() {
             if (customBitmap != null) {
                 views.setImageViewBitmap(R.id.widget_icon, customBitmap)
             } else {
-                views.setImageViewResource(R.id.widget_icon, TileIconResolver.resource(control.kind))
+                views.setImageViewResource(R.id.widget_icon, TileIconResolver.resource(card))
             }
 
             val decision = WidgetActionResolver.resolve(control)

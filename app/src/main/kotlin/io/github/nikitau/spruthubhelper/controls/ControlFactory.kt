@@ -21,6 +21,7 @@ import io.github.nikitau.spruthubhelper.data.ServiceControlCard
 import io.github.nikitau.spruthubhelper.data.ServicePresentationPreference
 import io.github.nikitau.spruthubhelper.data.presentationFor
 import io.github.nikitau.spruthubhelper.icons.CustomIconManager
+import io.github.nikitau.spruthubhelper.tiles.TileIconResolver
 import io.github.nikitau.spruthubhelper.ui.MainActivity
 
 object ControlFactory {
@@ -31,8 +32,11 @@ object ControlFactory {
             .setStructure("SprutHub")
             .setZone(item.room)
             .setDeviceType(item.deviceType())
-        (card?.let { CustomIconManager(context).loadIcon(it.id) }
-            ?: CustomIconManager(context).loadIcon(item.id))?.let(builder::setCustomIcon)
+        val icon = card?.let { CustomIconManager(context).loadIcon(it.id) }
+            ?: CustomIconManager(context).loadIcon(item.id)
+            ?: card?.let { TileIconResolver.icon(context, it) }
+            ?: TileIconResolver.icon(context, item)
+        builder.setCustomIcon(icon)
         return builder.build()
     }
 
@@ -74,8 +78,11 @@ object ControlFactory {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             builder.setAuthRequired(item.requiresAuthentication())
         }
-        (card?.let { CustomIconManager(context).loadIcon(it.id) }
-            ?: CustomIconManager(context).loadIcon(item.id))?.let(builder::setCustomIcon)
+        val icon = card?.let { CustomIconManager(context).loadIcon(it.id) }
+            ?: CustomIconManager(context).loadIcon(item.id)
+            ?: card?.let { TileIconResolver.icon(context, it) }
+            ?: TileIconResolver.icon(context, item)
+        builder.setCustomIcon(icon)
         return builder.build()
     }
 

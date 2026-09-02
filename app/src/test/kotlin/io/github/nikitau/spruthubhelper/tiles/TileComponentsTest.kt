@@ -32,7 +32,7 @@ class TileComponentsTest {
 
     @Test
     fun readOnlySensorsDoNotUseThePowerGlyph() {
-        assertEquals(R.drawable.ic_tile_sensor, TileIconResolver.resource(DeviceKind.SENSOR))
-        assertNotEquals(R.drawable.ic_tile, TileIconResolver.resource(DeviceKind.SENSOR))
+        assertEquals(R.drawable.ic_device_sensor, TileIconResolver.resource(DeviceKind.SENSOR))
+        assertNotEquals(R.drawable.ic_device_other, TileIconResolver.resource(DeviceKind.SENSOR))
     }
 }

@@ -262,7 +262,7 @@ private fun WidgetControlChoice(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Icon(
-                painter = painterResource(TileIconResolver.resource(control.kind)),
+                painter = painterResource(TileIconResolver.resource(control)),
                 contentDescription = null,
                 modifier = Modifier.size(30.dp),
                 tint = if (selected) SprutAccent else Color.White,
