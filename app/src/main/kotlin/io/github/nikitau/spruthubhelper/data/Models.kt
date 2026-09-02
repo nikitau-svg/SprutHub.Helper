@@ -211,6 +211,7 @@ internal fun readableSprutUnit(unit: String): String = when (unit.trim().lowerca
     "gcal" -> "Гкал"
     "@unit_gcal_h" -> "Гкал/ч"
     "bar", "@unit_bar" -> "бар"
+    "@unit_pa" -> "Па"
     "kpa", "@unit_kpa" -> "кПа"
     "@unit_hpa" -> "гПа"
     "mmhg" -> "мм рт. ст."

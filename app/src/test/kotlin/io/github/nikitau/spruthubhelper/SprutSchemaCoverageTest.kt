@@ -3,6 +3,7 @@ package io.github.nikitau.spruthubhelper
 import io.github.nikitau.spruthubhelper.data.ControlBehavior
 import io.github.nikitau.spruthubhelper.data.DeviceKind
 import io.github.nikitau.spruthubhelper.data.groupControlsByAccessory
+import io.github.nikitau.spruthubhelper.data.readableSprutUnit
 import io.github.nikitau.spruthubhelper.sprut.SprutCatalogParser
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -36,15 +37,89 @@ class SprutSchemaCoverageTest {
     private val characteristicTypes: List<String>
         get() = manifest.getValue("characteristicTypes").jsonArray.map { it.jsonPrimitive.content }
 
+    private val units: List<String>
+        get() = manifest.getValue("units").jsonArray.map { it.jsonPrimitive.content }
+
+    private val enumCharacteristics: Map<String, List<String>>
+        get() = manifest.getValue("enumCharacteristics").jsonObject.mapValues { (_, value) ->
+            value.jsonArray.map { it.jsonPrimitive.content }
+        }
+
     @Test
     fun schemaSnapshotRetainsTheFullPublishedTypeBreadth() {
         assertEquals("http://json-schema.org/draft-07/schema#", manifest.getValue("schemaDraft").jsonPrimitive.content)
+        assertEquals(
+            "a997d659b0ce41b8fb90899bd294444690e422782d992004fb85f620fe90620a",
+            manifest.getValue("sourceSha256").jsonPrimitive.content,
+        )
         assertEquals(103, serviceTypes.size)
         assertEquals(103, serviceTypes.distinct().size)
         assertEquals(313, characteristicTypes.size)
         assertEquals(313, characteristicTypes.distinct().size)
         assertEquals(33, serviceTypes.count { it.startsWith("C_") })
         assertEquals(67, characteristicTypes.count { it.startsWith("C_") })
+        assertEquals(81, units.size)
+        assertEquals(81, units.distinct().size)
+        assertEquals(69, enumCharacteristics.size)
+        assertTrue(enumCharacteristics.values.all { it.isNotEmpty() })
+    }
+
+    @Test
+    fun everySchemaLocaleUnitHasAHumanReadableLabel() {
+        val unresolved = units
+            .filter { it.startsWith("@unit_") }
+            .filter { readableSprutUnit(it) == it }
+
+        assertEquals("Не переведены единицы SprutHub", emptyList<String>(), unresolved)
+        assertTrue(units.all { readableSprutUnit(it).isNotBlank() })
+    }
+
+    @Test
+    fun everyNestedSchemaEnumerationKeepsAllServerOptions() {
+        val characteristics = buildJsonArray {
+            enumCharacteristics.toSortedMap().entries.forEachIndexed { index, (type, keys) ->
+                add(
+                    buildJsonObject {
+                        put("id", index + 1)
+                        put("type", type)
+                        put("read", true)
+                        put("write", true)
+                        put("value", 0)
+                        putJsonArray("validValues") {
+                            keys.forEachIndexed { optionIndex, key ->
+                                add(
+                                    buildJsonObject {
+                                        put("value", optionIndex)
+                                        put("key", key)
+                                        put("name", key)
+                                    },
+                                )
+                            }
+                        }
+                    },
+                )
+            }
+        }
+        val service = buildJsonObject {
+            put("id", 1)
+            put("type", "GenericService")
+            put("name", "Перечисления схемы")
+            put("characteristics", characteristics)
+        }
+        val controls = parser.parse(
+            deeplyNestedRooms(),
+            deeplyNestedAccessories(JsonArray(listOf(service))),
+        ).controls
+        val controlsByType = controls.associateBy { it.characteristicType }
+
+        assertEquals(enumCharacteristics.keys, controlsByType.keys)
+        enumCharacteristics.forEach { (type, keys) ->
+            assertEquals(
+                "Потеряны варианты перечисления $type",
+                keys,
+                controlsByType.getValue(type).valueOptions.map { it.key },
+            )
+        }
     }
 
     @Test
