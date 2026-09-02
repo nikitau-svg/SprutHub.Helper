@@ -92,6 +92,11 @@ class ReleaseNotifierTest(unittest.TestCase):
             )
 
         request = urlopen.call_args.args[0]
+        self.assertEqual(
+            urlopen.call_args.kwargs["timeout"],
+            notifier.TELEGRAM_UPLOAD_TIMEOUT,
+        )
+        self.assertGreaterEqual(notifier.TELEGRAM_UPLOAD_TIMEOUT, 120)
         self.assertIn(b'name="caption"', request.data)
         self.assertIn(b"https://example.test/release", request.data)
         self.assertNotIn(b'name="reply_markup"', request.data)
