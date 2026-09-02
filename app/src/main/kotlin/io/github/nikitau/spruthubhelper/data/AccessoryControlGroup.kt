@@ -109,13 +109,15 @@ data class ServiceControlCard(
         get() = primaryControl.behavior == ControlBehavior.RANGE ||
             primaryControl.behavior == ControlBehavior.TOGGLE_RANGE
 
-    fun headlineValue(): String = when (primaryControl.behavior) {
-        ControlBehavior.TOGGLE, ControlBehavior.TOGGLE_RANGE -> semanticToggleValue(
-            primaryControl.value.asBooleanOrNull(),
-        )
-        ControlBehavior.RANGE, ControlBehavior.OPTIONS, ControlBehavior.SENSOR -> formattedValue(primaryControl)
-        ControlBehavior.BUTTON -> "Готово к запуску"
-    }
+    /**
+     * The control that performs the tap action and the value that best
+     * describes a device are not always the same characteristic. For example,
+     * a cover is operated through TargetPosition but described by its current
+     * position, while a vacuum exposes a writable target mode and a separate
+     * current operating state. Keep those contracts separate so improving a
+     * label can never redirect a command to another characteristic.
+     */
+    fun headlineValue(): String = presentationValue(headlineControl())
 
     fun displayServiceName(): String {
         val explicit = serviceName.trim()
@@ -160,11 +162,7 @@ data class ServiceControlCard(
                     CharacteristicDisplayValue(
                         key = control.id,
                         label = attributeLabel(control),
-                        value = if (control.id == primaryControl.id) {
-                            headlineValue()
-                        } else {
-                            attributeValue(control)
-                        },
+                        value = presentationValue(control),
                     ),
                 )
             }
@@ -259,6 +257,52 @@ data class ServiceControlCard(
 
     companion object {
         const val DEFAULT_ATTRIBUTE_COUNT = 2
+    }
+
+    private fun headlineControl(): SprutControl = when (template) {
+        ServiceCardTemplate.VACUUM -> firstControlOfType(
+            "currentoperationalstate",
+            "currentrunmode",
+            "currentphase",
+        ) ?: primaryControl
+        ServiceCardTemplate.COVER -> coverHeadlineControl()
+        ServiceCardTemplate.LOCK -> firstControlOfType("lockcurrentstate") ?: primaryControl
+        ServiceCardTemplate.SECURITY -> firstControlOfType("securitysystemcurrentstate") ?: primaryControl
+        ServiceCardTemplate.SENSOR -> controls.maxWithOrNull(
+            compareBy<SprutControl>(::attributePriority).thenByDescending { it.id == primaryControl.id },
+        ) ?: primaryControl
+        else -> primaryControl
+    }
+
+    private fun coverHeadlineControl(): SprutControl {
+        firstControlOfType("currentdoorstate")?.let { return it }
+        val movement = firstControlOfType("positionstate")
+        if (movement != null && formattedValue(movement) != "Остановлено") return movement
+        return firstControlOfType("currentposition") ?: movement ?: primaryControl
+    }
+
+    private fun firstControlOfType(vararg types: String): SprutControl? {
+        val byType = controls.associateBy { normalizeType(it.characteristicType) }
+        return types.firstNotNullOfOrNull(byType::get)
+    }
+
+    private fun presentationValue(control: SprutControl): String = when (control.behavior) {
+        ControlBehavior.TOGGLE, ControlBehavior.TOGGLE_RANGE -> {
+            if (usesDeviceToggleSemantics(control)) {
+                semanticToggleValue(control.value.asBooleanOrNull())
+            } else {
+                formattedValue(control)
+            }
+        }
+        ControlBehavior.RANGE, ControlBehavior.OPTIONS, ControlBehavior.SENSOR -> formattedValue(control)
+        ControlBehavior.BUTTON -> "Готово к запуску"
+    }
+
+    private fun usesDeviceToggleSemantics(control: SprutControl): Boolean {
+        if (kind != DeviceKind.VACUUM) return true
+        val type = normalizeType(control.characteristicType)
+        return type in setOf("active", "on", "boolean", "power", "enabled") ||
+            (type.isBlank() && control.id == primaryControl.id)
     }
 
     private fun semanticToggleValue(active: Boolean?): String = when (active) {
@@ -526,13 +570,20 @@ fun groupControlsByAccessory(controls: List<SprutControl>): List<AccessoryContro
         compareBy<AccessoryControlGroup>({ it.room.lowercase() }, { it.title.lowercase() }, AccessoryControlGroup::key),
     )
 
-private fun primaryPriority(control: SprutControl): Int = when (control.behavior) {
-    ControlBehavior.TOGGLE_RANGE -> 1_000
-    ControlBehavior.TOGGLE -> 900
-    ControlBehavior.OPTIONS -> 850
-    ControlBehavior.BUTTON -> 800
-    ControlBehavior.RANGE -> 700
-    ControlBehavior.SENSOR -> 100 + attributePriority(control)
+private fun primaryPriority(control: SprutControl): Int {
+    val type = normalizeType(control.characteristicType)
+    if (control.kind == DeviceKind.VACUUM && type == "targetoperationalstate") return 1_200
+    return when (control.behavior) {
+        ControlBehavior.TOGGLE_RANGE -> 1_000
+        ControlBehavior.TOGGLE -> 900
+        ControlBehavior.OPTIONS -> 850
+        ControlBehavior.BUTTON -> 800
+        ControlBehavior.RANGE -> 700
+        // A read-only value may be the best headline, but must never replace a
+        // real action as the card's tap target. Relative sensor ordering is
+        // still preserved by attributePriority for sensor-only services.
+        ControlBehavior.SENSOR -> attributePriority(control)
+    }
 }
 
 private fun attributePriority(control: SprutControl): Int {
@@ -558,6 +609,22 @@ private fun attributePriority(control: SprutControl): Int {
             "volt",
             "consumption",
         ).any(type::contains) -> 620
+        type == "airquality" -> 670
+        type in setOf(
+            "carbondioxidelevel",
+            "carbondioxidepeaklevel",
+            "carbonmonoxidelevel",
+            "carbonmonoxidepeaklevel",
+            "aqidensity",
+            "vocdensity",
+            "airparticulatedensity",
+            "formaldehydedensity",
+            "nitrogendioxidedensity",
+            "ozonedensity",
+            "sulphurdioxidedensity",
+            "pm25density",
+            "pm10density",
+        ) -> 650
         type == "currenttemperature" -> 600
         type in setOf("currentheatercoolerstate", "currentheatingcoolingstate", "currentoperationalstate") -> 560
         type in setOf("targetheatercoolerstate", "targetheatingcoolingstate", "targetoperationalstate") -> 540
@@ -576,7 +643,6 @@ private fun attributePriority(control: SprutControl): Int {
             "gasdetected",
             "noisedetected",
         ) -> 450
-        type == "airquality" -> 440
         type in setOf("statusfault", "statusjammed", "operationalerror", "obstructiondetected") -> 420
         type in setOf("online", "statusactive") -> 400
         type in setOf("batterylevel", "statuslowbattery", "chargingstate") -> 380
@@ -596,6 +662,7 @@ private fun characteristicLabel(control: SprutControl): String {
         "currentrelativehumidity" -> "Влажность"
         "fanspeed", "rotationspeed", "currentfanstate" -> "Вентилятор"
         "currentposition" -> "Положение"
+        "targetposition" -> "Целевая позиция"
         "positionstate" -> "Движение"
         "currentdoorstate" -> "Состояние"
         "targetdoorstate" -> "Команда"

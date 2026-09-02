@@ -156,6 +156,119 @@ class AccessoryControlGroupTest {
     }
 
     @Test
+    fun usesMeasuredCarbonDioxideAsHeadlineWithoutDroppingDetectionState() {
+        val detected = control(id = "121:1:1", serviceId = "1", subtitle = "CO2 detected").copy(
+            behavior = ControlBehavior.SENSOR,
+            writable = false,
+            kind = DeviceKind.SENSOR,
+            sourceType = "CarbonDioxideSensor",
+            characteristicType = "CarbonDioxideDetected",
+            value = SprutValue(numberValue = 0.0),
+        )
+        val level = control(id = "121:1:2", serviceId = "1", subtitle = "CO2 level").copy(
+            behavior = ControlBehavior.SENSOR,
+            writable = false,
+            kind = DeviceKind.SENSOR,
+            sourceType = "CarbonDioxideSensor",
+            characteristicType = "CarbonDioxideLevel",
+            value = SprutValue(numberValue = 497.0),
+            unit = "ppm",
+        )
+
+        val card = buildServiceControlCards(listOf(detected, level)).single()
+        val values = card.characteristicValues().associate { it.label to it.value }
+
+        assertEquals("121:1:2", card.primaryControl.id)
+        assertEquals("497 ppm", card.headlineValue())
+        assertEquals("Нет", values.getValue("CO₂ обнаружен"))
+        assertEquals("497 ppm", values.getValue("CO₂"))
+    }
+
+    @Test
+    fun separatesVacuumActionFromCurrentStatusAndSecondaryBoolean() {
+        val suction = control(id = "122:1:1", serviceId = "1", subtitle = "Мощность всасывания").copy(
+            behavior = ControlBehavior.TOGGLE,
+            kind = DeviceKind.VACUUM,
+            sourceType = "C_VacuumCleaner",
+            characteristicType = "C_SuctionPower",
+            characteristicName = "Мощность всасывания",
+            value = SprutValue(boolValue = true),
+        )
+        val target = control(id = "122:1:2", serviceId = "1", subtitle = "Заданный режим").copy(
+            behavior = ControlBehavior.OPTIONS,
+            kind = DeviceKind.VACUUM,
+            sourceType = "C_VacuumCleaner",
+            characteristicType = "C_TargetOperationalState",
+            value = SprutValue(numberValue = 1.0),
+            valueOptions = listOf(
+                SprutValueOption(SprutValue(numberValue = 0.0), name = "Стоп"),
+                SprutValueOption(SprutValue(numberValue = 1.0), name = "Старт"),
+            ),
+        )
+        val current = control(id = "122:1:3", serviceId = "1", subtitle = "Режим").copy(
+            behavior = ControlBehavior.SENSOR,
+            writable = false,
+            kind = DeviceKind.VACUUM,
+            sourceType = "C_VacuumCleaner",
+            characteristicType = "C_CurrentOperationalState",
+            value = SprutValue(numberValue = 3.0),
+            valueOptions = listOf(
+                SprutValueOption(SprutValue(numberValue = 3.0), name = "Заряжается"),
+            ),
+        )
+
+        val card = buildServiceControlCards(listOf(suction, target, current)).single()
+        val values = card.characteristicValues().associate { it.label to it.value }
+
+        assertEquals("122:1:2", card.primaryControl.id)
+        assertEquals(ControlBehavior.OPTIONS, card.primaryControl.behavior)
+        assertEquals("Заряжается", card.headlineValue())
+        assertEquals("Да", values.getValue("Мощность всасывания"))
+        assertEquals("Старт", values.getValue("Заданный режим"))
+        assertEquals("Заряжается", values.getValue("Режим"))
+    }
+
+    @Test
+    fun keepsCoverTargetAsActionButShowsCurrentPositionWhenStopped() {
+        val target = control(id = "124:1:1", serviceId = "1", subtitle = "Целевая позиция").copy(
+            behavior = ControlBehavior.RANGE,
+            kind = DeviceKind.BLINDS,
+            sourceType = "WindowCovering",
+            characteristicType = "TargetPosition",
+            characteristicName = "Целевая позиция",
+            value = SprutValue(numberValue = 100.0),
+            unit = "percentage",
+        )
+        val current = control(id = "124:1:2", serviceId = "1", subtitle = "Положение").copy(
+            behavior = ControlBehavior.SENSOR,
+            writable = false,
+            kind = DeviceKind.BLINDS,
+            sourceType = "WindowCovering",
+            characteristicType = "CurrentPosition",
+            value = SprutValue(numberValue = 100.0),
+            unit = "percentage",
+        )
+        val movement = control(id = "124:1:3", serviceId = "1", subtitle = "Движение").copy(
+            behavior = ControlBehavior.SENSOR,
+            writable = false,
+            kind = DeviceKind.BLINDS,
+            sourceType = "WindowCovering",
+            characteristicType = "PositionState",
+            value = SprutValue(numberValue = 2.0),
+        )
+
+        val card = buildServiceControlCards(listOf(target, current, movement)).single()
+        val values = card.characteristicValues().associate { it.label to it.value }
+
+        assertEquals("124:1:1", card.primaryControl.id)
+        assertEquals(ControlBehavior.RANGE, card.primaryControl.behavior)
+        assertEquals("100 %", card.headlineValue())
+        assertEquals("100 %", values.getValue("Целевая позиция"))
+        assertEquals("100 %", values.getValue("Положение"))
+        assertEquals("Остановлено", values.getValue("Движение"))
+    }
+
+    @Test
     fun localizesRareSensorLabelsAndUnitsAcrossAndroidSurfaces() {
         val pm1 = control(id = "123:1:1", serviceId = "1", subtitle = "PM1").copy(
             behavior = ControlBehavior.SENSOR,

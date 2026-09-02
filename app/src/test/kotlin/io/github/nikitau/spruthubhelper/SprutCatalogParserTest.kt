@@ -469,8 +469,59 @@ class SprutCatalogParserTest {
         assertEquals(true, option.writable)
         assertEquals(4, option.valueOptions.size)
         assertEquals(ServiceCardTemplate.SECURITY, card.template)
-        assertEquals("Вне дома", card.headlineValue())
+        assertEquals("Снято с охраны", card.headlineValue())
         assertEquals(listOf(option.id), card.optionControls().map(SprutControl::id))
+    }
+
+    @Test
+    fun keepsLiveVacuumAndCoverActionsSeparateFromTheirCurrentStatus() {
+        val rooms = json.parseToJsonElement("""{"rooms":[{"id":1,"name":"Дом"}]}""")
+        val accessories = json.parseToJsonElement(
+            """
+            {"accessories":[
+              {"id":90,"name":"S7T7","roomId":1,"services":[
+                {"sId":4,"type":"C_VacuumCleaner","name":"Пылесос","characteristics":[
+                  {"cId":1,"type":"C_SuctionPower","name":"Мощность всасывания",
+                   "control":{"write":true,"value":{"boolValue":true}}},
+                  {"cId":2,"type":"C_TargetOperationalState","name":"Заданный режим",
+                   "control":{"write":true,"value":{"intValue":1},"validValues":[
+                     {"value":{"intValue":0},"name":"Стоп"},
+                     {"value":{"intValue":1},"name":"Старт"}
+                   ]}},
+                  {"cId":3,"type":"C_CurrentOperationalState","name":"Режим",
+                   "control":{"write":false,"value":{"intValue":3},"validValues":[
+                     {"value":{"intValue":2},"name":"Убирает"},
+                     {"value":{"intValue":3},"name":"Заряжается"}
+                   ]}}
+                ]}
+              ]},
+              {"id":91,"name":"Умные шторы","roomId":1,"services":[
+                {"sId":5,"type":"WindowCovering","name":"Шторы","characteristics":[
+                  {"cId":1,"type":"TargetPosition","name":"Целевая позиция","unit":"percentage",
+                   "minValue":0,"maxValue":100,"control":{"write":true,"value":{"intValue":100}}},
+                  {"cId":2,"type":"CurrentPosition","name":"Положение","unit":"percentage",
+                   "control":{"write":false,"value":{"intValue":100}}},
+                  {"cId":3,"type":"PositionState","name":"Движение",
+                   "control":{"write":false,"value":{"intValue":2}}}
+                ]}
+              ]}
+            ]}
+            """.trimIndent(),
+        )
+
+        val cards = buildServiceControlCards(parser.parse(rooms, accessories).controls)
+            .associateBy { it.accessoryId }
+        val vacuum = cards.getValue("90")
+        val cover = cards.getValue("91")
+
+        assertEquals("90:4:2", vacuum.primaryControl.id)
+        assertEquals(ControlBehavior.OPTIONS, vacuum.primaryControl.behavior)
+        assertEquals("Заряжается", vacuum.headlineValue())
+        assertEquals(3, vacuum.characteristicValues().size)
+        assertEquals("91:5:1", cover.primaryControl.id)
+        assertEquals(ControlBehavior.RANGE, cover.primaryControl.behavior)
+        assertEquals("100 %", cover.headlineValue())
+        assertEquals(3, cover.characteristicValues().size)
     }
 
     @Test
