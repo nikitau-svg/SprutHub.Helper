@@ -1,7 +1,7 @@
 # SprutHub.Helper
 
 [![Android CI](https://github.com/nikitau-svg/SprutHub.Helper/actions/workflows/android.yml/badge.svg?branch=beta)](https://github.com/nikitau-svg/SprutHub.Helper/actions/workflows/android.yml)
-[![Latest beta](https://img.shields.io/badge/beta-0.7.0--beta.10-orange)](https://github.com/nikitau-svg/SprutHub.Helper/releases/tag/v0.7.0-beta.10)
+[![Latest beta](https://img.shields.io/badge/beta-0.7.0--beta.11-orange)](https://github.com/nikitau-svg/SprutHub.Helper/releases/tag/v0.7.0-beta.11)
 [![Android 11+](https://img.shields.io/badge/Android-11%2B-3DDC84)](docs/CAPABILITIES.md)
 [![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial-blue)](LICENSE)
 
@@ -24,11 +24,11 @@ Helper подключается напрямую к локальному хаб�
 
 ### Скачать beta
 
-**[Скачать SprutHub.Helper 0.7.0-beta.10 (APK)](https://github.com/nikitau-svg/SprutHub.Helper/releases/download/v0.7.0-beta.10/SprutHub.Helper-0.7.0-beta.10.apk)**
+**[Скачать SprutHub.Helper 0.7.0-beta.11 (APK)](https://github.com/nikitau-svg/SprutHub.Helper/releases/download/v0.7.0-beta.11/SprutHub.Helper-0.7.0-beta.11.apk)**
 
-[Описание релиза](https://github.com/nikitau-svg/SprutHub.Helper/releases/tag/v0.7.0-beta.10) · [Как установить APK](docs/INSTALLATION.md) · [Возможности и совместимость](docs/CAPABILITIES.md)
+[Описание релиза](https://github.com/nikitau-svg/SprutHub.Helper/releases/tag/v0.7.0-beta.11) · [Как установить APK](docs/INSTALLATION.md) · [Возможности и совместимость](docs/CAPABILITIES.md)
 
-> Проект не связан с разработчиками SprutHub. Приложение использует внутренний WebSocket/JSON-RPC-протокол, который может измениться без предупреждения. Текущая опубликованная beta-версия — [`0.7.0-beta.10`](https://github.com/nikitau-svg/SprutHub.Helper/releases/tag/v0.7.0-beta.10); дальнейшая разработка идёт в ветке `beta`.
+> Проект не связан с разработчиками SprutHub. Приложение использует внутренний WebSocket/JSON-RPC-протокол, который может измениться без предупреждения. Текущая опубликованная beta-версия — [`0.7.0-beta.11`](https://github.com/nikitau-svg/SprutHub.Helper/releases/tag/v0.7.0-beta.11); дальнейшая разработка идёт в ветке `beta`.
 
 > Активная разработка идёт в ветке [`beta`](https://github.com/nikitau-svg/SprutHub.Helper/tree/beta). В `main` попадает только версия, прошедшая аппаратный E2E; готовые APK всегда публикуются отдельными подписанными [GitHub Releases](https://github.com/nikitau-svg/SprutHub.Helper/releases).
 
@@ -86,7 +86,7 @@ Helper подключается напрямую к локальному хаб�
 
 ## Установка APK
 
-Для обычной установки скачайте **подписанный** APK из [`v0.7.0-beta.10`](https://github.com/nikitau-svg/SprutHub.Helper/releases/tag/v0.7.0-beta.10) и сверьте его с приложенным SHA-256.
+Для обычной установки скачайте **подписанный** APK из [`v0.7.0-beta.11`](https://github.com/nikitau-svg/SprutHub.Helper/releases/tag/v0.7.0-beta.11) и сверьте его с приложенным SHA-256.
 
 Артефакт beta-workflow и опубликованный beta-prerelease — тестовые сборки, подписанные постоянным закрытым ключом сопровождающего через GitHub Secrets. Поэтому они обновляют предыдущую beta без удаления приложения и потери настроек. Неподписанный release candidate из draft-релиза установить нельзя; публиковать его как готовый APK не следует.
 
