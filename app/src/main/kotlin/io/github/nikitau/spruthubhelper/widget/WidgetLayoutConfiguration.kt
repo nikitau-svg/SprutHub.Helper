@@ -164,6 +164,7 @@ internal fun widgetGridLayout(
     )
     val columns = when {
         visibleCount <= 0 -> 1
+        maximumRows > 1 && visibleCount > 2 -> minOf(maximumColumns, (visibleCount + 1) / 2)
         visibleCount <= maximumColumns -> visibleCount
         else -> minOf(maximumColumns, (visibleCount + 1) / 2)
     }

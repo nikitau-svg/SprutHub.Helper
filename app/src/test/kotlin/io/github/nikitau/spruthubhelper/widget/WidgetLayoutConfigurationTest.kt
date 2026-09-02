@@ -139,6 +139,22 @@ class WidgetLayoutConfigurationTest {
             ),
         )
         assertEquals(
+            WidgetGridLayout(columns = 2, rows = 2, visibleItemCount = 4, hiddenItemCount = 4),
+            widgetGridLayout(
+                hostSize = WidgetHostSize(496f, 234f),
+                itemCount = 8,
+                density = WidgetInformationDensity.BALANCED,
+            ),
+        )
+        assertEquals(
+            WidgetGridLayout(columns = 4, rows = 2, visibleItemCount = 8, hiddenItemCount = 0),
+            widgetGridLayout(
+                hostSize = WidgetHostSize(496f, 234f),
+                itemCount = 8,
+                density = WidgetInformationDensity.DETAILED,
+            ),
+        )
+        assertEquals(
             WidgetGridLayout(columns = 2, rows = 1, visibleItemCount = 2, hiddenItemCount = 6),
             widgetGridLayout(
                 hostSize = WidgetHostSize(496f, 220f),
