@@ -1,7 +1,10 @@
 package io.github.nikitau.spruthubhelper.tiles
 
+import io.github.nikitau.spruthubhelper.R
+import io.github.nikitau.spruthubhelper.data.DeviceKind
 import io.github.nikitau.spruthubhelper.data.TileAssignment
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Test
 
 class TileComponentsTest {
@@ -25,5 +28,11 @@ class TileComponentsTest {
         )
 
         assertEquals(setOf(12), assignedTileSlots(assignments))
+    }
+
+    @Test
+    fun readOnlySensorsDoNotUseThePowerGlyph() {
+        assertEquals(R.drawable.ic_tile_sensor, TileIconResolver.resource(DeviceKind.SENSOR))
+        assertNotEquals(R.drawable.ic_tile, TileIconResolver.resource(DeviceKind.SENSOR))
     }
 }

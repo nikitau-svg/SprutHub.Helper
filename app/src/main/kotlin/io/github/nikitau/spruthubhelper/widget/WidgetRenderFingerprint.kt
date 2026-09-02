@@ -1,6 +1,7 @@
 package io.github.nikitau.spruthubhelper.widget
 
 import io.github.nikitau.spruthubhelper.data.CatalogFreshness
+import io.github.nikitau.spruthubhelper.data.CharacteristicDisplayValue
 import io.github.nikitau.spruthubhelper.data.SprutControl
 import io.github.nikitau.spruthubhelper.data.ServiceControlCard
 import io.github.nikitau.spruthubhelper.data.ServicePresentationPreference
@@ -59,11 +60,18 @@ internal fun widgetRenderFingerprint(
         val resolvedCard = card ?: buildServiceControlCards(listOf(control)).single()
         val headline = resolvedCard.headlineDisplayValue(preference)
         val secondary = resolvedCard.secondaryDisplayValues(preference)
+        val subtitle = widgetSubtitleParts(
+            statusPrefix = presentation.statusLabel.orEmpty(),
+            headline = headline,
+            secondary = secondary,
+            serviceName = resolvedCard.displayServiceName(),
+            room = resolvedCard.room,
+        ).joinToString(" · ")
         WidgetRenderFingerprint(
             mode = WidgetRenderMode.CONTROL,
             assignment = assignment,
             title = resolvedCard.title,
-            subtitle = resolvedCard.displayServiceName(),
+            subtitle = subtitle,
             room = resolvedCard.room,
             semanticValue = headline.value,
             rawDisplayValue = headline.value,
@@ -79,4 +87,31 @@ internal fun widgetRenderFingerprint(
             customIconRevision = customIconRevision,
         )
     }
+}
+
+/**
+ * Builds the compact widget caption without repeating a service name that is
+ * already used as the selected headline or one of the secondary metrics.
+ */
+internal fun widgetSubtitleParts(
+    statusPrefix: String,
+    headline: CharacteristicDisplayValue,
+    secondary: List<CharacteristicDisplayValue>,
+    serviceName: String,
+    room: String,
+): List<String> {
+    val metricLabels = (listOf(headline) + secondary)
+        .map { it.label.trim() }
+        .filter(String::isNotBlank)
+    val distinctServiceName = serviceName.trim().takeUnless { candidate ->
+        metricLabels.any { label -> label.equals(candidate, ignoreCase = true) }
+    }.orEmpty()
+    val secondaryText = secondary.joinToString(" · ") { "${it.label} ${it.value}".trim() }
+    return listOf(statusPrefix, headline.label, secondaryText, distinctServiceName, room)
+        .map(String::trim)
+        .filter(String::isNotBlank)
+        .fold(mutableListOf()) { parts, candidate ->
+            if (parts.none { it.equals(candidate, ignoreCase = true) }) parts += candidate
+            parts
+        }
 }

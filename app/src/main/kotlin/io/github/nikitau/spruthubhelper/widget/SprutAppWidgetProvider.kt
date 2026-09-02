@@ -297,14 +297,17 @@ class SprutAppWidgetProvider : AppWidgetProvider() {
             views.setTextViewText(R.id.widget_title, card.title)
             val statusPrefix = presentation.statusLabel.orEmpty()
             val headline = card.headlineDisplayValue(preference)
-            val secondary = card.secondaryDisplayValues(preference)
-                .joinToString(" · ") { "${it.label} ${it.value}" }
+            val secondaryValues = card.secondaryDisplayValues(preference)
+            val subtitleParts = widgetSubtitleParts(
+                statusPrefix = statusPrefix,
+                headline = headline,
+                secondary = secondaryValues,
+                serviceName = card.displayServiceName(),
+                room = card.room,
+            )
             views.setTextViewText(
                 R.id.widget_subtitle,
-                listOf(statusPrefix, headline.label, secondary, card.displayServiceName(), card.room)
-                    .filter(String::isNotBlank)
-                    .distinct()
-                    .joinToString(" · "),
+                subtitleParts.joinToString(" · "),
             )
             val headlineValue = headline.value
             val visibleValue = when {
@@ -317,7 +320,7 @@ class SprutAppWidgetProvider : AppWidgetProvider() {
             views.setViewVisibility(R.id.widget_value, View.VISIBLE)
             views.setContentDescription(
                 R.id.widget_root,
-                listOf(card.title, statusPrefix, secondary, card.displayServiceName(), card.room, visibleValue)
+                (listOf(card.title) + subtitleParts + visibleValue)
                     .filter(String::isNotBlank)
                     .joinToString(", "),
             )

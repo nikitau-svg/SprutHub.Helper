@@ -17,7 +17,8 @@ object TileIconResolver {
         DeviceKind.VACUUM -> R.drawable.ic_tile_vacuum
         DeviceKind.TELEVISION -> R.drawable.ic_tile_tv
         DeviceKind.SCENE -> R.drawable.ic_tile_scene
-        DeviceKind.SWITCH, DeviceKind.OUTLET, DeviceKind.VALVE, DeviceKind.SENSOR, DeviceKind.OTHER ->
+        DeviceKind.SENSOR -> R.drawable.ic_tile_sensor
+        DeviceKind.SWITCH, DeviceKind.OUTLET, DeviceKind.VALVE, DeviceKind.OTHER ->
             R.drawable.ic_tile
     }
 

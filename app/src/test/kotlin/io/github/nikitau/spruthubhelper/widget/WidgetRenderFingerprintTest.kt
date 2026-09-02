@@ -2,6 +2,7 @@ package io.github.nikitau.spruthubhelper.widget
 
 import io.github.nikitau.spruthubhelper.data.CatalogFreshness
 import io.github.nikitau.spruthubhelper.data.CatalogFreshnessPhase
+import io.github.nikitau.spruthubhelper.data.CharacteristicDisplayValue
 import io.github.nikitau.spruthubhelper.data.ControlBehavior
 import io.github.nikitau.spruthubhelper.data.DeviceKind
 import io.github.nikitau.spruthubhelper.data.SprutControl
@@ -79,6 +80,41 @@ class WidgetRenderFingerprintTest {
         assertEquals("Плохое", changed.semanticValue)
     }
 
+    @Test
+    fun `widget subtitle omits a service name already represented by a metric`() {
+        val parts = widgetSubtitleParts(
+            statusPrefix = "",
+            headline = metric("pm25", "PM2.5", "9"),
+            secondary = listOf(
+                metric("quality", "Качество воздуха", "Отличное"),
+                metric("pm10", "PM10", "9"),
+            ),
+            serviceName = "Качество воздуха",
+            room = "Спальня",
+        )
+
+        assertEquals(
+            listOf("PM2.5", "Качество воздуха Отличное · PM10 9", "Спальня"),
+            parts,
+        )
+    }
+
+    @Test
+    fun `widget subtitle retains a distinct service name`() {
+        val parts = widgetSubtitleParts(
+            statusPrefix = "",
+            headline = metric("power", "Питание", "Включено"),
+            secondary = listOf(metric("mode", "Заданный режим", "Охлаждение")),
+            serviceName = "Кондиционер",
+            room = "Зал",
+        )
+
+        assertEquals(
+            listOf("Питание", "Заданный режим Охлаждение", "Кондиционер", "Зал"),
+            parts,
+        )
+    }
+
     private fun fingerprint(
         control: SprutControl,
         freshness: CatalogFreshness,
@@ -104,4 +140,7 @@ class WidgetRenderFingerprintTest {
         value = SprutValue(stringValue = value),
         characteristicType = "AirQuality",
     )
+
+    private fun metric(key: String, label: String, value: String) =
+        CharacteristicDisplayValue(key = key, label = label, value = value)
 }
