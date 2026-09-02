@@ -44,6 +44,7 @@ class HealthSyncManager(
     private val reader: HealthReader,
     private val virtualDevice: VirtualHealthDeviceManager,
     private val scope: CoroutineScope,
+    private val backgroundRuntimeEnabled: Boolean = true,
 ) {
     private val runtime = MutableStateFlow(HealthRuntimeState())
     private val _permissionRequests = MutableSharedFlow<Set<String>>(extraBufferCapacity = 1)
@@ -80,7 +81,7 @@ class HealthSyncManager(
     }.stateIn(scope, SharingStarted.Eagerly, HealthUiState())
 
     init {
-        scope.launch {
+        if (backgroundRuntimeEnabled) scope.launch {
             refreshPermissions()
             deviceMutationMutex.withLock {
                 syncMutex.withLock {

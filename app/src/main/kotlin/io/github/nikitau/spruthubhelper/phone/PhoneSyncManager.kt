@@ -55,6 +55,8 @@ class PhoneSyncManager(
     private val virtualDevice: VirtualHealthDeviceManager,
     private val heartbeatScenario: SprutHeartbeatScenarioManager,
     private val scope: CoroutineScope,
+    private val backgroundRuntimeEnabled: Boolean = true,
+    private val currentReadingsOverride: Map<PhoneSensor, HealthReading>? = null,
 ) {
     private val runtime = MutableStateFlow(PhoneRuntimeState())
     private val syncMutex = Mutex()
@@ -68,7 +70,8 @@ class PhoneSyncManager(
         settings.lastPhoneSync,
         runtime,
     ) { sensors, binding, syncSettings, lastSync, live ->
-        val currentReadings = runCatching { reader.read(sensors) }.getOrDefault(emptyMap())
+        val currentReadings = currentReadingsOverride
+            ?: runCatching { reader.read(sensors) }.getOrDefault(emptyMap())
         PhoneUiState(
             selectedSensors = sensors,
             currentReadings = sensors.mapNotNull { sensor ->
@@ -96,54 +99,56 @@ class PhoneSyncManager(
     }.stateIn(scope, SharingStarted.Eagerly, PhoneUiState())
 
     init {
-        scope.launch {
-            PhoneMonitorService.running.collect { running ->
-                runtime.update { it.copy(monitorRunning = running) }
-            }
-        }
-        scope.launch {
-            if (settings.phoneBinding.first() == null) {
-                val selected = settings.selectedPhoneSensors.first()
-                runCatching {
-                    virtualDevice.recoverExisting(
-                        fields = phoneVirtualFields(selected),
-                        allowIncomplete = true,
-                    )
+        if (backgroundRuntimeEnabled) {
+            scope.launch {
+                PhoneMonitorService.running.collect { running ->
+                    runtime.update { it.copy(monitorRunning = running) }
                 }
-                    .onSuccess { binding ->
-                        if (binding != null) {
-                            settings.savePhoneBinding(binding)
-                            runtime.update { it.copy(message = "Найдено существующее устройство телефона") }
+            }
+            scope.launch {
+                if (settings.phoneBinding.first() == null) {
+                    val selected = settings.selectedPhoneSensors.first()
+                    runCatching {
+                        virtualDevice.recoverExisting(
+                            fields = phoneVirtualFields(selected),
+                            allowIncomplete = true,
+                        )
+                    }
+                        .onSuccess { binding ->
+                            if (binding != null) {
+                                settings.savePhoneBinding(binding)
+                                runtime.update { it.copy(message = "Найдено существующее устройство телефона") }
+                            }
                         }
-                    }
-                    .onFailure { error ->
-                        Log.i(LOG_TAG, "No recoverable phone accessory on startup: ${error.message}")
-                    }
-            }
-            refreshDeviceInspection()
-            settings.phoneBinding.first()?.let { binding ->
-                if (settings.phoneSyncSettings.first().enabled) {
-                    refreshReliabilityInternal(binding, repair = true, force = true)
-                } else {
-                    pauseReliabilityInternal(binding)
+                        .onFailure { error ->
+                            Log.i(LOG_TAG, "No recoverable phone accessory on startup: ${error.message}")
+                        }
                 }
-            }
-            settings.phoneSyncSettings.distinctUntilChanged().collect { syncSettings ->
-                if (syncSettings.enabled) {
-                    if (settings.phoneMonitoringStarted.first() == null) {
-                        settings.ensurePhoneMonitoringStarted()
+                refreshDeviceInspection()
+                settings.phoneBinding.first()?.let { binding ->
+                    if (settings.phoneSyncSettings.first().enabled) {
+                        refreshReliabilityInternal(binding, repair = true, force = true)
+                    } else {
+                        pauseReliabilityInternal(binding)
                     }
-                    schedule()
-                } else {
-                    cancel()
                 }
-                if (syncSettings.enabled && syncSettings.watchdogEnabled) {
-                    PhoneSyncWatchdog.schedule(context)
-                } else {
-                    PhoneSyncWatchdog.cancel(context)
-                }
-                if (!syncSettings.enabled || syncSettings.mode != PhoneSyncMode.LIVE) {
-                    PhoneMonitorService.stop(context)
+                settings.phoneSyncSettings.distinctUntilChanged().collect { syncSettings ->
+                    if (syncSettings.enabled) {
+                        if (settings.phoneMonitoringStarted.first() == null) {
+                            settings.ensurePhoneMonitoringStarted()
+                        }
+                        schedule()
+                    } else {
+                        cancel()
+                    }
+                    if (syncSettings.enabled && syncSettings.watchdogEnabled) {
+                        PhoneSyncWatchdog.schedule(context)
+                    } else {
+                        PhoneSyncWatchdog.cancel(context)
+                    }
+                    if (!syncSettings.enabled || syncSettings.mode != PhoneSyncMode.LIVE) {
+                        PhoneMonitorService.stop(context)
+                    }
                 }
             }
         }

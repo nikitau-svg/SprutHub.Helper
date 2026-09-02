@@ -55,8 +55,11 @@ jobs:
       - name: Test Telegram release notifier
         run: python3 .github/scripts/test_notify_telegram_release.py
 
-      - name: Lint, test and build release APK
-        run: ./gradlew --no-daemon :app:lintDebug :app:testDebugUnitTest :app:assembleRelease
+      - name: Lint, test and build release plus screenshot APKs
+        run: ./gradlew --no-daemon :app:lintDebug :app:testDebugUnitTest :app:assembleScreenshot :app:assembleRelease
+
+      - name: Verify screenshot APK isolation
+        run: bash scripts/check-screenshot-build.sh
 
       - name: Prepare beta APK and checksum
         if: >-

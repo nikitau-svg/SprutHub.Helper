@@ -30,6 +30,8 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
@@ -42,8 +44,6 @@ import androidx.compose.material.icons.automirrored.rounded.Launch
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.Lock
-import androidx.compose.material.icons.rounded.PlayArrow
-import androidx.compose.material.icons.rounded.PowerSettingsNew
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -292,6 +292,10 @@ private fun SprutDevicePanel(
     }
 
     fun primaryAction(card: ServiceControlCard) {
+        if (!AppGraph.remoteOperationsEnabled) {
+            showMessage("Демонстрационный режим")
+            return
+        }
         val control = card.primaryControl
         when (control.behavior) {
             ControlBehavior.TOGGLE,
@@ -307,9 +311,11 @@ private fun SprutDevicePanel(
         }
     }
 
-    LaunchedEffect(Unit) {
-        repository.refreshIfStale(maxAgeMs = 10_000)
-            .onFailure { snackbar.showSnackbar(it.message ?: "Не удалось обновить SprutHub") }
+    LaunchedEffect(AppGraph.remoteOperationsEnabled) {
+        if (AppGraph.remoteOperationsEnabled) {
+            repository.refreshIfStale(maxAgeMs = 10_000)
+                .onFailure { snackbar.showSnackbar(it.message ?: "Не удалось обновить SprutHub") }
+        }
     }
 
     GlassBackground {
@@ -317,7 +323,7 @@ private fun SprutDevicePanel(
             modifier = Modifier
                 .fillMaxSize()
                 .windowInsetsPadding(WindowInsets.safeDrawing)
-                .padding(horizontal = 18.dp, vertical = 12.dp),
+                .padding(horizontal = 14.dp, vertical = 10.dp),
         ) {
             PanelHeader(
                 showBack = showBack,
@@ -330,13 +336,15 @@ private fun SprutDevicePanel(
                 },
                 refreshing = connection.phase == ConnectionPhase.CONNECTING,
                 onRefresh = {
-                    scope.launch {
-                        repository.refresh(forceConnection = true)
-                            .onFailure { snackbar.showSnackbar(it.message ?: "Не удалось обновить SprutHub") }
+                    if (AppGraph.remoteOperationsEnabled) {
+                        scope.launch {
+                            repository.refresh(forceConnection = true)
+                                .onFailure { snackbar.showSnackbar(it.message ?: "Не удалось обновить SprutHub") }
+                        }
                     }
                 },
             )
-            Spacer(Modifier.height(14.dp))
+            Spacer(Modifier.height(10.dp))
             if (resolvedItems.isEmpty()) {
                 EmptyPanel(Modifier.weight(1f), onOpenApp)
             } else {
@@ -345,8 +353,8 @@ private fun SprutDevicePanel(
                     val columnCount = PanelLayoutPolicy.columnCount(maxWidth.value, fontScale)
                     LazyVerticalGrid(
                         columns = GridCells.Fixed(columnCount),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
                         modifier = Modifier.fillMaxSize(),
                     ) {
                         items(
@@ -373,9 +381,12 @@ private fun SprutDevicePanel(
                     }
                 }
             }
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(10.dp))
             OutlinedButton(onClick = onOpenApp, modifier = Modifier.fillMaxWidth()) {
-                Icon(Icons.AutoMirrored.Rounded.Launch, null)
+                Icon(
+                    if (showBack) Icons.Rounded.CheckCircle else Icons.AutoMirrored.Rounded.Launch,
+                    null,
+                )
                 Spacer(Modifier.size(8.dp))
                 Text(if (showBack) "Готово" else "Открыть SprutHub Helper")
             }
@@ -435,8 +446,8 @@ private fun PanelHeader(
         }
         Column(Modifier.weight(1f)) {
             Text(
-                "Панель устройств",
-                style = MaterialTheme.typography.headlineSmall,
+                "Устройства",
+                style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold,
                 color = PanelText,
             )
@@ -475,26 +486,27 @@ private fun ServiceGlassCard(
     val active = presentation.active
     val effectivePreference = preference ?: card.legacyPanelPreference(item)
     val headline = card.headlineDisplayValue(effectivePreference)
-    val secondaryValues = card.secondaryDisplayValues(effectivePreference)
+    val secondaryValues = card.secondaryDisplayValues(
+        preference = effectivePreference,
+        limit = if (item.size == PanelItemSize.LARGE) 3 else 2,
+    )
     val optionValues = secondaryValues.mapNotNull { value ->
         card.controlForDisplayValue(value.key)
             ?.takeIf { it.id == value.key && it.behavior == ControlBehavior.OPTIONS && it.writable }
             ?.let { value to it }
     }
-    val visibleValues = secondaryValues.filterNot { value ->
-        optionValues.any { (optionValue, _) -> optionValue.key == value.key }
-    }
     val hasDetails = secondaryValues.isNotEmpty()
-    val cardHeight = if (card.supportsRange || hasDetails) 164.dp else 136.dp
+    val cardHeight = if (hasDetails) 122.dp else 88.dp
     val customBitmap = remember(card.id, control.id) {
         val icons = CustomIconManager(context)
         icons.loadBitmap(card.id) ?: icons.loadBitmap(control.id)
     }
     val shape = RoundedCornerShape(16.dp)
-    val subtitle = listOf(card.displayServiceName(), card.room)
-        .filter(String::isNotBlank)
-        .distinctBy { it.lowercase() }
-        .joinToString(" · ")
+    val location = panelCardMetadata(
+        title = card.title,
+        room = card.room,
+        serviceName = card.displayServiceName(),
+    )
     val actionDescription = when (control.behavior) {
         ControlBehavior.TOGGLE, ControlBehavior.TOGGLE_RANGE -> when (control.kind) {
             DeviceKind.LOCK -> if (active) "Открыть ${card.title}" else "Закрыть ${card.title}"
@@ -506,8 +518,18 @@ private fun ServiceGlassCard(
             else -> if (active) "Выключить ${card.title}" else "Включить ${card.title}"
         }
         ControlBehavior.BUTTON -> "Запустить ${card.title}"
-        else -> null
+        ControlBehavior.RANGE -> "Изменить ${card.rangeLabel().lowercase()}"
+        ControlBehavior.OPTIONS -> "Выбрать ${card.attributeLabel(control).lowercase()}"
+        ControlBehavior.SENSOR -> "Показать состояние ${card.title}"
     }
+    val stateText = when {
+        busy -> "Подтверждаем…"
+        !authoritative && control.behavior == ControlBehavior.BUTTON -> freshness.shortLabel
+        !authoritative -> "Последнее · ${headline.value}"
+        else -> headline.value
+    }
+    val headlineIsPrimarySwitch = headline.key == control.id &&
+        control.behavior in setOf(ControlBehavior.TOGGLE, ControlBehavior.TOGGLE_RANGE)
 
     Box(
         modifier = Modifier
@@ -516,186 +538,182 @@ private fun ServiceGlassCard(
             .clip(shape)
             .background(
                 Brush.linearGradient(
-                    colors = if (active) {
-                        listOf(Color(0xFF332A18), Color(0xFF292218), SprutSurfaceLow)
-                    } else {
-                        listOf(SprutSurfaceLow, SprutSurfaceLow)
-                    },
+                    colors = listOf(Color(0xE6212528), Color(0xDD171A1D)),
                 ),
             )
             .border(
-                BorderStroke(1.dp, if (active) PanelAccent.copy(alpha = 0.82f) else Color.White.copy(alpha = 0.06f)),
+                BorderStroke(
+                    1.dp,
+                    if (active) PanelAccent.copy(alpha = 0.24f) else Color.White.copy(alpha = 0.075f),
+                ),
                 shape,
             )
-            .padding(12.dp),
+            .clickable(
+                enabled = !busy,
+                onClickLabel = actionDescription,
+                onClick = onClick,
+            )
+            .padding(horizontal = 11.dp, vertical = 10.dp),
     ) {
         Column(Modifier.fillMaxWidth()) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(
                     modifier = Modifier
-                        .size(40.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(if (active) PanelAccent.copy(alpha = 0.14f) else Color.White.copy(alpha = 0.08f)),
+                        .size(32.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(if (active) PanelAccent.copy(alpha = 0.12f) else Color.White.copy(alpha = 0.065f)),
                     contentAlignment = Alignment.Center,
                 ) {
                     if (customBitmap != null) {
                         Image(
                             bitmap = customBitmap.asImageBitmap(),
                             contentDescription = null,
-                            modifier = Modifier.size(30.dp),
+                            modifier = Modifier.size(24.dp),
                             contentScale = ContentScale.Fit,
                         )
                     } else {
                         Icon(
                             painter = painterResource(TileIconResolver.resource(card)),
                             contentDescription = null,
-                            modifier = Modifier.size(27.dp),
+                            modifier = Modifier.size(21.dp),
                             tint = if (active) PanelAccent else PanelText,
                         )
                     }
                 }
-                Spacer(Modifier.size(10.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        card.title,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.SemiBold,
-                        color = PanelText,
+                Spacer(Modifier.weight(1f))
+                if (busy) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(19.dp),
+                        strokeWidth = 2.dp,
+                        color = PanelAccent,
                     )
-                    if (subtitle.isNotBlank()) {
-                        Text(
-                            subtitle,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = PanelMutedText,
+                } else {
+                    if (sent) {
+                        Icon(
+                            Icons.Rounded.CheckCircle,
+                            "Команда подтверждена",
+                            modifier = Modifier.padding(start = 5.dp).size(18.dp),
+                            tint = PanelAccent,
+                        )
+                    }
+                    if (control.requiresAuthentication()) {
+                        Icon(
+                            Icons.Rounded.Lock,
+                            "Требуется разблокировка",
+                            modifier = Modifier.padding(start = 5.dp).size(17.dp),
+                            tint = Color.White.copy(alpha = 0.62f),
+                        )
+                    }
+                    when (control.behavior) {
+                        ControlBehavior.TOGGLE_RANGE -> {
+                            if (headlineIsPrimarySwitch) {
+                                ToggleStateBadge(
+                                    active = active,
+                                    authoritative = authoritative,
+                                    fallback = stateText,
+                                )
+                            } else {
+                                ActiveDot(active = active, authoritative = authoritative)
+                            }
+                            Spacer(Modifier.width(6.dp))
+                            RangeValueButton(
+                                label = if (headlineIsPrimarySwitch) card.rangeLabel() else headline.label,
+                                value = if (headlineIsPrimarySwitch) card.rangeValue() else stateText,
+                                enabled = !busy,
+                                onClick = onAdjust,
+                            )
+                        }
+                        ControlBehavior.TOGGLE -> if (headlineIsPrimarySwitch) {
+                            ToggleStateBadge(
+                                active = active,
+                                authoritative = authoritative,
+                                fallback = stateText,
+                            )
+                        } else {
+                            ActiveDot(active = active, authoritative = authoritative)
+                            Spacer(Modifier.width(6.dp))
+                            HeadlineValue(
+                                label = headline.label,
+                                value = stateText,
+                                active = active,
+                            )
+                        }
+                        ControlBehavior.RANGE -> RangeValueButton(
+                            label = headline.label,
+                            value = stateText,
+                            enabled = !busy,
+                            onClick = onAdjust,
+                        )
+                        ControlBehavior.OPTIONS -> HeadlineValue(
+                            label = headline.label,
+                            value = stateText,
+                            active = false,
+                            showChevron = true,
+                        )
+                        ControlBehavior.BUTTON -> Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                "Запустить",
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.SemiBold,
+                                color = PanelAccent,
+                            )
+                            Icon(
+                                Icons.Rounded.ChevronRight,
+                                actionDescription,
+                                modifier = Modifier.size(17.dp),
+                                tint = PanelAccent,
+                            )
+                        }
+                        ControlBehavior.SENSOR -> HeadlineValue(
+                            label = headline.label,
+                            value = stateText,
+                            active = false,
                         )
                     }
                 }
-                if (sent) {
-                    Icon(
-                        Icons.Rounded.CheckCircle,
-                        "Команда подтверждена",
-                        modifier = Modifier.size(19.dp),
-                        tint = PanelAccent,
-                    )
-                }
-                if (control.requiresAuthentication()) {
-                    Icon(
-                        Icons.Rounded.Lock,
-                        "Требуется разблокировка",
-                        modifier = Modifier.padding(start = 5.dp).size(17.dp),
-                        tint = Color.White.copy(alpha = 0.62f),
-                    )
-                }
-                if (actionDescription != null) {
-                    Spacer(Modifier.size(7.dp))
-                    Box(
-                        modifier = Modifier
-                            .size(40.dp)
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(
-                                if (active) PanelAccent.copy(alpha = 0.20f)
-                                else Color.White.copy(alpha = 0.075f),
-                            ),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        IconButton(onClick = onClick, enabled = !busy) {
-                            if (busy) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(20.dp),
-                                    strokeWidth = 2.dp,
-                                    color = PanelAccent,
-                                )
-                            } else {
-                                Icon(
-                                    imageVector = when {
-                                        control.behavior == ControlBehavior.BUTTON -> Icons.Rounded.PlayArrow
-                                        control.kind in setOf(
-                                            DeviceKind.LOCK,
-                                            DeviceKind.SECURITY,
-                                            DeviceKind.GARAGE,
-                                        ) -> Icons.Rounded.Lock
-                                        else -> Icons.Rounded.PowerSettingsNew
-                                    },
-                                    contentDescription = actionDescription,
-                                    tint = if (active) PanelAccent else PanelText,
-                                )
-                            }
-                        }
-                    }
-                }
             }
-            Spacer(Modifier.height(7.dp))
+            Spacer(Modifier.height(8.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    when {
-                        busy -> "Подтверждаем…"
-                        !authoritative && control.behavior == ControlBehavior.BUTTON -> freshness.shortLabel
-                        !authoritative -> "Последнее · ${headline.label}: ${headline.value}"
-                        else -> "${headline.label} · ${headline.value}"
-                    },
+                    card.title,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Bold,
-                    color = if (active) PanelAccent else PanelText,
+                    fontWeight = FontWeight.SemiBold,
+                    color = PanelText,
                     modifier = Modifier.weight(1f),
                 )
-                if (card.supportsRange) {
-                    Surface(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(12.dp))
-                            .clickable(enabled = !busy, onClick = onAdjust),
-                        shape = RoundedCornerShape(12.dp),
-                        color = Color.White.copy(alpha = 0.085f),
-                        contentColor = PanelText,
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(start = 10.dp, end = 5.dp, top = 4.dp, bottom = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Column {
-                                Text(
-                                    card.rangeLabel(),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = PanelMutedText,
-                                )
-                                Text(
-                                    card.rangeValue(),
-                                    style = MaterialTheme.typography.titleSmall,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = PanelText,
-                                )
-                            }
-                            Icon(
-                                Icons.Rounded.ChevronRight,
-                                "Изменить ${card.rangeLabel().lowercase()}",
-                                modifier = Modifier.size(18.dp),
-                                tint = PanelMutedText,
-                            )
-                        }
-                    }
+                if (location.isNotBlank()) {
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        location,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = PanelMutedText,
+                        modifier = Modifier.widthIn(max = 72.dp),
+                    )
                 }
             }
             if (hasDetails) {
                 Spacer(Modifier.height(6.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    optionValues.forEach { (value, option) ->
-                        OptionPill(
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    secondaryValues.forEachIndexed { index, value ->
+                        if (index > 0) {
+                            Box(
+                                Modifier
+                                    .padding(horizontal = 7.dp)
+                                    .width(1.dp)
+                                    .height(25.dp)
+                                    .background(Color.White.copy(alpha = 0.09f)),
+                            )
+                        }
+                        val option = optionValues.firstOrNull { (candidate, _) -> candidate.key == value.key }?.second
+                        CompactMetric(
                             label = value.label,
                             value = value.value,
-                            enabled = !busy,
-                            onClick = { onSelectOption(option) },
-                            modifier = Modifier.weight(1f),
-                        )
-                    }
-                    visibleValues.forEach { value ->
-                        AttributePill(
-                            label = value.label,
-                            value = value.value,
+                            enabled = !busy && option != null,
+                            onClick = option?.let { { onSelectOption(it) } },
                             modifier = Modifier.weight(1f),
                         )
                     }
@@ -705,46 +723,130 @@ private fun ServiceGlassCard(
     }
 }
 
+internal fun panelCardMetadata(title: String, room: String, serviceName: String): String {
+    val normalizedTitle = title.lowercase().filter(Char::isLetterOrDigit)
+    return listOf(room, serviceName)
+        .asSequence()
+        .map(String::trim)
+        .filter(String::isNotBlank)
+        .distinctBy(String::lowercase)
+        .firstOrNull { candidate ->
+            val normalized = candidate.lowercase().filter(Char::isLetterOrDigit)
+            val comparison = if (normalized.length >= 5) normalized.take(5) else normalized
+            comparison.isNotBlank() && !normalizedTitle.contains(comparison)
+        }
+        .orEmpty()
+}
+
 @Composable
-private fun AttributePill(label: String, value: String, modifier: Modifier = Modifier) {
-    Column(
-        modifier = modifier
-            .clip(RoundedCornerShape(12.dp))
-            .background(Color.White.copy(alpha = 0.065f))
-            .padding(horizontal = 8.dp, vertical = 3.dp),
-    ) {
+private fun ActiveDot(active: Boolean, authoritative: Boolean) {
+    Box(
+        Modifier
+            .size(7.dp)
+            .clip(RoundedCornerShape(4.dp))
+            .background(
+                when {
+                    !authoritative -> PanelMutedText
+                    active -> PanelAccent
+                    else -> Color.White.copy(alpha = 0.30f)
+                },
+            ),
+    )
+}
+
+@Composable
+private fun ToggleStateBadge(active: Boolean, authoritative: Boolean, fallback: String) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        ActiveDot(active = active, authoritative = authoritative)
+        Spacer(Modifier.width(5.dp))
         Text(
-            label,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            style = MaterialTheme.typography.labelSmall,
-            color = PanelMutedText,
-        )
-        Text(
-            value,
+            when {
+                !authoritative -> fallback
+                active -> "Вкл"
+                else -> "Выкл"
+            },
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             style = MaterialTheme.typography.bodySmall,
-            fontWeight = FontWeight.Medium,
-            color = PanelText,
+            fontWeight = FontWeight.SemiBold,
+            color = if (authoritative && active) PanelAccent else PanelMutedText,
+            modifier = Modifier.widthIn(max = 72.dp),
         )
     }
 }
 
 @Composable
-private fun OptionPill(
+private fun HeadlineValue(
+    label: String,
+    value: String,
+    active: Boolean,
+    showChevron: Boolean = false,
+) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(horizontalAlignment = Alignment.End, modifier = Modifier.widthIn(max = 108.dp)) {
+            Text(
+                label,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                style = MaterialTheme.typography.labelSmall,
+                color = PanelMutedText,
+            )
+            Text(
+                value,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                style = MaterialTheme.typography.bodySmall,
+                fontWeight = FontWeight.SemiBold,
+                color = if (active) PanelAccent else PanelText,
+            )
+        }
+        if (showChevron) {
+            Icon(
+                Icons.Rounded.ChevronRight,
+                null,
+                modifier = Modifier.size(17.dp),
+                tint = PanelMutedText,
+            )
+        }
+    }
+}
+
+@Composable
+private fun RangeValueButton(
     label: String,
     value: String,
     enabled: Boolean,
     onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(9.dp))
+            .background(Color.White.copy(alpha = 0.065f))
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(start = 7.dp, end = 3.dp, top = 3.dp, bottom = 3.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        HeadlineValue(label = label, value = value, active = false)
+        Icon(
+            Icons.Rounded.ChevronRight,
+            "Изменить ${label.lowercase()}",
+            modifier = Modifier.size(16.dp),
+            tint = PanelMutedText,
+        )
+    }
+}
+
+@Composable
+private fun CompactMetric(
+    label: String,
+    value: String,
+    enabled: Boolean,
+    onClick: (() -> Unit)?,
     modifier: Modifier = Modifier,
 ) {
     Row(
         modifier = modifier
-            .clip(RoundedCornerShape(12.dp))
-            .background(Color.White.copy(alpha = 0.075f))
-            .clickable(enabled = enabled, onClick = onClick)
-            .padding(start = 8.dp, end = 4.dp, top = 3.dp, bottom = 3.dp),
+            .then(if (onClick != null) Modifier.clickable(enabled = enabled, onClick = onClick) else Modifier),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f)) {
@@ -764,12 +866,14 @@ private fun OptionPill(
                 color = PanelText,
             )
         }
-        Icon(
-            Icons.Rounded.ChevronRight,
-            "Выбрать $label",
-            modifier = Modifier.size(17.dp),
-            tint = PanelMutedText,
-        )
+        if (onClick != null) {
+            Icon(
+                Icons.Rounded.ChevronRight,
+                "Выбрать $label",
+                modifier = Modifier.size(15.dp),
+                tint = PanelMutedText,
+            )
+        }
     }
 }
 

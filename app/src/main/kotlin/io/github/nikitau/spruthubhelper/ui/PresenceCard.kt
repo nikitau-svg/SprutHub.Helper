@@ -1,6 +1,5 @@
 package io.github.nikitau.spruthubhelper.ui
 
-import android.os.Build
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
@@ -177,11 +176,7 @@ internal fun PresenceCard(
                     )
                     if (presence.permissions.preciseGranted && !presence.permissions.backgroundGranted) {
                         Text(
-                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                                "Android выдаёт доступ «Всегда» только на странице разрешений приложения."
-                            } else {
-                                "Выберите постоянный доступ к геопозиции."
-                            },
+                            "Android выдаёт доступ «Всегда» только на странице разрешений приложения.",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )

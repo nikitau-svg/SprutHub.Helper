@@ -132,6 +132,24 @@ class SprutRepository(
             emptyList(),
         )
 
+    /**
+     * Installs an in-memory state for the isolated screenshot build.
+     *
+     * The production application never calls this hook. Keeping the injection
+     * below the UI lets the screenshot variant exercise the real cards,
+     * grouping, icons and freshness labels without connecting to a user's hub.
+     */
+    internal fun installScreenshotState(
+        catalog: SprutCatalog,
+        connection: ConnectionStatus,
+    ) {
+        synchronized(catalogStateLock) {
+            _catalog.value = catalog
+            _connectionStatus.value = connection
+            markAuthoritative(catalog.controls.map(SprutControl::id))
+        }
+    }
+
     init {
         scope.launch {
             val cached = cache.read()

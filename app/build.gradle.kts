@@ -24,8 +24,8 @@ android {
         applicationId = "io.github.nikitau.spruthubhelper"
         minSdk = 30
         targetSdk = 35
-        versionCode = 36
-        versionName = "0.7.0-beta.10"
+        versionCode = 37
+        versionName = "0.7.0-beta.11"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
@@ -46,6 +46,13 @@ android {
     buildTypes {
         debug {
             if (stableSigningAvailable) signingConfig = signingConfigs.getByName("stable")
+        }
+        create("screenshot") {
+            initWith(getByName("debug"))
+            applicationIdSuffix = ".screenshots"
+            versionNameSuffix = "-screenshots"
+            isDebuggable = true
+            matchingFallbacks += listOf("debug")
         }
         release {
             if (stableSigningAvailable) signingConfig = signingConfigs.getByName("stable")

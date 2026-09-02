@@ -1,19 +1,22 @@
 package io.github.nikitau.spruthubhelper
 
+import android.annotation.SuppressLint
 import android.app.Application
 import android.content.Context
 import io.github.nikitau.spruthubhelper.data.CatalogCache
 import io.github.nikitau.spruthubhelper.data.CatalogFreshnessPolicy
 import io.github.nikitau.spruthubhelper.data.CatalogNetworkRecoveryMonitor
+import io.github.nikitau.spruthubhelper.data.ConnectionPhase
+import io.github.nikitau.spruthubhelper.data.PhoneSensor
 import io.github.nikitau.spruthubhelper.data.SettingsRepository
 import io.github.nikitau.spruthubhelper.data.SprutRepository
-import io.github.nikitau.spruthubhelper.data.ConnectionPhase
 import io.github.nikitau.spruthubhelper.diagnostics.DiagnosticCategory
 import io.github.nikitau.spruthubhelper.diagnostics.DiagnosticChannel
 import io.github.nikitau.spruthubhelper.diagnostics.DiagnosticEvent as StructuredDiagnosticEvent
 import io.github.nikitau.spruthubhelper.diagnostics.DiagnosticJournal
 import io.github.nikitau.spruthubhelper.diagnostics.DiagnosticOutcome
 import io.github.nikitau.spruthubhelper.health.HealthReader
+import io.github.nikitau.spruthubhelper.health.HealthReading
 import io.github.nikitau.spruthubhelper.health.HealthSyncManager
 import io.github.nikitau.spruthubhelper.phone.PhoneReader
 import io.github.nikitau.spruthubhelper.phone.PhoneSyncManager
@@ -43,8 +46,13 @@ class SprutHelperApplication : Application() {
     }
 }
 
+@SuppressLint("StaticFieldLeak") // Every stored context is context.applicationContext.
 object AppGraph {
     private var initialized = false
+
+    /** Whether this process may contact SprutHub or execute remote commands. */
+    var remoteOperationsEnabled: Boolean = true
+        private set
 
     lateinit var settings: SettingsRepository
         private set
@@ -63,8 +71,14 @@ object AppGraph {
     private lateinit var catalogNetworkRecovery: CatalogNetworkRecoveryMonitor
 
     @Synchronized
-    fun initialize(context: Context) {
+    fun initialize(
+        context: Context,
+        backgroundRuntimeEnabled: Boolean = true,
+        remoteOperationsEnabled: Boolean = true,
+        phoneReadingsOverride: Map<PhoneSensor, HealthReading>? = null,
+    ) {
         if (initialized) return
+        this.remoteOperationsEnabled = remoteOperationsEnabled
         val appContext = context.applicationContext
         applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         diagnostics = DiagnosticJournal.create(appContext, applicationScope)
@@ -98,13 +112,16 @@ object AppGraph {
                     details = mapOf("попытка" to attempt.toString()),
                 )
             },
-        ).also(CatalogNetworkRecoveryMonitor::start)
+        ).also { monitor ->
+            if (backgroundRuntimeEnabled) monitor.start()
+        }
         health = HealthSyncManager(
             context = appContext,
             settings = settings,
             reader = HealthReader(appContext),
             virtualDevice = VirtualHealthDeviceManager(settings, healthClient),
             scope = applicationScope,
+            backgroundRuntimeEnabled = backgroundRuntimeEnabled,
         )
         phone = PhoneSyncManager(
             context = appContext,
@@ -117,12 +134,15 @@ object AppGraph {
             ),
             heartbeatScenario = SprutHeartbeatScenarioManager(settings, heartbeatClient),
             scope = applicationScope,
+            backgroundRuntimeEnabled = backgroundRuntimeEnabled,
+            currentReadingsOverride = phoneReadingsOverride,
         )
         presence = PresenceManager(
             context = appContext,
             settings = settings,
             virtualDevice = VirtualPresenceDeviceManager(settings, presenceClient),
             scope = applicationScope,
+            backgroundRuntimeEnabled = backgroundRuntimeEnabled,
         )
         TileInstallStateStore.initialize(appContext)
         applicationScope.launch {

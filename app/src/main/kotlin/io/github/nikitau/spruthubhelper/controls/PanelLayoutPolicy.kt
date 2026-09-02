@@ -6,7 +6,7 @@ package io.github.nikitau.spruthubhelper.controls
  * of columns into the viewport.
  */
 internal object PanelLayoutPolicy {
-    private const val CARD_GAP_DP = 12f
+    private const val CARD_GAP_DP = 10f
 
     fun columnCount(maxWidthDp: Float, fontScale: Float): Int {
         val minimumCardWidthDp = when {

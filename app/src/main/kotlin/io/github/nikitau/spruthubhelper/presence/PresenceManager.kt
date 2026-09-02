@@ -46,6 +46,7 @@ class PresenceManager(
     private val settings: SettingsRepository,
     private val virtualDevice: VirtualPresenceDeviceManager,
     private val scope: CoroutineScope,
+    private val backgroundRuntimeEnabled: Boolean = true,
 ) {
     private val geofencing = LocationServices.getGeofencingClient(context)
     private val locations = LocationServices.getFusedLocationProviderClient(context)
@@ -64,7 +65,7 @@ class PresenceManager(
     }.stateIn(scope, SharingStarted.Eagerly, PresenceUiState())
 
     init {
-        scope.launchSafely {
+        if (backgroundRuntimeEnabled) scope.launchSafely {
             val zones = settings.presenceZones.first()
             updateSchedule(zones)
             if (permissionState().preciseGranted) registerGeofences(zones)
@@ -353,9 +354,10 @@ class PresenceManager(
             PackageManager.PERMISSION_GRANTED
         val coarse = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) ==
             PackageManager.PERMISSION_GRANTED
-        val background = Build.VERSION.SDK_INT < Build.VERSION_CODES.Q ||
-            ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_BACKGROUND_LOCATION) ==
-            PackageManager.PERMISSION_GRANTED
+        val background = ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.ACCESS_BACKGROUND_LOCATION,
+        ) == PackageManager.PERMISSION_GRANTED
         return PresencePermissionState(
             foregroundGranted = fine || coarse,
             preciseGranted = fine,

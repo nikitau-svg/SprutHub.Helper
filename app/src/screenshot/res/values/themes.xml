@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.SprutHubHelper.Screenshot" parent="Theme.SprutHubHelper">
+        <!-- Keep account icons, time and notification badges out of candidates. -->
+        <item name="android:windowFullscreen">true</item>
+    </style>
+</resources>

@@ -2,6 +2,7 @@ package io.github.nikitau.spruthubhelper.phone
 
 import android.content.Intent
 import android.os.BatteryManager
+import android.os.Build
 
 /**
  * Stable battery values that SprutHub Helper promises to publish immediately.
@@ -26,7 +27,11 @@ internal fun Intent.phoneBatteryFingerprint(): PhoneBatteryFingerprint = PhoneBa
     status = getIntExtra(BatteryManager.EXTRA_STATUS, -1),
     plugged = getIntExtra(BatteryManager.EXTRA_PLUGGED, 0),
     health = getIntExtra(BatteryManager.EXTRA_HEALTH, 0),
-    cycleCount = getIntExtra(BatteryManager.EXTRA_CYCLE_COUNT, -1),
+    cycleCount = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+        getIntExtra(BatteryManager.EXTRA_CYCLE_COUNT, -1)
+    } else {
+        -1
+    },
 )
 
 internal fun filterPhoneBatteryTriggers(

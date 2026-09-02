@@ -52,5 +52,7 @@ if (( failed != 0 )); then
   exit 1
 fi
 
+python3 scripts/test_check_screenshot_assets.py
+python3 scripts/check-screenshot-assets.py
 python3 scripts/check-markdown-links.py
 echo "Публичное дерево и локальные ссылки проверены"

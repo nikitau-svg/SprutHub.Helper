@@ -22,4 +22,24 @@ class PanelLayoutPolicyTest {
         assertEquals(1, PanelLayoutPolicy.columnCount(maxWidthDp = 0f, fontScale = 2f))
         assertEquals(4, PanelLayoutPolicy.columnCount(maxWidthDp = 2_000f, fontScale = 0.8f))
     }
+
+    @Test
+    fun avoidsRepeatingRoomAlreadyVisibleInDeviceTitle() {
+        assertEquals(
+            "Кондиционер",
+            panelCardMetadata(
+                title = "Климат гостиной",
+                room = "Гостиная",
+                serviceName = "Кондиционер",
+            ),
+        )
+        assertEquals(
+            "Гостиная",
+            panelCardMetadata(
+                title = "Торшер",
+                room = "Гостиная",
+                serviceName = "Свет",
+            ),
+        )
+    }
 }

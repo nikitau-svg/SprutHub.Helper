@@ -28,14 +28,14 @@
             android:ellipsize="end"
             android:fontFamily="sans-serif-medium"
             android:maxLines="1"
-            android:text="Торшер"
+            android:text="@string/widget_preview_title"
             android:textColor="@color/sprut_text"
             android:textSize="16sp" />
 
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Гостиная"
+            android:text="@string/widget_preview_room"
             android:textColor="@color/sprut_text_muted"
             android:textSize="12sp" />
 
@@ -43,7 +43,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:fontFamily="sans-serif-medium"
-            android:text="Включено"
+            android:text="@string/widget_preview_on"
             android:textColor="@color/sprut_text"
             android:textSize="13sp" />
     </LinearLayout>

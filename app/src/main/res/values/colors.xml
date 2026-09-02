@@ -7,6 +7,5 @@
     <color name="sprut_surface_elevated">#262626</color>
     <color name="sprut_text">#FFFFFF</color>
     <color name="sprut_text_muted">#99FFFFFF</color>
-    <color name="sprut_outline">#4B4B4B</color>
     <color name="sprut_error">#DD3434</color>
 </resources>
