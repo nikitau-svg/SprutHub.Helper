@@ -48,6 +48,28 @@ internal fun hasCatalogRecoveryConfiguration(config: HubConfig): Boolean =
     }
 
 /**
+ * Prevents one physical route loss and the WebSocket failure it causes from
+ * being counted as two independent outages. A transport failure without a
+ * preceding Android network callback still claims a recovery cycle; this is
+ * important during seamless Wi-Fi/mobile handovers where the replacement
+ * network can become default before the old socket reports its late failure.
+ */
+internal class CatalogTransportRecoveryGate {
+    private val outageAlreadySignalled = AtomicBoolean(false)
+
+    fun onNetworkLost() {
+        outageAlreadySignalled.set(true)
+    }
+
+    fun onCatalogConnected() {
+        outageAlreadySignalled.set(false)
+    }
+
+    fun claimUnexpectedTransportLoss(): Boolean =
+        outageAlreadySignalled.compareAndSet(false, true)
+}
+
+/**
  * Collapses Android network callbacks into one controlled catalog recovery.
  *
  * The phone-data publisher has its own SprutRpcClient, so its successful retry
@@ -221,12 +243,13 @@ class CatalogRecoveryWorker(
 internal class CatalogNetworkRecoveryMonitor(
     context: Context,
     private val repository: SprutRepository,
-    scope: CoroutineScope,
+    private val scope: CoroutineScope,
     onAttemptFinished: (attempt: Int, result: Result<Unit>) -> Unit = { _, _ -> },
 ) {
     private val connectivity = context.getSystemService(ConnectivityManager::class.java)
     private val started = AtomicBoolean(false)
     private val workScheduler = CatalogRecoveryWorkScheduler(context)
+    private val transportRecoveryGate = CatalogTransportRecoveryGate()
     private val coordinator = CatalogNetworkRecoveryCoordinator(
         scope = scope,
         refresh = { availableAt ->
@@ -241,10 +264,9 @@ internal class CatalogNetworkRecoveryMonitor(
 
         override fun onLost(network: Network) {
             if (!recoveryIsRelevant()) return
+            transportRecoveryGate.onNetworkLost()
             coordinator.onNetworkLost()
-            runCatching(workScheduler::schedule).onFailure { error ->
-                Log.w(LOG_TAG, "Catalog recovery safety net could not be scheduled", error)
-            }
+            scheduleSafetyNet()
             // During Wi-Fi/mobile handover Android may expose the replacement
             // default network before reporting the old one as lost.
             if (connectivity.activeNetwork != null) {
@@ -281,9 +303,42 @@ internal class CatalogNetworkRecoveryMonitor(
         if (!started.compareAndSet(false, true)) return
         runCatching {
             connectivity.registerDefaultNetworkCallback(callback)
+            observeLateTransportFailures()
         }.onFailure { error ->
             started.set(false)
             Log.w(LOG_TAG, "Catalog network recovery callback is unavailable", error)
+        }
+    }
+
+    private fun observeLateTransportFailures() {
+        scope.launch {
+            var previousPhase = repository.connectionStatus.value.phase
+            repository.connectionStatus.collect { connection ->
+                val nextPhase = connection.phase
+                if (nextPhase == ConnectionPhase.CONNECTED_LOCAL || nextPhase == ConnectionPhase.CONNECTED_CLOUD) {
+                    transportRecoveryGate.onCatalogConnected()
+                } else if (
+                    nextPhase == ConnectionPhase.ERROR &&
+                    previousPhase in setOf(ConnectionPhase.CONNECTED_LOCAL, ConnectionPhase.CONNECTED_CLOUD) &&
+                    transportRecoveryGate.claimUnexpectedTransportLoss()
+                ) {
+                    // A route can already be usable by the time the old
+                    // WebSocket reports its failure. Do not wait for a second
+                    // Android network callback which may never arrive.
+                    coordinator.onNetworkLost()
+                    scheduleSafetyNet()
+                    if (connectivity.activeNetwork != null) {
+                        requestRecoveryIfRelevant()
+                    }
+                }
+                previousPhase = nextPhase
+            }
+        }
+    }
+
+    private fun scheduleSafetyNet() {
+        runCatching(workScheduler::schedule).onFailure { error ->
+            Log.w(LOG_TAG, "Catalog recovery safety net could not be scheduled", error)
         }
     }
 

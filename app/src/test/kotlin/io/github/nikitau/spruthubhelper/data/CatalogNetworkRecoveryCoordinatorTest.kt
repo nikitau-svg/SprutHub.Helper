@@ -10,6 +10,25 @@ import org.junit.Test
 @OptIn(ExperimentalCoroutinesApi::class)
 class CatalogNetworkRecoveryCoordinatorTest {
     @Test
+    fun `transport loss without network callback claims one recovery cycle`() {
+        val gate = CatalogTransportRecoveryGate()
+
+        assertTrue(gate.claimUnexpectedTransportLoss())
+        assertFalse(gate.claimUnexpectedTransportLoss())
+    }
+
+    @Test
+    fun `network callback suppresses duplicate transport outage until catalog reconnects`() {
+        val gate = CatalogTransportRecoveryGate()
+
+        gate.onNetworkLost()
+        assertFalse(gate.claimUnexpectedTransportLoss())
+
+        gate.onCatalogConnected()
+        assertTrue(gate.claimUnexpectedTransportLoss())
+    }
+
+    @Test
     fun `fresh worker process uses persisted connection instead of empty in memory catalog`() {
         assertTrue(
             hasCatalogRecoveryConfiguration(

@@ -91,7 +91,7 @@ jobs:
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs "$apk"
           jarsigner -verify "$bundle"
 
-      - name: Upload beta APK
+      - name: Upload beta APK and Play bundle
         if: >-
           (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
           github.ref == 'refs/heads/beta'
