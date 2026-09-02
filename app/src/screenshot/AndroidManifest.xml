@@ -74,8 +74,17 @@
         <activity
             android:name=".ui.WidgetConfigureActivity"
             android:screenOrientation="portrait"
+            android:showWhenLocked="true"
             android:theme="@style/Theme.SprutHubHelper.Screenshot"
+            android:turnScreenOn="true"
             tools:replace="android:theme" />
+        <activity
+            android:name=".ui.WidgetHostPreviewActivity"
+            android:exported="true"
+            android:screenOrientation="portrait"
+            android:showWhenLocked="true"
+            android:theme="@style/Theme.SprutHubHelper.Screenshot"
+            android:turnScreenOn="true" />
         <activity
             android:name=".ui.DiagnosticsActivity"
             android:screenOrientation="portrait"

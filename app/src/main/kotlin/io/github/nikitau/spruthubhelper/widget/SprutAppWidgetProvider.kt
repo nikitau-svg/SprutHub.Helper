@@ -6,11 +6,16 @@ import android.appwidget.AppWidgetProvider
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.os.Build
+import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.util.SizeF
+import android.util.TypedValue
 import android.view.View
 import android.widget.RemoteViews
 import android.widget.Toast
+import androidx.annotation.RequiresApi
 import androidx.core.content.ContextCompat
 import io.github.nikitau.spruthubhelper.AppGraph
 import io.github.nikitau.spruthubhelper.R
@@ -28,6 +33,7 @@ import io.github.nikitau.spruthubhelper.tiles.TileIconResolver
 import io.github.nikitau.spruthubhelper.ui.MainActivity
 import io.github.nikitau.spruthubhelper.ui.WidgetConfigureActivity
 import java.util.concurrent.ConcurrentHashMap
+import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
 
 class SprutAppWidgetProvider : AppWidgetProvider() {
@@ -88,8 +94,14 @@ class SprutAppWidgetProvider : AppWidgetProvider() {
         )
         AppGraph.initialize(context.applicationContext)
         val event = "Команда виджета"
-        val controlId = WidgetAssignmentStore.controlId(context, appWidgetId)
-        if (controlId == null) {
+        val assignment = WidgetAssignmentStore.assignment(context, appWidgetId)
+        val requestedControlId = intent.getStringExtra(EXTRA_CONTROL_ID)
+        val controlId = resolveWidgetActionControlId(
+            primaryControlId = assignment?.controlId,
+            configuration = assignment?.layout,
+            requestedControlId = requestedControlId,
+        )
+        if (assignment == null || controlId == null) {
             AppGraph.diagnostics.record(
                 category = DiagnosticCategory.COMMAND,
                 event = event,
@@ -171,12 +183,21 @@ class SprutAppWidgetProvider : AppWidgetProvider() {
     companion object {
         private const val ACTION_PRIMARY = "io.github.nikitau.spruthubhelper.widget.PRIMARY"
         private const val ACTION_REFRESH = "io.github.nikitau.spruthubhelper.widget.REFRESH"
+        private const val EXTRA_CONTROL_ID = "widget_control_id"
         private const val REQUEST_PRIMARY = 10
         private const val REQUEST_REFRESH = 20
         private const val REQUEST_OPEN = 30
         private const val REQUEST_CONFIGURE = 40
         private val renderedFingerprints = ConcurrentHashMap<Int, WidgetRenderFingerprint>()
         private val renderLock = Any()
+
+        private data class WidgetRenderItem(
+            val control: SprutControl,
+            val card: ServiceControlCard,
+            val preference: ServicePresentationPreference?,
+            val configuration: WidgetItemConfiguration,
+            val iconRevision: String?,
+        )
 
         fun updateAll(context: Context) {
             AppGraph.initialize(context.applicationContext)
@@ -205,46 +226,506 @@ class SprutAppWidgetProvider : AppWidgetProvider() {
             appWidgetId: Int,
             force: Boolean = false,
         ) {
-            val assignment = WidgetAssignmentStore.controlId(context, appWidgetId)
+            val storedAssignment = WidgetAssignmentStore.assignment(context, appWidgetId)
+            val assignment = storedAssignment?.controlId
+            val layoutConfiguration = storedAssignment?.layout
             val catalog = AppGraph.repository.catalog.value
             val freshness = AppGraph.repository.freshness()
             val control = assignment?.let { id -> catalog.controls.firstOrNull { it.id == id } }
-            val card = control?.let { selectedControl ->
-                buildServiceControlCards(catalog.controls)
-                    .firstOrNull { candidate -> candidate.controls.any { it.id == selectedControl.id } }
+            val cards = buildServiceControlCards(catalog.controls)
+            val preferences = AppGraph.repository.servicePresentations.value
+            val renderItems = layoutConfiguration?.items.orEmpty().mapNotNull { itemConfiguration ->
+                val itemControl = catalog.controls.firstOrNull { it.id == itemConfiguration.controlId }
+                    ?: return@mapNotNull null
+                val itemCard = cards.firstOrNull { candidate ->
+                    candidate.controls.any { it.id == itemControl.id }
+                } ?: buildServiceControlCards(listOf(itemControl)).single()
+                WidgetRenderItem(
+                    control = itemControl,
+                    card = itemCard,
+                    preference = preferences.firstOrNull { it.cardId == itemCard.id },
+                    configuration = itemConfiguration,
+                    iconRevision = CustomIconManager(context).revision(itemCard.id)
+                        ?: CustomIconManager(context).revision(itemControl.id),
+                )
+            }
+            val primaryRenderItem = renderItems.firstOrNull()
+            val card = primaryRenderItem?.card ?: control?.let { selectedControl ->
+                cards.firstOrNull { candidate -> candidate.controls.any { it.id == selectedControl.id } }
             }
             val preference = card?.let { selectedCard ->
-                AppGraph.repository.servicePresentations.value.firstOrNull { it.cardId == selectedCard.id }
+                preferences.firstOrNull { it.cardId == selectedCard.id }
             }
-            val iconRevision = card?.let { CustomIconManager(context).revision(it.id) }
+            val fingerprintControl = primaryRenderItem?.control ?: control
+            val iconRevision = primaryRenderItem?.iconRevision
+                ?: card?.let { CustomIconManager(context).revision(it.id) }
                 ?: control?.let { CustomIconManager(context).revision(it.id) }
+            val options = manager.getAppWidgetOptions(appWidgetId)
+            val sizeSignature = if (layoutConfiguration == null) "legacy" else widgetSizeSignature(options)
+            val collectionSignature = renderItems.joinToString("||") { item ->
+                val surface = freshness.presentationFor(item.control)
+                val content = resolveWidgetContent(
+                    card = item.card,
+                    configuration = requireNotNull(layoutConfiguration),
+                    item = item.configuration,
+                    sharedPreference = item.preference,
+                )
+                listOf(
+                    item.control.id,
+                    item.card.title,
+                    item.card.room,
+                    content.headline.key,
+                    content.headline.value,
+                    content.secondary.joinToString("|") { "${it.key}=${it.value}" },
+                    surface.pending,
+                    surface.stateIsAuthoritative,
+                    surface.active,
+                    surface.statusLabel,
+                    item.iconRevision,
+                ).joinToString(";")
+            }
             val fingerprint = widgetRenderFingerprint(
                 assignment = assignment,
-                control = control,
+                control = fingerprintControl,
                 catalogIsEmpty = catalog.controls.isEmpty(),
                 freshness = freshness,
                 customIconRevision = iconRevision,
                 card = card,
                 preference = preference,
+                layoutConfiguration = layoutConfiguration,
+                itemConfiguration = primaryRenderItem?.configuration,
+                sizeSignature = sizeSignature,
+                collectionSignature = collectionSignature,
             )
             synchronized(renderLock) {
                 if (!force && renderedFingerprints[appWidgetId] == fingerprint) return
-                val views = RemoteViews(context.packageName, R.layout.widget_sprut_control)
-                when {
-                    assignment == null -> renderUnconfigured(context, views, appWidgetId)
-                    control == null -> renderMissing(context, views, appWidgetId, catalog.controls.isEmpty())
-                    else -> renderControl(
-                        context,
-                        views,
-                        appWidgetId,
-                        control,
-                        card ?: buildServiceControlCards(listOf(control)).single(),
-                        preference,
-                        freshness,
+                val resolvedCard = fingerprintControl?.let { selectedControl ->
+                    card ?: buildServiceControlCards(listOf(selectedControl)).single()
+                }
+                val views = if (layoutConfiguration != null && renderItems.isNotEmpty()) {
+                    createResponsiveViews(
+                        context = context,
+                        appWidgetId = appWidgetId,
+                        items = renderItems,
+                        freshness = freshness,
+                        configuration = layoutConfiguration,
+                        options = options,
                     )
+                } else {
+                    RemoteViews(context.packageName, R.layout.widget_sprut_control).also { legacyViews ->
+                        when {
+                            assignment == null -> renderUnconfigured(context, legacyViews, appWidgetId)
+                            control == null -> renderMissing(
+                                context,
+                                legacyViews,
+                                appWidgetId,
+                                catalog.controls.isEmpty(),
+                            )
+                            else -> renderControl(
+                                context,
+                                legacyViews,
+                                appWidgetId,
+                                control,
+                                requireNotNull(resolvedCard),
+                                preference,
+                                freshness,
+                            )
+                        }
+                    }
                 }
                 manager.updateAppWidget(appWidgetId, views)
                 renderedFingerprints[appWidgetId] = fingerprint
+            }
+        }
+
+        private fun createResponsiveViews(
+            context: Context,
+            appWidgetId: Int,
+            items: List<WidgetRenderItem>,
+            freshness: CatalogFreshness,
+            configuration: WidgetLayoutConfiguration,
+            options: Bundle,
+        ): RemoteViews {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                val sizes = exactWidgetSizes(options)
+                if (sizes.isNotEmpty()) {
+                    return responsiveRemoteViews(
+                        sizes = sizes,
+                        factory = { size ->
+                            createResponsiveView(
+                                context = context,
+                                appWidgetId = appWidgetId,
+                                items = items,
+                                freshness = freshness,
+                                configuration = configuration,
+                                hostSize = WidgetHostSize(size.width, size.height),
+                            )
+                        },
+                    )
+                }
+            }
+            return createResponsiveView(
+                context = context,
+                appWidgetId = appWidgetId,
+                items = items,
+                freshness = freshness,
+                configuration = configuration,
+                hostSize = fallbackWidgetSize(options),
+            )
+        }
+
+        private fun createResponsiveView(
+            context: Context,
+            appWidgetId: Int,
+            items: List<WidgetRenderItem>,
+            freshness: CatalogFreshness,
+            configuration: WidgetLayoutConfiguration,
+            hostSize: WidgetHostSize,
+        ): RemoteViews {
+            val sizeClass = hostSize.sizeClass()
+            return if (items.size > 1 && sizeClass != WidgetSizeClass.ICON) {
+                createGridView(
+                    context = context,
+                    appWidgetId = appWidgetId,
+                    items = items,
+                    freshness = freshness,
+                    configuration = configuration,
+                    hostSize = hostSize,
+                )
+            } else {
+                createComposedView(
+                    context = context,
+                    appWidgetId = appWidgetId,
+                    item = items.first(),
+                    freshness = freshness,
+                    configuration = configuration,
+                    sizeClass = sizeClass,
+                    hiddenItemCount = if (sizeClass == WidgetSizeClass.ICON) items.size - 1 else 0,
+                )
+            }
+        }
+
+        @RequiresApi(Build.VERSION_CODES.S)
+        private fun responsiveRemoteViews(
+            sizes: List<SizeF>,
+            factory: (SizeF) -> RemoteViews,
+        ): RemoteViews = RemoteViews(
+            sizes.distinct().associateWith(factory),
+        )
+
+        private fun createComposedView(
+            context: Context,
+            appWidgetId: Int,
+            item: WidgetRenderItem,
+            freshness: CatalogFreshness,
+            configuration: WidgetLayoutConfiguration,
+            sizeClass: WidgetSizeClass,
+            hiddenItemCount: Int,
+        ): RemoteViews {
+            val layout = if (sizeClass == WidgetSizeClass.ICON) {
+                R.layout.widget_sprut_icon
+            } else {
+                R.layout.widget_sprut_composed
+            }
+            val views = RemoteViews(context.packageName, layout)
+            val control = item.control
+            val card = item.card
+            val presentation = freshness.presentationFor(control)
+            val headline = resolveWidgetContent(
+                card = card,
+                configuration = configuration,
+                item = item.configuration,
+                sharedPreference = item.preference,
+            ).headline
+            val visibleValue = when {
+                presentation.pending -> "Ожидаем SprutHub"
+                !presentation.stateIsAuthoritative && control.behavior == ControlBehavior.BUTTON ->
+                    "Команда недоступна"
+                !presentation.stateIsAuthoritative -> "Последнее: ${headline.value}"
+                else -> headline.value
+            }
+            val content = resolveWidgetContent(
+                card = card,
+                configuration = configuration,
+                item = item.configuration,
+                sharedPreference = item.preference,
+                primaryValueOverride = visibleValue,
+            )
+            val lines = visibleWidgetLines(content, configuration, sizeClass).map { line ->
+                if (sizeClass == WidgetSizeClass.ICON && line.block == WidgetContentBlock.PRIMARY_VALUE) {
+                    line.copy(text = compactWidgetValue(visibleValue, hiddenItemCount))
+                } else {
+                    line
+                }
+            }
+            val lineIds = intArrayOf(
+                R.id.widget_line_1,
+                R.id.widget_line_2,
+                R.id.widget_line_3,
+                R.id.widget_line_4,
+            )
+            lineIds.forEach { id -> views.setViewVisibility(id, View.GONE) }
+            lines.zip(lineIds.asIterable()).forEach { (line, id) ->
+                views.setViewVisibility(id, View.VISIBLE)
+                views.setTextViewText(id, line.text)
+                views.setTextViewTextSize(
+                    id,
+                    TypedValue.COMPLEX_UNIT_SP,
+                    widgetLineTextSize(line.block, sizeClass),
+                )
+                views.setTextColor(
+                    id,
+                    ContextCompat.getColor(
+                        context,
+                        if (
+                            line.block == WidgetContentBlock.TITLE ||
+                            line.block == WidgetContentBlock.PRIMARY_VALUE
+                        ) {
+                            R.color.sprut_text
+                        } else {
+                            R.color.sprut_text_muted
+                        },
+                    ),
+                )
+                views.setInt(
+                    id,
+                    "setMaxLines",
+                    if (sizeClass == WidgetSizeClass.TALL && line.block == WidgetContentBlock.SECONDARY_VALUES) 2 else 1,
+                )
+            }
+            views.setInt(
+                R.id.widget_root,
+                "setBackgroundResource",
+                if (presentation.active) R.drawable.bg_widget_sprut_active else R.drawable.bg_widget_sprut,
+            )
+            val customBitmap = CustomIconManager(context).loadBitmap(card.id)
+                ?: CustomIconManager(context).loadBitmap(control.id)
+            if (customBitmap != null) {
+                views.setImageViewBitmap(R.id.widget_icon, customBitmap)
+            } else {
+                views.setImageViewResource(R.id.widget_icon, TileIconResolver.resource(card))
+                views.setInt(
+                    R.id.widget_icon,
+                    "setColorFilter",
+                    ContextCompat.getColor(
+                        context,
+                        if (presentation.active) R.color.sprut_green else R.color.sprut_text,
+                    ),
+                )
+            }
+            val showRefresh = configuration.showRefresh && sizeClass != WidgetSizeClass.ICON
+            views.setViewVisibility(R.id.widget_refresh, if (showRefresh) View.VISIBLE else View.GONE)
+            views.setOnClickPendingIntent(
+                R.id.widget_refresh,
+                refreshPendingIntent(context, appWidgetId),
+            )
+            val decision = WidgetActionResolver.resolve(control)
+            views.setOnClickPendingIntent(
+                R.id.widget_root,
+                if (decision.action == WidgetPrimaryAction.OPEN_APP) {
+                    openAppPendingIntent(context, appWidgetId, control.id)
+                } else {
+                    primaryPendingIntent(context, appWidgetId, control.id)
+                },
+            )
+            views.setContentDescription(
+                R.id.widget_root,
+                (listOf(card.title) + lines.map(WidgetContentLine::text) + presentation.statusLabel.orEmpty())
+                    .filter(String::isNotBlank)
+                    .joinToString(", "),
+            )
+            return views
+        }
+
+        private fun createGridView(
+            context: Context,
+            appWidgetId: Int,
+            items: List<WidgetRenderItem>,
+            freshness: CatalogFreshness,
+            configuration: WidgetLayoutConfiguration,
+            hostSize: WidgetHostSize,
+        ): RemoteViews {
+            val views = RemoteViews(context.packageName, R.layout.widget_sprut_grid)
+            val grid = widgetGridLayout(hostSize, items.size, configuration.density)
+            val visibleItems = items.take(grid.visibleItemCount)
+            views.removeAllViews(R.id.widget_items_row_1)
+            views.removeAllViews(R.id.widget_items_row_2)
+            views.setViewVisibility(R.id.widget_items_row_2, if (grid.rows > 1) View.VISIBLE else View.GONE)
+            visibleItems.forEachIndexed { index, item ->
+                val child = createGridItemView(
+                    context = context,
+                    appWidgetId = appWidgetId,
+                    itemIndex = index,
+                    item = item,
+                    allItems = items,
+                    freshness = freshness,
+                    configuration = configuration,
+                    showSecondary = hostSize.heightDp >= 150f &&
+                        configuration.density == WidgetInformationDensity.DETAILED,
+                    hiddenItemCount = if (index == visibleItems.lastIndex) grid.hiddenItemCount else 0,
+                )
+                views.addView(
+                    if (index < grid.columns) R.id.widget_items_row_1 else R.id.widget_items_row_2,
+                    child,
+                )
+            }
+            val showRefresh = configuration.showRefresh && hostSize.widthDp >= 440f
+            val refreshInsetPx = if (showRefresh) {
+                TypedValue.applyDimension(
+                    TypedValue.COMPLEX_UNIT_DIP,
+                    36f,
+                    context.resources.displayMetrics,
+                ).roundToInt()
+            } else {
+                0
+            }
+            views.setViewPadding(
+                R.id.widget_items_container,
+                0,
+                0,
+                refreshInsetPx,
+                0,
+            )
+            views.setViewVisibility(R.id.widget_refresh, if (showRefresh) View.VISIBLE else View.GONE)
+            views.setOnClickPendingIntent(R.id.widget_refresh, refreshPendingIntent(context, appWidgetId))
+            views.setContentDescription(
+                R.id.widget_root,
+                visibleItems.joinToString(", ") { item ->
+                    val headline = resolveWidgetContent(
+                        item.card,
+                        configuration,
+                        item.configuration,
+                        item.preference,
+                    ).headline
+                    "${gridItemTitle(item, items)}: ${headline.value}"
+                },
+            )
+            return views
+        }
+
+        private fun createGridItemView(
+            context: Context,
+            appWidgetId: Int,
+            itemIndex: Int,
+            item: WidgetRenderItem,
+            allItems: List<WidgetRenderItem>,
+            freshness: CatalogFreshness,
+            configuration: WidgetLayoutConfiguration,
+            showSecondary: Boolean,
+            hiddenItemCount: Int,
+        ): RemoteViews {
+            val views = RemoteViews(context.packageName, R.layout.widget_sprut_grid_item)
+            val surface = freshness.presentationFor(item.control)
+            val content = resolveWidgetContent(
+                card = item.card,
+                configuration = configuration,
+                item = item.configuration,
+                sharedPreference = item.preference,
+            )
+            val value = when {
+                surface.pending -> "Ожидание…"
+                !surface.stateIsAuthoritative -> "Последнее: ${content.headline.value}"
+                else -> content.headline.value
+            }
+            views.setTextViewText(R.id.widget_item_title, gridItemTitle(item, allItems))
+            views.setTextViewText(R.id.widget_item_value, value)
+            val secondary = content.secondary.firstOrNull()?.let { "${it.label} ${it.value}" }.orEmpty()
+            views.setTextViewText(R.id.widget_item_secondary, secondary)
+            views.setViewVisibility(
+                R.id.widget_item_secondary,
+                if (showSecondary && secondary.isNotBlank()) View.VISIBLE else View.GONE,
+            )
+            val overflow = widgetOverflowLabel(hiddenItemCount)
+            views.setTextViewText(R.id.widget_item_overflow, overflow)
+            views.setViewVisibility(
+                R.id.widget_item_overflow,
+                if (overflow.isNotBlank()) View.VISIBLE else View.GONE,
+            )
+            views.setInt(
+                R.id.widget_item_root,
+                "setBackgroundResource",
+                if (surface.active) R.drawable.bg_widget_grid_item_active else R.drawable.bg_widget_grid_item,
+            )
+            val customBitmap = CustomIconManager(context).loadBitmap(item.card.id)
+                ?: CustomIconManager(context).loadBitmap(item.control.id)
+            if (customBitmap != null) {
+                views.setImageViewBitmap(R.id.widget_item_icon, customBitmap)
+            } else {
+                views.setImageViewResource(R.id.widget_item_icon, TileIconResolver.resource(item.card))
+                views.setInt(
+                    R.id.widget_item_icon,
+                    "setColorFilter",
+                    ContextCompat.getColor(
+                        context,
+                        if (surface.active) R.color.sprut_green else R.color.sprut_text,
+                    ),
+                )
+            }
+            val decision = WidgetActionResolver.resolve(item.control)
+            views.setOnClickPendingIntent(
+                R.id.widget_item_root,
+                if (decision.action == WidgetPrimaryAction.OPEN_APP) {
+                    openAppPendingIntent(context, appWidgetId, item.control.id, itemIndex)
+                } else {
+                    primaryPendingIntent(context, appWidgetId, item.control.id, itemIndex)
+                },
+            )
+            views.setContentDescription(
+                R.id.widget_item_root,
+                listOf(gridItemTitle(item, allItems), value, secondary, overflow)
+                    .filter(String::isNotBlank)
+                    .joinToString(", "),
+            )
+            return views
+        }
+
+        private fun gridItemTitle(item: WidgetRenderItem, allItems: List<WidgetRenderItem>): String {
+            val duplicateTitle = allItems.count {
+                it.card.title.equals(item.card.title, ignoreCase = true)
+            } > 1
+            return if (duplicateTitle) {
+                "${item.card.title} · ${item.card.displayServiceName()}"
+            } else {
+                item.card.title
+            }
+        }
+
+        private fun widgetLineTextSize(block: WidgetContentBlock, sizeClass: WidgetSizeClass): Float = when {
+            sizeClass == WidgetSizeClass.ICON && block == WidgetContentBlock.PRIMARY_VALUE -> 11f
+            block == WidgetContentBlock.PRIMARY_VALUE -> 15f
+            block == WidgetContentBlock.TITLE -> 14f
+            else -> 11f
+        }
+
+        private fun widgetSizeSignature(options: Bundle): String {
+            val exact = exactWidgetSizes(options)
+            if (exact.isNotEmpty()) {
+                return exact
+                    .distinct()
+                    .sortedWith(compareBy(SizeF::getWidth, SizeF::getHeight))
+                    .joinToString("|") { size ->
+                        "${size.width.toInt()}x${size.height.toInt()}:${WidgetHostSize(size.width, size.height).sizeClass()}"
+                    }
+            }
+            val fallback = fallbackWidgetSize(options)
+            return "${fallback.widthDp.toInt()}x${fallback.heightDp.toInt()}:${fallback.sizeClass()}"
+        }
+
+        private fun fallbackWidgetSize(options: Bundle): WidgetHostSize = WidgetHostSize(
+            widthDp = options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, 226).toFloat(),
+            heightDp = options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT, 101).toFloat(),
+        )
+
+        private fun exactWidgetSizes(options: Bundle): List<SizeF> {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return emptyList()
+            return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                options.getParcelableArrayList(
+                    AppWidgetManager.OPTION_APPWIDGET_SIZES,
+                    SizeF::class.java,
+                ).orEmpty()
+            } else {
+                @Suppress("DEPRECATION")
+                options.getParcelableArrayList<SizeF>(AppWidgetManager.OPTION_APPWIDGET_SIZES).orEmpty()
             }
         }
 
@@ -361,14 +842,20 @@ class SprutAppWidgetProvider : AppWidgetProvider() {
             ) "$display ${control.unit}" else display
         }
 
-        private fun primaryPendingIntent(context: Context, appWidgetId: Int): PendingIntent {
+        private fun primaryPendingIntent(
+            context: Context,
+            appWidgetId: Int,
+            controlId: String? = null,
+            itemIndex: Int = 0,
+        ): PendingIntent {
             val intent = Intent(context, SprutAppWidgetProvider::class.java).apply {
                 action = ACTION_PRIMARY
                 putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, appWidgetId)
+                controlId?.let { putExtra(EXTRA_CONTROL_ID, it) }
             }
             return PendingIntent.getBroadcast(
                 context,
-                requestCode(appWidgetId, REQUEST_PRIMARY),
+                requestCode(appWidgetId, REQUEST_PRIMARY + itemIndex),
                 intent,
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
             )
@@ -387,14 +874,19 @@ class SprutAppWidgetProvider : AppWidgetProvider() {
             )
         }
 
-        private fun openAppPendingIntent(context: Context, appWidgetId: Int, controlId: String): PendingIntent {
+        private fun openAppPendingIntent(
+            context: Context,
+            appWidgetId: Int,
+            controlId: String,
+            itemIndex: Int = 0,
+        ): PendingIntent {
             val intent = Intent(context, MainActivity::class.java).apply {
                 flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
                 putExtra(MainActivity.EXTRA_CONTROL_ID, controlId)
             }
             return PendingIntent.getActivity(
                 context,
-                requestCode(appWidgetId, REQUEST_OPEN),
+                requestCode(appWidgetId, REQUEST_OPEN + itemIndex),
                 intent,
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
             )

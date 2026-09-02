@@ -40,6 +40,9 @@ internal data class WidgetRenderFingerprint(
     val active: Boolean = false,
     val statusLabel: String = "",
     val customIconRevision: String? = null,
+    val layoutConfiguration: WidgetLayoutConfiguration? = null,
+    val sizeSignature: String = "",
+    val collectionSignature: String = "",
 )
 
 internal fun widgetRenderFingerprint(
@@ -50,6 +53,10 @@ internal fun widgetRenderFingerprint(
     customIconRevision: String?,
     card: ServiceControlCard? = null,
     preference: ServicePresentationPreference? = null,
+    layoutConfiguration: WidgetLayoutConfiguration? = null,
+    itemConfiguration: WidgetItemConfiguration? = null,
+    sizeSignature: String = "",
+    collectionSignature: String = "",
 ): WidgetRenderFingerprint = when {
     assignment == null -> WidgetRenderFingerprint(mode = WidgetRenderMode.UNCONFIGURED)
     control == null -> WidgetRenderFingerprint(
@@ -60,15 +67,27 @@ internal fun widgetRenderFingerprint(
     else -> {
         val presentation = freshness.presentationFor(control)
         val resolvedCard = card ?: buildServiceControlCards(listOf(control)).single()
-        val headline = resolvedCard.headlineDisplayValue(preference)
-        val secondary = resolvedCard.secondaryDisplayValues(preference)
-        val subtitle = widgetSubtitleParts(
-            statusPrefix = presentation.statusLabel.orEmpty(),
-            headline = headline,
-            secondary = secondary,
-            serviceName = resolvedCard.displayServiceName(),
-            room = resolvedCard.room,
-        ).joinToString(" · ")
+        val configuredContent = layoutConfiguration?.let { configuration ->
+            resolveWidgetContent(
+                card = resolvedCard,
+                configuration = configuration,
+                item = itemConfiguration
+                    ?: configuration.items.firstOrNull { it.controlId == control.id }
+                    ?: WidgetItemConfiguration(control.id),
+                sharedPreference = preference,
+            )
+        }
+        val headline = configuredContent?.headline ?: resolvedCard.headlineDisplayValue(preference)
+        val secondary = configuredContent?.secondary ?: resolvedCard.secondaryDisplayValues(preference)
+        val subtitle = configuredContent?.lines?.joinToString("|") { line ->
+            "${line.block.name}=${line.text}"
+        } ?: widgetSubtitleParts(
+                statusPrefix = presentation.statusLabel.orEmpty(),
+                headline = headline,
+                secondary = secondary,
+                serviceName = resolvedCard.displayServiceName(),
+                room = resolvedCard.room,
+            ).joinToString(" · ")
         WidgetRenderFingerprint(
             mode = WidgetRenderMode.CONTROL,
             assignment = assignment,
@@ -88,6 +107,9 @@ internal fun widgetRenderFingerprint(
             active = presentation.active,
             statusLabel = presentation.statusLabel.orEmpty(),
             customIconRevision = customIconRevision,
+            layoutConfiguration = layoutConfiguration?.normalized(),
+            sizeSignature = sizeSignature,
+            collectionSignature = collectionSignature,
         )
     }
 }

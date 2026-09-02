@@ -23,3 +23,20 @@ object WidgetActionResolver {
         else -> WidgetActionDecision(WidgetPrimaryAction.OPEN_APP)
     }
 }
+
+/**
+ * A PendingIntent may outlive a previous widget layout. Only a control that is
+ * still assigned to this widget is accepted; a stale or forged id falls back
+ * to the primary item instead of reaching an arbitrary SprutHub control.
+ */
+internal fun resolveWidgetActionControlId(
+    primaryControlId: String?,
+    configuration: WidgetLayoutConfiguration?,
+    requestedControlId: String?,
+): String? {
+    val primary = primaryControlId?.takeIf(String::isNotBlank) ?: return null
+    val allowed = configuration?.items
+        ?.mapTo(mutableSetOf(), WidgetItemConfiguration::controlId)
+        .orEmpty() + primary
+    return requestedControlId?.takeIf(allowed::contains) ?: primary
+}
