@@ -135,8 +135,9 @@ object AppGraph {
                 repository.catalog,
                 repository.connectionStatus,
                 repository.pendingControlIds,
-            ) { catalog, connection, pending -> Triple(catalog, connection, pending) }
-                .collectLatest { (catalog, connection, _) ->
+                repository.servicePresentations,
+            ) { catalog, connection, _, _ -> catalog to connection }
+                .collectLatest { (catalog, connection) ->
                     delay(100)
                     SprutAppWidgetProvider.updateAll(appContext)
 

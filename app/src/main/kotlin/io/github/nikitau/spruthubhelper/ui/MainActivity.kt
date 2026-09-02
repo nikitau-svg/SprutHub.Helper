@@ -29,10 +29,12 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -80,6 +82,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -133,6 +136,7 @@ import io.github.nikitau.spruthubhelper.data.PhoneSensorCategory
 import io.github.nikitau.spruthubhelper.data.PhoneSyncMode
 import io.github.nikitau.spruthubhelper.data.SprutControl
 import io.github.nikitau.spruthubhelper.data.ServiceControlCard
+import io.github.nikitau.spruthubhelper.data.ServicePresentationPreference
 import io.github.nikitau.spruthubhelper.data.TileAssignment
 import io.github.nikitau.spruthubhelper.data.buildServiceControlCards
 import io.github.nikitau.spruthubhelper.data.groupControlsByAccessory
@@ -152,15 +156,33 @@ import io.github.nikitau.spruthubhelper.widget.SprutAppWidgetProvider
 import java.text.DateFormat
 import java.util.Date
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
+    private val requestedControlId = MutableStateFlow<String?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent { SprutHelperTheme { MainScreen() } }
+        requestedControlId.value = intent?.getStringExtra(EXTRA_CONTROL_ID)
+        setContent {
+            val target by requestedControlId.collectAsState()
+            SprutHelperTheme {
+                MainScreen(
+                    targetControlId = target,
+                    onTargetConsumed = { requestedControlId.value = null },
+                )
+            }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        requestedControlId.value = intent.getStringExtra(EXTRA_CONTROL_ID)
     }
 
     override fun onResume() {
@@ -186,7 +208,11 @@ private val CloudEndpointPresets = listOf(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun MainScreen(viewModel: MainViewModel = viewModel()) {
+private fun MainScreen(
+    targetControlId: String?,
+    onTargetConsumed: () -> Unit,
+    viewModel: MainViewModel = viewModel(),
+) {
     val context = LocalContext.current
     val ui by viewModel.uiState.collectAsState()
     val busy by viewModel.busy.collectAsState()
@@ -209,6 +235,12 @@ private fun MainScreen(viewModel: MainViewModel = viewModel()) {
     val onboardingActive = onboardingRequired == true
     val onboardingResolved = onboardingRequired != null
     val homeReadiness = buildHomeReadiness(ui, health, phone, presence)
+    LaunchedEffect(targetControlId) {
+        if (targetControlId != null) {
+            settingsSectionName = null
+            settingsOpen = false
+        }
+    }
     val healthPermissionLauncher = rememberLauncherForActivityResult(
         PermissionController.createRequestPermissionResultContract(),
     ) { viewModel.onHealthPermissionsChanged() }
@@ -468,6 +500,8 @@ private fun MainScreen(viewModel: MainViewModel = viewModel()) {
                         iconTargetId = controlId
                         customIconLauncher.launch("image/*")
                     },
+                    targetControlId = targetControlId,
+                    onTargetConsumed = onTargetConsumed,
                 )
             } else {
                 SettingsContent(
@@ -506,13 +540,33 @@ private fun HomeContent(
     modifier: Modifier,
     onOpenSettings: (SettingsSection) -> Unit,
     onPickIcon: (String) -> Unit,
+    targetControlId: String?,
+    onTargetConsumed: () -> Unit,
 ) {
     var search by rememberSaveable { mutableStateOf("") }
+    val listState = rememberLazyListState()
     val filtered = remember(ui.catalog.controls, search) {
         groupControlsByAccessory(ui.catalog.controls).filter { it.matches(search) }
     }
+    LaunchedEffect(targetControlId, filtered) {
+        val target = targetControlId ?: return@LaunchedEffect
+        if (search.isNotBlank()) {
+            search = ""
+            return@LaunchedEffect
+        }
+        val groupIndex = filtered.indexOfFirst { group ->
+            group.controls.any { it.id == target } || group.serviceCards.any { it.id == target }
+        }
+        if (groupIndex >= 0) {
+            listState.animateScrollToItem(4 + groupIndex)
+            onTargetConsumed()
+        } else if (ui.catalog.controls.isNotEmpty()) {
+            onTargetConsumed()
+        }
+    }
     LazyColumn(
         modifier = modifier,
+        state = listState,
         contentPadding = PaddingValues(top = 12.dp, bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
@@ -526,6 +580,7 @@ private fun HomeContent(
             PanelSummaryCard(
                 items = ui.panelItems,
                 controls = ui.catalog.controls,
+                presentations = ui.servicePresentations,
                 viewModel = viewModel,
             )
         }
@@ -576,6 +631,7 @@ private fun HomeContent(
                     group = group,
                     assignments = ui.assignments,
                     panelItems = ui.panelItems,
+                    presentations = ui.servicePresentations,
                     viewModel = viewModel,
                     iconRevision = iconRevision,
                     onPickIcon = { onPickIcon(it) },
@@ -1931,12 +1987,16 @@ private fun StatusDot(phase: ConnectionPhase) {
 private fun PanelSummaryCard(
     items: List<PanelItem>,
     controls: List<SprutControl>,
+    presentations: List<ServicePresentationPreference>,
     viewModel: MainViewModel,
 ) {
     val context = LocalContext.current
     val groups = remember(controls) { groupControlsByAccessory(controls) }
     val cards = remember(groups) { groups.flatMap(AccessoryControlGroup::serviceCards) }
     val cardsById = remember(cards) { cards.associateBy(ServiceControlCard::id) }
+    val presentationsByCardId = remember(presentations) {
+        presentations.associateBy(ServicePresentationPreference::cardId)
+    }
     val groupsByCardId = remember(groups) {
         buildMap {
             groups.forEach { group ->
@@ -1953,6 +2013,7 @@ private fun PanelSummaryCard(
     val hasSystemControls = remember { DevicePanelSupport.hasSystemControls(context) }
     var expanded by rememberSaveable { mutableStateOf(false) }
     var confirmClear by remember { mutableStateOf(false) }
+    var presentationCard by remember { mutableStateOf<ServiceControlCard?>(null) }
 
     Card(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
@@ -2049,51 +2110,30 @@ private fun PanelSummaryCard(
                                 enabled = index < items.lastIndex,
                             ) { Icon(Icons.Rounded.ArrowDownward, "Ниже") }
                         }
-                        if (
-                            card != null &&
-                            card.availableAttributes().isNotEmpty() &&
-                            card.optionControls().take(2).size < 2
-                        ) {
-                            val attributeLimit = 2 - card.optionControls().take(2).size
-                            val available = card.availableAttributes()
-                            val availableIds = available.mapTo(mutableSetOf(), SprutControl::id)
-                            val selectedIds = (
-                                item.attributeControlIds
-                                    ?: card.defaultAttributes().map(SprutControl::id)
-                                ).filter(availableIds::contains).take(attributeLimit)
+                        if (card != null && card.characteristicValues().size > 1) {
+                            val preference = presentationsByCardId[card.id]
+                                ?: card.legacyPanelPreference(item)
+                            val headline = card.headlineDisplayValue(preference)
+                            val secondary = card.secondaryDisplayValues(preference)
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    "Показатели · до $attributeLimit",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.weight(1f),
-                                )
-                                if (item.attributeControlIds != null) {
-                                    TextButton(
-                                        onClick = { viewModel.setPanelItemAttributes(card.id, null) },
-                                    ) { Text("Авто") }
-                                }
-                            }
-                            FlowRow(
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                verticalArrangement = Arrangement.spacedBy(4.dp),
-                            ) {
-                                available.forEach { attribute ->
-                                    val selected = attribute.id in selectedIds
-                                    FilterChip(
-                                        selected = selected,
-                                        enabled = selected || selectedIds.size < attributeLimit,
-                                        onClick = {
-                                            val next = if (selected) {
-                                                selectedIds - attribute.id
-                                            } else {
-                                                selectedIds + attribute.id
-                                            }
-                                            viewModel.setPanelItemAttributes(card.id, next)
-                                        },
-                                        label = { Text(card.attributeLabel(attribute)) },
-                                        colors = sprutFilterChipColors(),
+                                Column(Modifier.weight(1f)) {
+                                    Text(
+                                        "Главный · ${headline.label}: ${headline.value}",
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        style = MaterialTheme.typography.labelSmall,
                                     )
+                                    Text(
+                                        secondary.joinToString(" · ") { it.label }
+                                            .ifBlank { "Дополнительные не выбраны" },
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                                TextButton(onClick = { presentationCard = card }) {
+                                    Text("Настроить")
                                 }
                             }
                         }
@@ -2139,6 +2179,18 @@ private fun PanelSummaryCard(
                 }) { Text("Очистить") }
             },
             dismissButton = { TextButton(onClick = { confirmClear = false }) { Text("Отмена") } },
+        )
+    }
+
+    presentationCard?.let { card ->
+        ServicePresentationDialog(
+            card = card,
+            current = presentationsByCardId[card.id],
+            onDismiss = { presentationCard = null },
+            onSave = { headline, secondary ->
+                presentationCard = null
+                viewModel.setServicePresentation(card.id, headline, secondary)
+            },
         )
     }
 }
@@ -2252,6 +2304,7 @@ private fun AccessoryCard(
     group: AccessoryControlGroup,
     assignments: List<TileAssignment>,
     panelItems: List<PanelItem>,
+    presentations: List<ServicePresentationPreference>,
     viewModel: MainViewModel,
     iconRevision: Int,
     onPickIcon: (String) -> Unit,
@@ -2280,7 +2333,11 @@ private fun AccessoryCard(
                             if (group.serviceCards.size > 1) {
                                 "${group.serviceCards.size} сервиса"
                             } else {
-                                group.serviceCards.single().headlineValue()
+                                val onlyCard = group.serviceCards.single()
+                                val headline = onlyCard.headlineDisplayValue(
+                                    presentations.firstOrNull { it.cardId == onlyCard.id },
+                                )
+                                "${headline.label}: ${headline.value}"
                             },
                         ).filter(String::isNotBlank).joinToString(" · "),
                         style = MaterialTheme.typography.bodySmall,
@@ -2290,6 +2347,7 @@ private fun AccessoryCard(
             }
             group.serviceCards.forEachIndexed { index, card ->
                 val control = card.primaryControl
+                val presentation = presentations.firstOrNull { it.cardId == card.id }
                 if (index > 0 || group.serviceCards.size > 1) HorizontalDivider()
                 ControlActions(
                     card = card,
@@ -2298,6 +2356,7 @@ private fun AccessoryCard(
                     showServiceLabel = group.serviceCards.size > 1,
                     assignments = assignments,
                     panelItems = panelItems,
+                    presentation = presentation,
                     viewModel = viewModel,
                     iconRevision = iconRevision,
                     onPickIcon = { onPickIcon(control.id) },
@@ -2315,6 +2374,7 @@ private fun ControlActions(
     showServiceLabel: Boolean,
     assignments: List<TileAssignment>,
     panelItems: List<PanelItem>,
+    presentation: ServicePresentationPreference?,
     viewModel: MainViewModel,
     iconRevision: Int,
     onPickIcon: () -> Unit,
@@ -2323,6 +2383,7 @@ private fun ControlActions(
     var tileMenuExpanded by remember(control.id) { mutableStateOf(false) }
     var settingsMenuExpanded by remember(control.id) { mutableStateOf(false) }
     var iconDialogOpen by remember(control.id) { mutableStateOf(false) }
+    var presentationDialogOpen by remember(control.id) { mutableStateOf(false) }
     var characteristicsExpanded by rememberSaveable(card.id) { mutableStateOf(false) }
     val characteristicValues = remember(card) { card.characteristicValues() }
     val iconManager = remember { CustomIconManager(context) }
@@ -2335,6 +2396,9 @@ private fun ControlActions(
     }
     val inPanel = selectedPanelItem != null
     val firstFreeSlot = (1..12).firstOrNull { slot -> assignments.none { it.slot == slot } }
+    val secondaryValues = remember(card, presentation) {
+        card.secondaryDisplayValues(presentation)
+    }
 
     fun removeCustomIcon() {
         if (iconManager.remove(control.id)) {
@@ -2349,11 +2413,41 @@ private fun ControlActions(
         if (showServiceLabel) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(serviceLabel, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
+                val headline = card.headlineDisplayValue(presentation)
                 Text(
-                    card.headlineValue(),
+                    "${headline.label}: ${headline.value}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+            }
+        }
+        if (secondaryValues.isNotEmpty()) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                secondaryValues.forEach { value ->
+                    Surface(
+                        modifier = Modifier.weight(1f),
+                        shape = SprutControlShape,
+                        color = Color.White.copy(alpha = 0.045f),
+                        border = BorderStroke(1.dp, SprutGlassBorder),
+                    ) {
+                        Column(Modifier.padding(horizontal = 10.dp, vertical = 7.dp)) {
+                            Text(
+                                value.label,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Text(
+                                value.value,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.Medium,
+                            )
+                        }
+                    }
+                }
             }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -2427,6 +2521,15 @@ private fun ControlActions(
                     expanded = settingsMenuExpanded,
                     onDismissRequest = { settingsMenuExpanded = false },
                 ) {
+                    if (characteristicValues.size > 1) {
+                        DropdownMenuItem(
+                            text = { Text("Показатели карточки") },
+                            onClick = {
+                                settingsMenuExpanded = false
+                                presentationDialogOpen = true
+                            },
+                        )
+                    }
                     DropdownMenuItem(
                         text = { Text(if (hasCustomIcon) "Настроить свою иконку" else "Своя иконка") },
                         onClick = {
@@ -2529,6 +2632,187 @@ private fun ControlActions(
             },
         )
     }
+
+    if (presentationDialogOpen) {
+        ServicePresentationDialog(
+            card = card,
+            current = presentation,
+            onDismiss = { presentationDialogOpen = false },
+            onSave = { headline, secondary ->
+                presentationDialogOpen = false
+                viewModel.setServicePresentation(card.id, headline, secondary)
+            },
+        )
+    }
+}
+
+@Composable
+private fun ServicePresentationDialog(
+    card: ServiceControlCard,
+    current: ServicePresentationPreference?,
+    onDismiss: () -> Unit,
+    onSave: (headlineValueKey: String?, secondaryValueKeys: List<String>?) -> Unit,
+) {
+    val values = remember(card) { card.characteristicValues() }
+    var headlineKey by remember(card.id, current) { mutableStateOf(current?.headlineValueKey) }
+    var secondaryKeys by remember(card.id, current) { mutableStateOf(current?.secondaryValueKeys) }
+    val staged = ServicePresentationPreference(
+        cardId = card.id,
+        headlineValueKey = headlineKey,
+        secondaryValueKeys = secondaryKeys,
+    )
+    val automaticHeadline = card.headlineDisplayValue()
+    val resolvedHeadline = card.headlineDisplayValue(staged)
+    val resolvedSecondaryKeys = (
+        secondaryKeys ?: card.secondaryDisplayValues(staged).map { it.key }
+        ).filterNot { it == resolvedHeadline.key }.distinct().take(2)
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Показатели карточки") },
+        text = {
+            LazyColumn(
+                modifier = Modifier.fillMaxWidth().heightIn(max = 520.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                item {
+                    Text(
+                        "Настройка общая для приложения, плитки, панели и виджета. Она меняет только отображение — команда устройства останется прежней.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(bottom = 12.dp),
+                    )
+                    Text("Главный показатель", fontWeight = FontWeight.SemiBold)
+                }
+                item(key = "headline:auto") {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                headlineKey = null
+                            }
+                            .padding(vertical = 5.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioButton(selected = headlineKey == null, onClick = null)
+                        Column(Modifier.weight(1f)) {
+                            Text("Автоматически")
+                            Text(
+                                "${automaticHeadline.label} · ${automaticHeadline.value}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+                items(values, key = { "headline:${it.key}" }) { value ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                headlineKey = value.key
+                                secondaryKeys = secondaryKeys?.filterNot { it == value.key }
+                            }
+                            .padding(vertical = 5.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioButton(selected = headlineKey == value.key, onClick = null)
+                        Column(Modifier.weight(1f)) {
+                            Text(value.label, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(
+                                value.value,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+                item {
+                    HorizontalDivider(Modifier.padding(vertical = 10.dp), color = SprutGlassBorder)
+                    Text("Дополнительные · до 2", fontWeight = FontWeight.SemiBold)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { secondaryKeys = null }
+                            .padding(vertical = 7.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioButton(selected = secondaryKeys == null, onClick = null)
+                        Column(Modifier.weight(1f)) {
+                            Text("Автоматически")
+                            Text(
+                                card.secondaryDisplayValues(staged)
+                                    .joinToString(" · ") { it.label }
+                                    .ifBlank { "Без дополнительных показателей" },
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+                items(values, key = { "secondary:${it.key}" }) { value ->
+                    val isHeadline = value.key == resolvedHeadline.key
+                    val selected = value.key in resolvedSecondaryKeys && !isHeadline
+                    val canSelect = selected || resolvedSecondaryKeys.size < 2
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable(enabled = !isHeadline && canSelect) {
+                                secondaryKeys = if (selected) {
+                                    resolvedSecondaryKeys - value.key
+                                } else {
+                                    (resolvedSecondaryKeys + value.key).distinct().take(2)
+                                }
+                            }
+                            .padding(vertical = 5.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Checkbox(
+                            checked = selected,
+                            onCheckedChange = null,
+                            enabled = !isHeadline && canSelect,
+                        )
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                value.label,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                color = if (isHeadline) {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                } else {
+                                    MaterialTheme.colorScheme.onSurface
+                                },
+                            )
+                            Text(
+                                if (isHeadline) "Уже выбран главным" else value.value,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+                item {
+                    TextButton(
+                        onClick = {
+                            headlineKey = null
+                            secondaryKeys = null
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("Вернуть автоматический выбор") }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onSave(headlineKey, secondaryKeys) }) { Text("Сохранить") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Отмена") }
+        },
+    )
 }
 
 @Composable

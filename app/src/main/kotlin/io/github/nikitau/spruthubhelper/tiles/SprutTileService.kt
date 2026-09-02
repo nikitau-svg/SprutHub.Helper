@@ -11,6 +11,7 @@ import io.github.nikitau.spruthubhelper.AppGraph
 import io.github.nikitau.spruthubhelper.data.ControlBehavior
 import io.github.nikitau.spruthubhelper.data.DeviceKind
 import io.github.nikitau.spruthubhelper.data.SprutControl
+import io.github.nikitau.spruthubhelper.data.buildServiceControlCards
 import io.github.nikitau.spruthubhelper.data.presentationFor
 import io.github.nikitau.spruthubhelper.diagnostics.DiagnosticCategory
 import io.github.nikitau.spruthubhelper.diagnostics.DiagnosticOutcome
@@ -50,7 +51,8 @@ abstract class SprutTileService(private val slot: Int) : TileService() {
                 repository.catalog,
                 repository.connectionStatus,
                 repository.pendingControlIds,
-            ) { _, _, _ -> Unit }.collect {
+                repository.servicePresentations,
+            ) { _, _, _, _ -> Unit }.collect {
                 updateTile()
             }
         }
@@ -160,15 +162,22 @@ abstract class SprutTileService(private val slot: Int) : TileService() {
             tile.state = Tile.STATE_UNAVAILABLE
             tile.icon = TileIconResolver.icon(this, DeviceKind.OTHER)
         } else {
+            val card = buildServiceControlCards(repository.catalog.value.controls)
+                .firstOrNull { candidate -> candidate.controls.any { it.id == control.id } }
+            val preference = card?.let { selectedCard ->
+                repository.servicePresentations.value.firstOrNull { it.cardId == selectedCard.id }
+            }
             val presentation = quickSettingsPresentation(
                 control = control,
                 surface = freshness.presentationFor(control),
                 error = error,
+                headline = card?.headlineDisplayValue(preference),
             )
             tile.label = presentation.label
             tile.subtitle = presentation.subtitle
             tile.stateDescription = presentation.stateDescription
-            tile.icon = CustomIconManager(this).loadIcon(control.id)
+            tile.icon = card?.let { CustomIconManager(this).loadIcon(it.id) }
+                ?: CustomIconManager(this).loadIcon(control.id)
                 ?: TileIconResolver.icon(this, control.kind)
             tile.state = when (presentation.visualState) {
                 QuickSettingsVisualState.ACTIVE -> Tile.STATE_ACTIVE

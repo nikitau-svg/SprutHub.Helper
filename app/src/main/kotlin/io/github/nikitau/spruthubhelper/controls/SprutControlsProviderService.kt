@@ -30,7 +30,7 @@ class SprutControlsProviderService : ControlsProviderService() {
     override fun createPublisherForAllAvailable(): Publisher<Control> = flow {
         val catalog = repository.refreshIfStale().getOrElse { repository.catalog.value }
         buildServiceControlCards(catalog.controls).forEach { card ->
-            emit(ControlFactory.stateless(this@SprutControlsProviderService, card.primaryControl))
+            emit(ControlFactory.stateless(this@SprutControlsProviderService, card.primaryControl, card))
         }
     }.asPublisher(scope.coroutineContext)
 
@@ -45,7 +45,10 @@ class SprutControlsProviderService : ControlsProviderService() {
                 cardsById[selectedId]?.primaryControl ?: byId[selectedId]
             } + cards.map { it.primaryControl }
             ).distinctBy { it.id }.take(6)
-        suggestions.forEach { emit(ControlFactory.stateless(this@SprutControlsProviderService, it)) }
+        suggestions.forEach { control ->
+            val card = cards.firstOrNull { candidate -> candidate.controls.any { it.id == control.id } }
+            emit(ControlFactory.stateless(this@SprutControlsProviderService, control, card))
+        }
     }.asPublisher(scope.coroutineContext)
 
     override fun createPublisherFor(controlIds: MutableList<String>): Publisher<Control> = flow {
@@ -56,12 +59,24 @@ class SprutControlsProviderService : ControlsProviderService() {
             repository.catalog,
             repository.connectionStatus,
             repository.pendingControlIds,
-        ) { catalog, connection, pending ->
-            catalog to CatalogFreshnessPolicy.evaluate(catalog, connection, pending)
-        }.collect { (catalog, freshness) ->
+            repository.servicePresentations,
+        ) { catalog, connection, pending, presentations ->
+            Triple(catalog, CatalogFreshnessPolicy.evaluate(catalog, connection, pending), presentations)
+        }.collect { (catalog, freshness, presentations) ->
             val byId = catalog.controls.associateBy { it.id }
-            controlIds.mapNotNull(byId::get).forEach {
-                emit(ControlFactory.stateful(this@SprutControlsProviderService, it, freshness))
+            val cards = buildServiceControlCards(catalog.controls)
+            val preferencesByCardId = presentations.associateBy { it.cardId }
+            controlIds.mapNotNull(byId::get).forEach { control ->
+                val card = cards.firstOrNull { candidate -> candidate.controls.any { it.id == control.id } }
+                emit(
+                    ControlFactory.stateful(
+                        context = this@SprutControlsProviderService,
+                        item = control,
+                        freshness = freshness,
+                        card = card,
+                        preference = card?.let { preferencesByCardId[it.id] },
+                    ),
+                )
             }
         }
     }.asPublisher(scope.coroutineContext)

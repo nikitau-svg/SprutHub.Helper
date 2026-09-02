@@ -156,6 +156,85 @@ class AccessoryControlGroupTest {
     }
 
     @Test
+    fun selectsAnyCharacteristicForPresentationWithoutChangingCommandTarget() {
+        val power = control(id = "120:2:main", serviceId = "2", subtitle = "Очиститель").copy(
+            behavior = ControlBehavior.TOGGLE,
+            kind = DeviceKind.FAN,
+            characteristicType = "Active",
+            value = SprutValue(boolValue = true),
+        )
+        val quality = control(id = "120:2:2", serviceId = "2", subtitle = "Air Quality").copy(
+            behavior = ControlBehavior.SENSOR,
+            writable = false,
+            kind = DeviceKind.FAN,
+            characteristicType = "AirQuality",
+            value = SprutValue(numberValue = 1.0),
+        )
+        val pm25 = control(id = "120:2:3", serviceId = "2", subtitle = "PM2.5").copy(
+            behavior = ControlBehavior.SENSOR,
+            writable = false,
+            kind = DeviceKind.FAN,
+            characteristicType = "PM2_5Density",
+            value = SprutValue(numberValue = 8.0),
+            unit = "@unit_ug_m3",
+        )
+        val card = buildServiceControlCards(listOf(power, quality, pm25)).single()
+        val preference = ServicePresentationPreference(
+            cardId = card.id,
+            headlineValueKey = pm25.id,
+            secondaryValueKeys = listOf(quality.id),
+        )
+
+        assertEquals(power.id, card.primaryControl.id)
+        assertEquals("8 мкг/м³", card.headlineValue(preference))
+        assertEquals(listOf("Качество воздуха"), card.secondaryDisplayValues(preference).map { it.label })
+        assertEquals(power.id, card.primaryControl.id)
+    }
+
+    @Test
+    fun supportsCombinedRangeAsASelectableDisplayValueAndFallsBackSafely() {
+        val light = control(id = "120:3:main", serviceId = "3", subtitle = "Лампа").copy(
+            behavior = ControlBehavior.TOGGLE_RANGE,
+            kind = DeviceKind.LIGHT,
+            characteristicId = "1",
+            rangeCharacteristicId = "2",
+            characteristicType = "On",
+            rangeCharacteristicType = "Brightness",
+            value = SprutValue(boolValue = true, numberValue = 37.0),
+            unit = "percentage",
+        )
+        val card = buildServiceControlCards(listOf(light)).single()
+        val range = card.characteristicValues().single { it.label == "Яркость" }
+
+        assertEquals("37 %", card.headlineValue(ServicePresentationPreference(card.id, range.key)))
+        assertEquals(
+            "Включено",
+            card.headlineValue(ServicePresentationPreference(card.id, "removed-characteristic")),
+        )
+        assertEquals(light.id, card.primaryControl.id)
+    }
+
+    @Test
+    fun normalizesPresentationPreferencesAndKeepsExplicitEmptySecondaries() {
+        val normalized = normalizeServicePresentationPreferences(
+            listOf(
+                ServicePresentationPreference(
+                    cardId = "service:1:1",
+                    headlineValueKey = "main",
+                    secondaryValueKeys = listOf("main", "a", "a", "b", "c"),
+                ),
+                ServicePresentationPreference(cardId = "service:2:1", secondaryValueKeys = emptyList()),
+                ServicePresentationPreference(cardId = "service:3:1"),
+                ServicePresentationPreference(cardId = ""),
+            ),
+        )
+
+        assertEquals(2, normalized.size)
+        assertEquals(listOf("a", "b"), normalized[0].secondaryValueKeys)
+        assertEquals(emptyList<String>(), normalized[1].secondaryValueKeys)
+    }
+
+    @Test
     fun usesMeasuredCarbonDioxideAsHeadlineWithoutDroppingDetectionState() {
         val detected = control(id = "121:1:1", serviceId = "1", subtitle = "CO2 detected").copy(
             behavior = ControlBehavior.SENSOR,

@@ -17,24 +17,36 @@ import io.github.nikitau.spruthubhelper.data.CatalogFreshnessPhase
 import io.github.nikitau.spruthubhelper.data.ControlBehavior
 import io.github.nikitau.spruthubhelper.data.DeviceKind
 import io.github.nikitau.spruthubhelper.data.SprutControl
+import io.github.nikitau.spruthubhelper.data.ServiceControlCard
+import io.github.nikitau.spruthubhelper.data.ServicePresentationPreference
 import io.github.nikitau.spruthubhelper.data.presentationFor
 import io.github.nikitau.spruthubhelper.icons.CustomIconManager
 import io.github.nikitau.spruthubhelper.ui.MainActivity
 
 object ControlFactory {
-    fun stateless(context: Context, item: SprutControl): Control {
+    fun stateless(context: Context, item: SprutControl, card: ServiceControlCard? = null): Control {
         val builder = Control.StatelessBuilder(item.id, appIntent(context, item))
-            .setTitle(item.title)
-            .setSubtitle(item.subtitle)
+            .setTitle(card?.title ?: item.title)
+            .setSubtitle(card?.displayServiceName() ?: item.subtitle)
             .setStructure("SprutHub")
             .setZone(item.room)
             .setDeviceType(item.deviceType())
-        CustomIconManager(context).loadIcon(item.id)?.let(builder::setCustomIcon)
+        (card?.let { CustomIconManager(context).loadIcon(it.id) }
+            ?: CustomIconManager(context).loadIcon(item.id))?.let(builder::setCustomIcon)
         return builder.build()
     }
 
-    fun stateful(context: Context, item: SprutControl, freshness: CatalogFreshness): Control {
+    fun stateful(
+        context: Context,
+        item: SprutControl,
+        freshness: CatalogFreshness,
+        card: ServiceControlCard? = null,
+        preference: ServicePresentationPreference? = null,
+    ): Control {
         val presentation = freshness.presentationFor(item)
+        val headlineValue = card?.headlineDisplayValue(preference)
+            ?.let { "${it.label}: ${it.value}" }
+            ?: item.displayValue
         val pending = presentation.pending
         val authoritative = presentation.stateIsAuthoritative
         val status = when {
@@ -45,14 +57,14 @@ object ControlFactory {
         val statusText = when {
             pending -> "Подтверждаем…"
             authoritative && presentation.statusLabel != null ->
-                "${presentation.statusLabel} · ${item.displayValue}"
-            authoritative -> item.displayValue
+                "${presentation.statusLabel} · $headlineValue"
+            authoritative -> headlineValue
             item.behavior == ControlBehavior.BUTTON -> freshness.shortLabel
-            else -> "${freshness.shortLabel} · последнее: ${item.displayValue}"
+            else -> "${freshness.shortLabel} · последнее: $headlineValue"
         }
         val builder = Control.StatefulBuilder(item.id, appIntent(context, item))
-            .setTitle(item.title)
-            .setSubtitle(item.subtitle)
+            .setTitle(card?.title ?: item.title)
+            .setSubtitle(card?.displayServiceName() ?: item.subtitle)
             .setStructure("SprutHub")
             .setZone(item.room)
             .setDeviceType(item.deviceType())
@@ -62,7 +74,8 @@ object ControlFactory {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             builder.setAuthRequired(item.requiresAuthentication())
         }
-        CustomIconManager(context).loadIcon(item.id)?.let(builder::setCustomIcon)
+        (card?.let { CustomIconManager(context).loadIcon(it.id) }
+            ?: CustomIconManager(context).loadIcon(item.id))?.let(builder::setCustomIcon)
         return builder.build()
     }
 

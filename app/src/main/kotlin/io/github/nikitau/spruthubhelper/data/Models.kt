@@ -300,6 +300,42 @@ data class PanelItem(
     val attributeControlIds: List<String>? = null,
 )
 
+/**
+ * One visual preference shared by every Android surface for a logical
+ * SprutHub service. The command target is deliberately absent: changing what
+ * is shown must never change which characteristic receives a command.
+ *
+ * `null` means automatic selection. An empty [secondaryValueKeys] list means
+ * that the user explicitly asked not to show secondary indicators.
+ */
+@Serializable
+data class ServicePresentationPreference(
+    val cardId: String,
+    val headlineValueKey: String? = null,
+    val secondaryValueKeys: List<String>? = null,
+)
+
+internal fun normalizeServicePresentationPreferences(
+    preferences: List<ServicePresentationPreference>,
+): List<ServicePresentationPreference> = preferences
+    .asSequence()
+    .filter { it.cardId.isNotBlank() }
+    .map { preference ->
+        preference.copy(
+            headlineValueKey = preference.headlineValueKey?.takeIf(String::isNotBlank),
+            secondaryValueKeys = preference.secondaryValueKeys
+                ?.filter(String::isNotBlank)
+                ?.distinct()
+                ?.filterNot { it == preference.headlineValueKey }
+                ?.take(MAX_SERVICE_SECONDARY_VALUES),
+        )
+    }
+    .filterNot { it.headlineValueKey == null && it.secondaryValueKeys == null }
+    .distinctBy(ServicePresentationPreference::cardId)
+    .toList()
+
+const val MAX_SERVICE_SECONDARY_VALUES = 2
+
 internal fun reconcilePanelSelection(
     current: List<PanelItem>,
     validControlIds: Set<String>,

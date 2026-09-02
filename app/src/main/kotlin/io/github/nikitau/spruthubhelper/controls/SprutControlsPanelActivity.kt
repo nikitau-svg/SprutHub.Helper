@@ -93,6 +93,7 @@ import io.github.nikitau.spruthubhelper.data.DeviceKind
 import io.github.nikitau.spruthubhelper.data.PanelItem
 import io.github.nikitau.spruthubhelper.data.PanelItemSize
 import io.github.nikitau.spruthubhelper.data.ServiceControlCard
+import io.github.nikitau.spruthubhelper.data.ServicePresentationPreference
 import io.github.nikitau.spruthubhelper.data.SprutControl
 import io.github.nikitau.spruthubhelper.data.SprutValue
 import io.github.nikitau.spruthubhelper.data.buildServiceControlCards
@@ -194,6 +195,7 @@ private fun SprutDevicePanel(
     val repository = AppGraph.repository
     val catalog by repository.catalog.collectAsState()
     val panelItems by repository.panelItems.collectAsState()
+    val servicePresentations by repository.servicePresentations.collectAsState()
     val connection by repository.connectionStatus.collectAsState()
     val pendingControlIds by repository.pendingControlIds.collectAsState()
     val scope = rememberCoroutineScope()
@@ -208,6 +210,9 @@ private fun SprutDevicePanel(
         CatalogFreshnessPolicy.evaluate(catalog, connection, pendingControlIds)
     }
     val cardsById = remember(cards) { cards.associateBy(ServiceControlCard::id) }
+    val presentationsByCardId = remember(servicePresentations) {
+        servicePresentations.associateBy(ServicePresentationPreference::cardId)
+    }
     val controlsById = remember(catalog.controls) { catalog.controls.associateBy(SprutControl::id) }
     val resolvedItems = remember(panelItems, cardsById, controlsById) {
         panelItems.mapNotNull { item ->
@@ -296,7 +301,9 @@ private fun SprutDevicePanel(
             ControlBehavior.BUTTON -> runCommand(card, control) { repository.execute(control.id) }
             ControlBehavior.RANGE -> rangeCard = card
             ControlBehavior.OPTIONS -> optionSelection = card to control
-            ControlBehavior.SENSOR -> showMessage("${card.title}: ${card.headlineValue()}")
+            ControlBehavior.SENSOR -> showMessage(
+                "${card.title}: ${card.headlineValue(presentationsByCardId[card.id])}",
+            )
         }
     }
 
@@ -354,6 +361,7 @@ private fun SprutDevicePanel(
                             ServiceGlassCard(
                                 item = item,
                                 card = card,
+                                preference = presentationsByCardId[card.id],
                                 freshness = freshness,
                                 busy = busyCardId == card.id || freshness.isPending(card.primaryControl.id),
                                 sent = sentCardId == card.id,
@@ -452,6 +460,7 @@ private fun PanelHeader(
 private fun ServiceGlassCard(
     item: PanelItem,
     card: ServiceControlCard,
+    preference: ServicePresentationPreference?,
     freshness: CatalogFreshness,
     busy: Boolean,
     sent: Boolean,
@@ -464,10 +473,18 @@ private fun ServiceGlassCard(
     val presentation = freshness.presentationFor(control)
     val authoritative = presentation.stateIsAuthoritative
     val active = presentation.active
-    val attributes = card.selectedAttributes(item)
-    val optionControls = card.optionControls().take(2)
-    val visibleAttributes = attributes.take((2 - optionControls.size).coerceAtLeast(0))
-    val hasDetails = optionControls.isNotEmpty() || visibleAttributes.isNotEmpty()
+    val effectivePreference = preference ?: card.legacyPanelPreference(item)
+    val headline = card.headlineDisplayValue(effectivePreference)
+    val secondaryValues = card.secondaryDisplayValues(effectivePreference)
+    val optionValues = secondaryValues.mapNotNull { value ->
+        card.controlForDisplayValue(value.key)
+            ?.takeIf { it.id == value.key && it.behavior == ControlBehavior.OPTIONS && it.writable }
+            ?.let { value to it }
+    }
+    val visibleValues = secondaryValues.filterNot { value ->
+        optionValues.any { (optionValue, _) -> optionValue.key == value.key }
+    }
+    val hasDetails = secondaryValues.isNotEmpty()
     val cardHeight = if (card.supportsRange || hasDetails) 164.dp else 136.dp
     val customBitmap = remember(card.id, control.id) {
         val icons = CustomIconManager(context)
@@ -617,8 +634,8 @@ private fun ServiceGlassCard(
                     when {
                         busy -> "Подтверждаем…"
                         !authoritative && control.behavior == ControlBehavior.BUTTON -> freshness.shortLabel
-                        !authoritative -> "Последнее: ${card.headlineValue()}"
-                        else -> card.headlineValue()
+                        !authoritative -> "Последнее · ${headline.label}: ${headline.value}"
+                        else -> "${headline.label} · ${headline.value}"
                     },
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -666,19 +683,19 @@ private fun ServiceGlassCard(
             if (hasDetails) {
                 Spacer(Modifier.height(6.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    optionControls.forEach { option ->
+                    optionValues.forEach { (value, option) ->
                         OptionPill(
-                            label = card.attributeLabel(option),
-                            value = card.attributeValue(option),
+                            label = value.label,
+                            value = value.value,
                             enabled = !busy,
                             onClick = { onSelectOption(option) },
                             modifier = Modifier.weight(1f),
                         )
                     }
-                    visibleAttributes.forEach { attribute ->
+                    visibleValues.forEach { value ->
                         AttributePill(
-                            label = card.attributeLabel(attribute),
-                            value = card.attributeValue(attribute),
+                            label = value.label,
+                            value = value.value,
                             modifier = Modifier.weight(1f),
                         )
                     }

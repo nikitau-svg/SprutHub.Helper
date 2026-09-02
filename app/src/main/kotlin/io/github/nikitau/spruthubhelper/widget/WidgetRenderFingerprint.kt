@@ -2,6 +2,9 @@ package io.github.nikitau.spruthubhelper.widget
 
 import io.github.nikitau.spruthubhelper.data.CatalogFreshness
 import io.github.nikitau.spruthubhelper.data.SprutControl
+import io.github.nikitau.spruthubhelper.data.ServiceControlCard
+import io.github.nikitau.spruthubhelper.data.ServicePresentationPreference
+import io.github.nikitau.spruthubhelper.data.buildServiceControlCards
 import io.github.nikitau.spruthubhelper.data.presentationFor
 import io.github.nikitau.spruthubhelper.data.surfaceValue
 
@@ -24,6 +27,8 @@ internal data class WidgetRenderFingerprint(
     val room: String = "",
     val semanticValue: String = "",
     val rawDisplayValue: String = "",
+    val headlineKey: String = "",
+    val secondaryValues: String = "",
     val kind: String = "",
     val behavior: String = "",
     val freshnessPhase: String = "",
@@ -40,6 +45,8 @@ internal fun widgetRenderFingerprint(
     catalogIsEmpty: Boolean,
     freshness: CatalogFreshness,
     customIconRevision: String?,
+    card: ServiceControlCard? = null,
+    preference: ServicePresentationPreference? = null,
 ): WidgetRenderFingerprint = when {
     assignment == null -> WidgetRenderFingerprint(mode = WidgetRenderMode.UNCONFIGURED)
     control == null -> WidgetRenderFingerprint(
@@ -49,14 +56,19 @@ internal fun widgetRenderFingerprint(
     )
     else -> {
         val presentation = freshness.presentationFor(control)
+        val resolvedCard = card ?: buildServiceControlCards(listOf(control)).single()
+        val headline = resolvedCard.headlineDisplayValue(preference)
+        val secondary = resolvedCard.secondaryDisplayValues(preference)
         WidgetRenderFingerprint(
             mode = WidgetRenderMode.CONTROL,
             assignment = assignment,
-            title = control.title,
-            subtitle = control.subtitle,
-            room = control.room,
-            semanticValue = control.surfaceValue(),
-            rawDisplayValue = control.displayValue,
+            title = resolvedCard.title,
+            subtitle = resolvedCard.displayServiceName(),
+            room = resolvedCard.room,
+            semanticValue = headline.value,
+            rawDisplayValue = headline.value,
+            headlineKey = headline.key,
+            secondaryValues = secondary.joinToString("|") { "${it.key}=${it.value}" },
             kind = control.kind.name,
             behavior = control.behavior.name,
             freshnessPhase = freshness.phase.name,

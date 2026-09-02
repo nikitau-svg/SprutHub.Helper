@@ -16,6 +16,7 @@ import io.github.nikitau.spruthubhelper.data.PhonePollInterval
 import io.github.nikitau.spruthubhelper.data.PhoneSensor
 import io.github.nikitau.spruthubhelper.data.PhoneSyncMode
 import io.github.nikitau.spruthubhelper.data.SprutCatalog
+import io.github.nikitau.spruthubhelper.data.ServicePresentationPreference
 import io.github.nikitau.spruthubhelper.data.TileAssignment
 import io.github.nikitau.spruthubhelper.data.normalizeAndValidateHubConfig
 import java.util.concurrent.atomic.AtomicBoolean
@@ -61,10 +62,22 @@ class MainViewModel : ViewModel() {
         settings.config,
         repository.catalog,
         repository.connectionStatus,
-        combine(repository.tileAssignments, repository.panelItems) { tiles, panel -> tiles to panel },
+        combine(
+            repository.tileAssignments,
+            repository.panelItems,
+            repository.servicePresentations,
+        ) { tiles, panel, presentations -> Triple(tiles, panel, presentations) },
         repository.diagnostics,
     ) { config, catalog, connection, androidItems, diagnostics ->
-        MainUiState(config, catalog, connection, androidItems.first, androidItems.second, diagnostics)
+        MainUiState(
+            config = config,
+            catalog = catalog,
+            connection = connection,
+            assignments = androidItems.first,
+            panelItems = androidItems.second,
+            servicePresentations = androidItems.third,
+            diagnostics = diagnostics,
+        )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), MainUiState())
 
     init {
@@ -152,6 +165,14 @@ class MainViewModel : ViewModel() {
 
     fun setPanelItemAttributes(controlId: String, attributeControlIds: List<String>?) = launchWork(null) {
         repository.setPanelItemAttributes(controlId, attributeControlIds).getOrThrow()
+    }
+
+    fun setServicePresentation(
+        cardId: String,
+        headlineValueKey: String?,
+        secondaryValueKeys: List<String>?,
+    ) = launchWork("Показатели сервиса сохранены") {
+        repository.setServicePresentation(cardId, headlineValueKey, secondaryValueKeys).getOrThrow()
     }
 
     fun movePanelItem(controlId: String, offset: Int) = launchWork(null) {
@@ -354,5 +375,6 @@ data class MainUiState(
     val connection: ConnectionStatus = ConnectionStatus(),
     val assignments: List<TileAssignment> = emptyList(),
     val panelItems: List<PanelItem> = emptyList(),
+    val servicePresentations: List<ServicePresentationPreference> = emptyList(),
     val diagnostics: List<DiagnosticEvent> = emptyList(),
 )

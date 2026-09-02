@@ -2,6 +2,7 @@ package io.github.nikitau.spruthubhelper.tiles
 
 import io.github.nikitau.spruthubhelper.data.ControlBehavior
 import io.github.nikitau.spruthubhelper.data.ControlSurfacePresentation
+import io.github.nikitau.spruthubhelper.data.CharacteristicDisplayValue
 import io.github.nikitau.spruthubhelper.data.SprutControl
 import io.github.nikitau.spruthubhelper.data.buildServiceControlCards
 import io.github.nikitau.spruthubhelper.data.surfaceValue
@@ -28,6 +29,7 @@ internal fun quickSettingsPresentation(
     control: SprutControl,
     surface: ControlSurfacePresentation,
     error: String? = null,
+    headline: CharacteristicDisplayValue? = null,
 ): QuickSettingsPresentation {
     val unavailableReason = when {
         error != null -> error.take(30)
@@ -35,12 +37,18 @@ internal fun quickSettingsPresentation(
         !surface.stateIsAuthoritative -> surface.statusLabel ?: "Нет связи"
         else -> null
     }
-    val value = control.surfaceValue()
+    val value = (headline?.value ?: control.surfaceValue())
         .takeUnless { it.isBlank() || it == "—" }
         ?: "Нет данных"
-    val status = unavailableReason ?: value
+    val describedValue = headline?.label
+        ?.takeUnless { it in GENERIC_SENSOR_LABELS }
+        ?.let { "$it: $value" }
+        ?: value
+    val status = unavailableReason ?: if (control.behavior == ControlBehavior.SENSOR) value else describedValue
     val label = if (control.behavior == ControlBehavior.SENSOR) {
-        val subject = sensorSubject(control)
+        val subject = headline?.label
+            ?.takeUnless { it in GENERIC_SENSOR_LABELS }
+            ?: sensorSubject(control)
         // Some OEM SystemUI implementations hide Tile.subtitle even in the
         // expanded shade. Keep a sensor's state visible in the primary label
         // while leaving actionable tile names stable.
@@ -64,6 +72,7 @@ internal fun quickSettingsPresentation(
         contentDescription = listOf(
             control.title,
             control.subtitle.ifBlank { control.room },
+            headline?.label,
             status,
             value.takeIf { unavailableReason != null }?.let { "Последнее значение: $it" },
         ).filterNotNull().filter(String::isNotBlank).distinct().joinToString(", "),

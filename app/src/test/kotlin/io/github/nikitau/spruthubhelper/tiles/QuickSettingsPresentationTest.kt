@@ -2,6 +2,7 @@ package io.github.nikitau.spruthubhelper.tiles
 
 import io.github.nikitau.spruthubhelper.data.ControlBehavior
 import io.github.nikitau.spruthubhelper.data.ControlSurfacePresentation
+import io.github.nikitau.spruthubhelper.data.CharacteristicDisplayValue
 import io.github.nikitau.spruthubhelper.data.DeviceKind
 import io.github.nikitau.spruthubhelper.data.SprutControl
 import io.github.nikitau.spruthubhelper.data.SprutValue
@@ -77,6 +78,27 @@ class QuickSettingsPresentationTest {
 
         assertEquals("8 · PM2.5", result.label)
         assertEquals("Qingping Air Monitor Lite", result.subtitle)
+    }
+
+    @Test
+    fun `selected headline changes visible status but keeps action semantics`() {
+        val action = control(
+            behavior = ControlBehavior.TOGGLE,
+            value = SprutValue(boolValue = true),
+        )
+        val result = quickSettingsPresentation(
+            control = action,
+            surface = live(active = true),
+            headline = CharacteristicDisplayValue(
+                key = "1:1:pm25",
+                label = "PM2.5",
+                value = "8 мкг/м³",
+            ),
+        )
+
+        assertEquals("Qingping Air Monitor Lite", result.label)
+        assertEquals("PM2.5: 8 мкг/м³", result.subtitle)
+        assertEquals(QuickSettingsVisualState.ACTIVE, result.visualState)
     }
 
     private fun control(behavior: ControlBehavior, value: SprutValue) = SprutControl(

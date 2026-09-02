@@ -125,6 +125,12 @@ class SprutRepository(
         SharingStarted.Eagerly,
         emptyList(),
     )
+    val servicePresentations: StateFlow<List<ServicePresentationPreference>> =
+        settings.servicePresentations.stateIn(
+            scope,
+            SharingStarted.Eagerly,
+            emptyList(),
+        )
 
     init {
         scope.launch {
@@ -404,6 +410,31 @@ class SprutRepository(
             settings.setPanelItemAttributes(controlId, selected)
             log("Показатели карточки обновлены")
         }
+
+    suspend fun setServicePresentation(
+        cardId: String,
+        headlineValueKey: String?,
+        secondaryValueKeys: List<String>?,
+    ): Result<Unit> = runCatching {
+        val card = buildServiceControlCards(_catalog.value.controls).firstOrNull { it.id == cardId }
+            ?: error("Сервис больше не найден в каталоге")
+        val validKeys = card.characteristicValues()
+            .mapTo(linkedSetOf(), CharacteristicDisplayValue::key)
+        val normalizedHeadline = headlineValueKey?.takeIf(validKeys::contains)
+        check(headlineValueKey == null || normalizedHeadline != null) {
+            "Выбранный главный показатель больше недоступен"
+        }
+        val resolvedHeadlineKey = card.headlineDisplayValue(
+            ServicePresentationPreference(card.id, headlineValueKey = normalizedHeadline),
+        ).key
+        val normalizedSecondary = secondaryValueKeys
+            ?.filter(validKeys::contains)
+            ?.filterNot { it == resolvedHeadlineKey }
+            ?.distinct()
+            ?.take(MAX_SERVICE_SECONDARY_VALUES)
+        settings.setServicePresentation(card.id, normalizedHeadline, normalizedSecondary)
+        log("Отображение сервиса ${card.title} обновлено")
+    }
 
     suspend fun movePanelItem(controlId: String, offset: Int): Result<Unit> = runCatching {
         settings.movePanelItem(controlId, offset)

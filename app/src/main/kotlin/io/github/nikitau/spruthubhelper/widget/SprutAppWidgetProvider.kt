@@ -17,6 +17,9 @@ import io.github.nikitau.spruthubhelper.R
 import io.github.nikitau.spruthubhelper.data.CatalogFreshness
 import io.github.nikitau.spruthubhelper.data.ControlBehavior
 import io.github.nikitau.spruthubhelper.data.SprutControl
+import io.github.nikitau.spruthubhelper.data.ServiceControlCard
+import io.github.nikitau.spruthubhelper.data.ServicePresentationPreference
+import io.github.nikitau.spruthubhelper.data.buildServiceControlCards
 import io.github.nikitau.spruthubhelper.data.presentationFor
 import io.github.nikitau.spruthubhelper.diagnostics.DiagnosticCategory
 import io.github.nikitau.spruthubhelper.diagnostics.DiagnosticOutcome
@@ -206,13 +209,23 @@ class SprutAppWidgetProvider : AppWidgetProvider() {
             val catalog = AppGraph.repository.catalog.value
             val freshness = AppGraph.repository.freshness()
             val control = assignment?.let { id -> catalog.controls.firstOrNull { it.id == id } }
-            val iconRevision = control?.let { CustomIconManager(context).revision(it.id) }
+            val card = control?.let { selectedControl ->
+                buildServiceControlCards(catalog.controls)
+                    .firstOrNull { candidate -> candidate.controls.any { it.id == selectedControl.id } }
+            }
+            val preference = card?.let { selectedCard ->
+                AppGraph.repository.servicePresentations.value.firstOrNull { it.cardId == selectedCard.id }
+            }
+            val iconRevision = card?.let { CustomIconManager(context).revision(it.id) }
+                ?: control?.let { CustomIconManager(context).revision(it.id) }
             val fingerprint = widgetRenderFingerprint(
                 assignment = assignment,
                 control = control,
                 catalogIsEmpty = catalog.controls.isEmpty(),
                 freshness = freshness,
                 customIconRevision = iconRevision,
+                card = card,
+                preference = preference,
             )
             synchronized(renderLock) {
                 if (!force && renderedFingerprints[appWidgetId] == fingerprint) return
@@ -220,7 +233,15 @@ class SprutAppWidgetProvider : AppWidgetProvider() {
                 when {
                     assignment == null -> renderUnconfigured(context, views, appWidgetId)
                     control == null -> renderMissing(context, views, appWidgetId, catalog.controls.isEmpty())
-                    else -> renderControl(context, views, appWidgetId, control, freshness)
+                    else -> renderControl(
+                        context,
+                        views,
+                        appWidgetId,
+                        control,
+                        card ?: buildServiceControlCards(listOf(control)).single(),
+                        preference,
+                        freshness,
+                    )
                 }
                 manager.updateAppWidget(appWidgetId, views)
                 renderedFingerprints[appWidgetId] = fingerprint
@@ -260,6 +281,8 @@ class SprutAppWidgetProvider : AppWidgetProvider() {
             views: RemoteViews,
             appWidgetId: Int,
             control: SprutControl,
+            card: ServiceControlCard,
+            preference: ServicePresentationPreference?,
             freshness: CatalogFreshness,
         ) {
             val presentation = freshness.presentationFor(control)
@@ -271,31 +294,36 @@ class SprutAppWidgetProvider : AppWidgetProvider() {
                 "setBackgroundResource",
                 if (active) R.drawable.bg_widget_sprut_active else R.drawable.bg_widget_sprut,
             )
-            views.setTextViewText(R.id.widget_title, control.title)
+            views.setTextViewText(R.id.widget_title, card.title)
             val statusPrefix = presentation.statusLabel.orEmpty()
+            val headline = card.headlineDisplayValue(preference)
+            val secondary = card.secondaryDisplayValues(preference)
+                .joinToString(" · ") { "${it.label} ${it.value}" }
             views.setTextViewText(
                 R.id.widget_subtitle,
-                listOf(statusPrefix, control.subtitle, control.room)
+                listOf(statusPrefix, headline.label, secondary, card.displayServiceName(), card.room)
                     .filter(String::isNotBlank)
                     .distinct()
                     .joinToString(" · "),
             )
+            val headlineValue = headline.value
             val visibleValue = when {
                 pending -> "Ожидаем SprutHub"
                 !authoritative && control.behavior == ControlBehavior.BUTTON -> "Команда недоступна"
-                !authoritative -> "Последнее: ${widgetValue(control)}"
-                else -> widgetValue(control)
+                !authoritative -> "Последнее: $headlineValue"
+                else -> headlineValue
             }
             views.setTextViewText(R.id.widget_value, visibleValue)
             views.setViewVisibility(R.id.widget_value, View.VISIBLE)
             views.setContentDescription(
                 R.id.widget_root,
-                listOf(control.title, statusPrefix, control.subtitle, control.room, visibleValue)
+                listOf(card.title, statusPrefix, secondary, card.displayServiceName(), card.room, visibleValue)
                     .filter(String::isNotBlank)
                     .joinToString(", "),
             )
 
-            val customBitmap = CustomIconManager(context).loadBitmap(control.id)
+            val customBitmap = CustomIconManager(context).loadBitmap(card.id)
+                ?: CustomIconManager(context).loadBitmap(control.id)
             if (customBitmap != null) {
                 views.setImageViewBitmap(R.id.widget_icon, customBitmap)
             } else {

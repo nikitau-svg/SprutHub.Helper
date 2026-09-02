@@ -117,7 +117,48 @@ data class ServiceControlCard(
      * current operating state. Keep those contracts separate so improving a
      * label can never redirect a command to another characteristic.
      */
-    fun headlineValue(): String = presentationValue(headlineControl())
+    fun headlineValue(preference: ServicePresentationPreference? = null): String =
+        headlineDisplayValue(preference).value
+
+    fun headlineDisplayValue(
+        preference: ServicePresentationPreference? = null,
+    ): CharacteristicDisplayValue {
+        val automatic = automaticHeadlineDisplayValue()
+        val selectedKey = preference
+            ?.takeIf { it.cardId == id }
+            ?.headlineValueKey
+            ?: return automatic
+        return characteristicValues().firstOrNull { it.key == selectedKey } ?: automatic
+    }
+
+    /**
+     * Compact indicators shared by the in-app card, panel and widgets. An
+     * explicit selection may use any parsed characteristic, including the
+     * range half of a combined toggle/range control.
+     */
+    fun secondaryDisplayValues(
+        preference: ServicePresentationPreference? = null,
+        limit: Int = MAX_SERVICE_SECONDARY_VALUES,
+    ): List<CharacteristicDisplayValue> {
+        if (limit <= 0) return emptyList()
+        val headlineKey = headlineDisplayValue(preference).key
+        val selectedKeys = preference
+            ?.takeIf { it.cardId == id }
+            ?.secondaryValueKeys
+        val valuesByKey = characteristicValues().associateBy(CharacteristicDisplayValue::key)
+        val keys = selectedKeys ?: automaticSecondaryValueKeys()
+        return keys
+            .asSequence()
+            .filterNot { it == headlineKey }
+            .distinct()
+            .mapNotNull(valuesByKey::get)
+            .take(limit.coerceAtMost(MAX_SERVICE_SECONDARY_VALUES))
+            .toList()
+    }
+
+    fun controlForDisplayValue(key: String): SprutControl? = controls.firstOrNull { control ->
+        key == control.id || key == rangeDisplayValueKey(control)
+    }
 
     fun displayServiceName(): String {
         val explicit = serviceName.trim()
@@ -195,6 +236,16 @@ data class ServiceControlCard(
         }
     }
 
+    fun legacyPanelPreference(item: PanelItem): ServicePresentationPreference? =
+        item.attributeControlIds?.let { selected ->
+            ServicePresentationPreference(
+                cardId = id,
+                secondaryValueKeys = (optionControls().map(SprutControl::id) + selected)
+                    .distinct()
+                    .take(MAX_SERVICE_SECONDARY_VALUES),
+            )
+        }
+
     fun attributeLabel(control: SprutControl): String {
         val base = characteristicLabel(control)
         val sameLabel = controls
@@ -258,6 +309,24 @@ data class ServiceControlCard(
     companion object {
         const val DEFAULT_ATTRIBUTE_COUNT = 2
     }
+
+    private fun automaticHeadlineDisplayValue(): CharacteristicDisplayValue {
+        val control = headlineControl()
+        return CharacteristicDisplayValue(
+            key = control.id,
+            label = attributeLabel(control),
+            value = presentationValue(control),
+        )
+    }
+
+    private fun automaticSecondaryValueKeys(): List<String> = (
+        optionControls().map(SprutControl::id) +
+            availableAttributes().map(SprutControl::id)
+        )
+        .distinct()
+
+    private fun rangeDisplayValueKey(control: SprutControl): String? =
+        control.rangeCharacteristicId?.let { "${control.id}:range:$it" }
 
     private fun headlineControl(): SprutControl = when (template) {
         ServiceCardTemplate.VACUUM -> firstControlOfType(

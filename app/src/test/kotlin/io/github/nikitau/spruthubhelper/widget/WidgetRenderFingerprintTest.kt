@@ -6,6 +6,8 @@ import io.github.nikitau.spruthubhelper.data.ControlBehavior
 import io.github.nikitau.spruthubhelper.data.DeviceKind
 import io.github.nikitau.spruthubhelper.data.SprutControl
 import io.github.nikitau.spruthubhelper.data.SprutValue
+import io.github.nikitau.spruthubhelper.data.ServicePresentationPreference
+import io.github.nikitau.spruthubhelper.data.buildServiceControlCards
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Test
@@ -36,6 +38,45 @@ class WidgetRenderFingerprintTest {
         assertEquals(WidgetRenderMode.UNCONFIGURED, unconfigured.mode)
         assertEquals(WidgetRenderMode.MISSING, missing.mode)
         assertNotEquals(unconfigured, missing)
+    }
+
+    @Test
+    fun `selected linked headline participates in widget fingerprint`() {
+        val action = sensor("ignored").copy(
+            id = "1:1:main",
+            behavior = ControlBehavior.TOGGLE,
+            value = SprutValue(boolValue = true),
+            characteristicType = "Active",
+            writable = true,
+        )
+        val firstSensor = sensor("Отличное").copy(id = "1:1:quality", characteristicId = "2")
+        val firstCard = buildServiceControlCards(listOf(action, firstSensor)).single()
+        val preference = ServicePresentationPreference(firstCard.id, headlineValueKey = firstSensor.id)
+        val first = widgetRenderFingerprint(
+            assignment = action.id,
+            control = action,
+            catalogIsEmpty = false,
+            freshness = CatalogFreshness(CatalogFreshnessPhase.LIVE),
+            customIconRevision = null,
+            card = firstCard,
+            preference = preference,
+        )
+        val changedCard = buildServiceControlCards(
+            listOf(action, firstSensor.copy(value = SprutValue(stringValue = "Плохое"))),
+        ).single()
+        val changed = widgetRenderFingerprint(
+            assignment = action.id,
+            control = action,
+            catalogIsEmpty = false,
+            freshness = CatalogFreshness(CatalogFreshnessPhase.LIVE),
+            customIconRevision = null,
+            card = changedCard,
+            preference = preference,
+        )
+
+        assertNotEquals(first, changed)
+        assertEquals("Отличное", first.semanticValue)
+        assertEquals("Плохое", changed.semanticValue)
     }
 
     private fun fingerprint(

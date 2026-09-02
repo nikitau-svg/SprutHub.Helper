@@ -58,6 +58,9 @@ class SettingsRepository(private val context: Context) {
 
     val panelItems: Flow<List<PanelItem>> = context.settingsDataStore.data.map(::decodePanelItems)
 
+    val servicePresentations: Flow<List<ServicePresentationPreference>> =
+        context.settingsDataStore.data.map(::decodeServicePresentations)
+
     val selectedHealthMetrics: Flow<Set<HealthMetric>> = context.settingsDataStore.data.map { preferences ->
         preferences[Keys.HEALTH_METRICS]
             ?.split(',')
@@ -324,6 +327,24 @@ class SettingsRepository(private val context: Context) {
         }
     }
 
+    suspend fun setServicePresentation(
+        cardId: String,
+        headlineValueKey: String?,
+        secondaryValueKeys: List<String>?,
+    ) {
+        require(cardId.isNotBlank()) { "Сервис для настройки не выбран" }
+        val candidate = ServicePresentationPreference(
+            cardId = cardId,
+            headlineValueKey = headlineValueKey,
+            secondaryValueKeys = secondaryValueKeys,
+        )
+        context.settingsDataStore.edit { preferences ->
+            val current = decodeServicePresentations(preferences).filterNot { it.cardId == cardId }
+            val normalized = normalizeServicePresentationPreferences(current + candidate)
+            preferences[Keys.SERVICE_PRESENTATIONS] = json.encodeToString(normalized)
+        }
+    }
+
     suspend fun reconcileTileAssignments(
         validControlIds: Set<String>,
         replacements: Map<String, String>,
@@ -539,6 +560,14 @@ class SettingsRepository(private val context: Context) {
             }
             .take(MAX_PANEL_ITEMS)
 
+    private fun decodeServicePresentations(preferences: Preferences): List<ServicePresentationPreference> =
+        preferences[Keys.SERVICE_PRESENTATIONS]
+            ?.let { encoded ->
+                runCatching { json.decodeFromString<List<ServicePresentationPreference>>(encoded) }.getOrNull()
+            }
+            .orEmpty()
+            .let(::normalizeServicePresentationPreferences)
+
     private object Keys {
         val DEVICE_INSTANCE_ID = stringPreferencesKey("device_instance_id")
         val DEVICE_LEGACY_RECOVERY = booleanPreferencesKey("device_legacy_recovery")
@@ -550,6 +579,7 @@ class SettingsRepository(private val context: Context) {
         val EMAIL = stringPreferencesKey("email")
         val TILE_ASSIGNMENTS = stringPreferencesKey("tile_assignments")
         val PANEL_ITEMS = stringPreferencesKey("panel_items")
+        val SERVICE_PRESENTATIONS = stringPreferencesKey("service_presentations")
         val HEALTH_METRICS = stringPreferencesKey("health_metrics")
         val HEALTH_BINDING = stringPreferencesKey("health_binding")
         val HEALTH_ENABLED = booleanPreferencesKey("health_enabled")
