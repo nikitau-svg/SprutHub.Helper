@@ -11,6 +11,7 @@ import io.github.nikitau.spruthubhelper.AppGraph
 import io.github.nikitau.spruthubhelper.data.ControlBehavior
 import io.github.nikitau.spruthubhelper.data.DeviceKind
 import io.github.nikitau.spruthubhelper.data.SprutControl
+import io.github.nikitau.spruthubhelper.data.TileAssignment
 import io.github.nikitau.spruthubhelper.data.buildServiceControlCards
 import io.github.nikitau.spruthubhelper.data.presentationFor
 import io.github.nikitau.spruthubhelper.diagnostics.DiagnosticCategory
@@ -52,7 +53,8 @@ abstract class SprutTileService(private val slot: Int) : TileService() {
                 repository.connectionStatus,
                 repository.pendingControlIds,
                 repository.servicePresentations,
-            ) { _, _, _, _ -> Unit }.collect {
+                repository.tileAssignments,
+            ) { _, _, _, _, _ -> Unit }.collect {
                 updateTile()
             }
         }
@@ -151,7 +153,10 @@ abstract class SprutTileService(private val slot: Int) : TileService() {
 
     private fun updateTile(error: String? = null) {
         val tile = qsTile ?: return
-        val control = assignedControl()
+        val assignment = assignedTileAssignment()
+        val control = assignment?.let { selected ->
+            repository.catalog.value.controls.firstOrNull { it.id == selected.controlId }
+        }
         val freshness = repository.freshness()
         if (control == null) {
             tile.label = "SprutHub $slot"
@@ -172,6 +177,7 @@ abstract class SprutTileService(private val slot: Int) : TileService() {
                 surface = freshness.presentationFor(control),
                 error = error,
                 headline = card?.headlineDisplayValue(preference),
+                labelStyle = assignment.labelStyle,
             )
             tile.label = presentation.label
             tile.subtitle = presentation.subtitle
@@ -190,8 +196,11 @@ abstract class SprutTileService(private val slot: Int) : TileService() {
         tile.updateTile()
     }
 
+    private fun assignedTileAssignment(): TileAssignment? =
+        repository.tileAssignments.value.firstOrNull { it.slot == slot }
+
     private fun assignedControl(): SprutControl? {
-        val controlId = repository.tileAssignments.value.firstOrNull { it.slot == slot }?.controlId ?: return null
+        val controlId = assignedTileAssignment()?.controlId ?: return null
         return repository.catalog.value.controls.firstOrNull { it.id == controlId }
     }
 

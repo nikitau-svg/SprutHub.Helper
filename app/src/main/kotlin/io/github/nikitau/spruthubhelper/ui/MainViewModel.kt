@@ -18,6 +18,7 @@ import io.github.nikitau.spruthubhelper.data.PhoneSyncMode
 import io.github.nikitau.spruthubhelper.data.SprutCatalog
 import io.github.nikitau.spruthubhelper.data.ServicePresentationPreference
 import io.github.nikitau.spruthubhelper.data.TileAssignment
+import io.github.nikitau.spruthubhelper.data.TileLabelStyle
 import io.github.nikitau.spruthubhelper.data.normalizeAndValidateHubConfig
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
@@ -137,9 +138,18 @@ class MainViewModel : ViewModel() {
     }
 
     fun assignTile(slot: Int, controlId: String) = launchWork(null) {
+        val labelStyle = uiState.value.assignments
+            .firstOrNull { it.controlId == controlId }
+            ?.labelStyle
+            ?: TileLabelStyle.ROOM_AND_SERVICE
         repository.assignTile(slot, controlId).getOrThrow()
-        _tileAddRequests.emit(TileAddRequest(slot, controlId))
+        _tileAddRequests.emit(TileAddRequest(slot, controlId, labelStyle))
     }
+
+    fun setTileLabelStyle(slot: Int, style: TileLabelStyle) =
+        launchWork("Название плитки обновлено") {
+            repository.setTileLabelStyle(slot, style).getOrThrow()
+        }
 
     fun clearTile(slot: Int) = launchWork("Плитка $slot удалена из приложения и списка Android") {
         repository.clearTile(slot).getOrThrow()
@@ -367,7 +377,11 @@ internal fun buildConnectionSettingsCandidate(
     )
 }
 
-data class TileAddRequest(val slot: Int, val controlId: String)
+data class TileAddRequest(
+    val slot: Int,
+    val controlId: String,
+    val labelStyle: TileLabelStyle,
+)
 
 data class MainUiState(
     val config: HubConfig = HubConfig(),

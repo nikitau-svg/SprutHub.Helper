@@ -275,10 +275,34 @@ data class SprutRoom(
 )
 
 @Serializable
+enum class TileLabelStyle {
+    /** The user-facing accessory name from SprutHub. */
+    ACCESSORY,
+
+    /** A compact SprutHub-like path such as `Спальня · Кондиционер`. */
+    ROOM_AND_SERVICE,
+}
+
+@Serializable
 data class TileAssignment(
     val slot: Int,
     val controlId: String,
+    /** Missing in old saved JSON, so existing tiles migrate to the clearer style. */
+    val labelStyle: TileLabelStyle = TileLabelStyle.ROOM_AND_SERVICE,
 )
+
+internal fun updateTileAssignment(
+    current: List<TileAssignment>,
+    slot: Int,
+    controlId: String,
+): List<TileAssignment> {
+    val preservedStyle = current.firstOrNull { it.controlId == controlId }?.labelStyle
+        ?: TileLabelStyle.ROOM_AND_SERVICE
+    return current
+        .filterNot { it.slot == slot || it.controlId == controlId }
+        .plus(TileAssignment(slot, controlId, preservedStyle))
+        .sortedBy(TileAssignment::slot)
+}
 
 @Serializable
 enum class PanelItemSize {

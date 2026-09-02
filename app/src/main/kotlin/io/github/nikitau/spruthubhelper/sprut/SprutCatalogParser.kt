@@ -97,7 +97,10 @@ class SprutCatalogParser {
         rooms: Map<String, String>,
     ): List<SprutControl> {
         val accessoryId = accessory.scalar("id", "aId", "index").ifBlank { accessoryIndex.toString() }
-        val accessoryName = accessory.displayScalar("name", "title", "displayName")
+        // SprutHub keeps a vendor/model name alongside the user-editable
+        // display name. The web UI uses the latter in the accessory dialog,
+        // so refreshing the catalog must pick up a rename made in SprutHub.
+        val accessoryName = accessory.displayScalar("displayName", "title", "name")
             .ifBlank { "Устройство $accessoryId" }
         val roomId = accessory.scalar("roomId", "rId", "room")
         val roomName = rooms[roomId]

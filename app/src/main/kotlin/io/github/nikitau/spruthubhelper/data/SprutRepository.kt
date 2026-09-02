@@ -392,6 +392,11 @@ class SprutRepository(
         log("${_catalog.value.controls.first { it.id == controlId }.title} назначено в плитку $slot")
     }
 
+    suspend fun setTileLabelStyle(slot: Int, style: TileLabelStyle): Result<Unit> = runCatching {
+        settings.setTileLabelStyle(slot, style)
+        log("Формат названия плитки $slot обновлён")
+    }
+
     suspend fun clearTile(slot: Int): Result<Unit> = runCatching {
         settings.clearTile(slot)
         log("Плитка $slot освобождена")

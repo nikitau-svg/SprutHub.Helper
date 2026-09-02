@@ -134,6 +134,7 @@ import io.github.nikitau.spruthubhelper.data.SprutControl
 import io.github.nikitau.spruthubhelper.data.ServiceControlCard
 import io.github.nikitau.spruthubhelper.data.ServicePresentationPreference
 import io.github.nikitau.spruthubhelper.data.TileAssignment
+import io.github.nikitau.spruthubhelper.data.TileLabelStyle
 import io.github.nikitau.spruthubhelper.data.buildServiceControlCards
 import io.github.nikitau.spruthubhelper.data.groupControlsByAccessory
 import io.github.nikitau.spruthubhelper.tiles.TileComponents
@@ -148,6 +149,7 @@ import io.github.nikitau.spruthubhelper.sprut.bindingMatchesFields
 import io.github.nikitau.spruthubhelper.sprut.healthVirtualFields
 import io.github.nikitau.spruthubhelper.sprut.phoneVirtualFields
 import io.github.nikitau.spruthubhelper.tiles.TileInstallStateStore
+import io.github.nikitau.spruthubhelper.tiles.tileIdentityLabel
 import io.github.nikitau.spruthubhelper.widget.SprutAppWidgetProvider
 import java.text.DateFormat
 import java.util.Date
@@ -298,7 +300,7 @@ private fun MainScreen(
                 // PackageManager enables a previously hidden TileService
                 // asynchronously on some Samsung builds.
                 delay(350)
-                requestSystemTile(activity, request.slot, control, viewModel)
+                requestSystemTile(activity, request.slot, control, request.labelStyle, viewModel)
             }
         }
     }
@@ -2287,7 +2289,8 @@ private fun TileSummaryCard(
                                 Spacer(Modifier.size(10.dp))
                                 Column(Modifier.weight(1f)) {
                                     Text(
-                                        control?.title ?: "Недоступное устройство",
+                                        control?.let { tileIdentityLabel(it, assignment.labelStyle) }
+                                            ?: "Недоступное устройство",
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis,
                                     )
@@ -2298,6 +2301,13 @@ private fun TileSummaryCard(
                                         color = if (assignment.slot in installedSlots) SprutSuccess
                                         else MaterialTheme.colorScheme.error,
                                     )
+                                    if (control != null) {
+                                        Text(
+                                            "Название: ${assignment.labelStyle.label()}",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
                                 }
                                 if (assignment.slot !in installedSlots && control != null) {
                                     TextButton(onClick = {
@@ -2308,6 +2318,7 @@ private fun TileSummaryCard(
                                                 context as ComponentActivity,
                                                 assignment.slot,
                                                 control,
+                                                assignment.labelStyle,
                                                 viewModel,
                                             )
                                         }
@@ -2438,13 +2449,16 @@ private fun ControlActions(
     var settingsMenuExpanded by remember(control.id) { mutableStateOf(false) }
     var iconDialogOpen by remember(control.id) { mutableStateOf(false) }
     var presentationDialogOpen by remember(control.id) { mutableStateOf(false) }
+    var tileLabelDialogOpen by remember(control.id) { mutableStateOf(false) }
     var characteristicsExpanded by rememberSaveable(card.id) { mutableStateOf(false) }
     val characteristicValues = remember(card) { card.characteristicValues() }
     val iconManager = remember { CustomIconManager(context) }
     var hasCustomIcon by remember(control.id, iconRevision) {
         mutableStateOf(iconManager.hasIcon(control.id))
     }
-    val assignedSlot = assignments.firstOrNull { it.controlId == control.id }?.slot
+    val tileAssignment = assignments.firstOrNull { it.controlId == control.id }
+    val assignedSlot = tileAssignment?.slot
+    val assignedLabelStyle = tileAssignment?.labelStyle ?: TileLabelStyle.ROOM_AND_SERVICE
     val selectedPanelItem = panelItems.firstOrNull { item ->
         item.controlId == card.id || card.controls.any { it.id == item.controlId }
     }
@@ -2539,6 +2553,13 @@ private fun ControlActions(
                             onClick = {
                                 tileMenuExpanded = false
                                 viewModel.assignTile(assignedSlot, control.id)
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Название · ${assignedLabelStyle.label()}") },
+                            onClick = {
+                                tileMenuExpanded = false
+                                tileLabelDialogOpen = true
                             },
                         )
                         HorizontalDivider()
@@ -2698,6 +2719,69 @@ private fun ControlActions(
             },
         )
     }
+    if (tileLabelDialogOpen && tileAssignment != null) {
+        TileLabelStyleDialog(
+            control = control,
+            current = tileAssignment.labelStyle,
+            onDismiss = { tileLabelDialogOpen = false },
+            onSave = { style ->
+                tileLabelDialogOpen = false
+                viewModel.setTileLabelStyle(tileAssignment.slot, style)
+            },
+        )
+    }
+}
+
+@Composable
+private fun TileLabelStyleDialog(
+    control: SprutControl,
+    current: TileLabelStyle,
+    onDismiss: () -> Unit,
+    onSave: (TileLabelStyle) -> Unit,
+) {
+    var selected by remember(control.id, current) { mutableStateOf(current) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Название плитки") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    "Меняется только подпись в шторке. Привязка и команды остаются на том же устройстве.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(bottom = 8.dp),
+                )
+                TileLabelStyle.entries.forEach { style ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { selected = style }
+                            .padding(vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioButton(selected = selected == style, onClick = null)
+                        Column(Modifier.weight(1f)) {
+                            Text(style.label())
+                            Text(
+                                tileIdentityLabel(control, style),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = { onSave(selected) }) { Text("Сохранить") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Отмена") } },
+    )
+}
+
+private fun TileLabelStyle.label(): String = when (this) {
+    TileLabelStyle.ACCESSORY -> "Имя аксессуара"
+    TileLabelStyle.ROOM_AND_SERVICE -> "Комната + сервис"
 }
 
 @Composable
@@ -2905,7 +2989,13 @@ private fun PlacementAction(
     }
 }
 
-private fun requestSystemTile(activity: ComponentActivity, slot: Int, control: SprutControl, viewModel: MainViewModel) {
+private fun requestSystemTile(
+    activity: ComponentActivity,
+    slot: Int,
+    control: SprutControl,
+    labelStyle: TileLabelStyle,
+    viewModel: MainViewModel,
+) {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
         viewModel.showNotice("Плитка настроена. Добавьте SprutHub $slot через редактирование шторки.")
         return
@@ -2913,7 +3003,7 @@ private fun requestSystemTile(activity: ComponentActivity, slot: Int, control: S
     val manager = activity.getSystemService(StatusBarManager::class.java)
     manager.requestAddTileService(
         TileComponents.component(activity, slot),
-        control.title,
+        tileIdentityLabel(control, labelStyle),
         CustomIconManager(activity).loadIcon(control.id) ?: TileIconResolver.icon(activity, control),
         activity.mainExecutor,
     ) { result ->

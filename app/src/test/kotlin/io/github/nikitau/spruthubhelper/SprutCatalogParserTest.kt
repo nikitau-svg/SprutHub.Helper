@@ -16,6 +16,36 @@ class SprutCatalogParserTest {
     private val parser = SprutCatalogParser()
 
     @Test
+    fun prefersUserFacingAccessoryNameOverVendorName() {
+        val rooms = json.parseToJsonElement("""{"rooms":[{"id":1,"name":"Спальня"}]}""")
+        val accessories = json.parseToJsonElement(
+            """
+            {"accessories":[{
+              "id":10,
+              "name":"Vendor AC",
+              "displayName":"Климат спальни",
+              "roomId":1,
+              "services":[{
+                "id":1,
+                "type":"HeaterCooler",
+                "name":"Кондиционер",
+                "characteristics":[
+                  {"id":1,"type":"C_ACTIVE","control":{"write":true,"value":{"intValue":1}}}
+                ]
+              }]
+            }]}
+            """.trimIndent(),
+        )
+
+        val control = parser.parse(rooms, accessories).controls.single()
+
+        assertEquals("Климат спальни", control.title)
+        assertEquals("Кондиционер", control.serviceName)
+        assertEquals("Спальня", control.room)
+        assertEquals("10:1:1", control.id)
+    }
+
+    @Test
     fun combinesLightPowerAndBrightnessIntoOneControl() {
         val rooms = json.parseToJsonElement(
             """{"room":{"list":{"rooms":[{"id":2,"name":"Гостиная"}]}}}""",

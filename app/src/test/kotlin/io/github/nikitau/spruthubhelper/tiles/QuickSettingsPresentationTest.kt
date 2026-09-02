@@ -6,6 +6,7 @@ import io.github.nikitau.spruthubhelper.data.CharacteristicDisplayValue
 import io.github.nikitau.spruthubhelper.data.DeviceKind
 import io.github.nikitau.spruthubhelper.data.SprutControl
 import io.github.nikitau.spruthubhelper.data.SprutValue
+import io.github.nikitau.spruthubhelper.data.TileLabelStyle
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -99,6 +100,36 @@ class QuickSettingsPresentationTest {
         assertEquals("Qingping Air Monitor Lite", result.label)
         assertEquals("PM2.5: 8 мкг/м³", result.subtitle)
         assertEquals(QuickSettingsVisualState.ACTIVE, result.visualState)
+    }
+
+    @Test
+    fun `actionable tile can use room and main service instead of accessory name`() {
+        val climate = control(
+            behavior = ControlBehavior.TOGGLE,
+            value = SprutValue(boolValue = true),
+        ).copy(
+            title = "Vendor AC",
+            subtitle = "Кондиционер",
+            serviceName = "Кондиционер",
+            sourceType = "HeaterCooler",
+            room = "Спальня",
+            kind = DeviceKind.THERMOSTAT,
+        )
+
+        val roomAndService = quickSettingsPresentation(
+            control = climate,
+            surface = live(active = true),
+            labelStyle = TileLabelStyle.ROOM_AND_SERVICE,
+        )
+        val accessory = quickSettingsPresentation(
+            control = climate,
+            surface = live(active = true),
+            labelStyle = TileLabelStyle.ACCESSORY,
+        )
+
+        assertEquals("Спальня · Кондиционер", roomAndService.label)
+        assertEquals("Vendor AC", accessory.label)
+        assertEquals("Включено", roomAndService.subtitle)
     }
 
     private fun control(behavior: ControlBehavior, value: SprutValue) = SprutControl(

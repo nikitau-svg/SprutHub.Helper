@@ -242,11 +242,21 @@ class SettingsRepository(private val context: Context) {
     suspend fun assignTile(slot: Int, controlId: String) {
         require(slot in 1..MAX_TILE_SLOTS)
         context.settingsDataStore.edit { preferences ->
-            val current = decodeAssignments(preferences)
-                .filterNot { it.slot == slot || it.controlId == controlId }
-                .plus(TileAssignment(slot, controlId))
-                .sortedBy { it.slot }
+            val current = updateTileAssignment(decodeAssignments(preferences), slot, controlId)
             preferences[Keys.TILE_ASSIGNMENTS] = json.encodeToString(current)
+        }
+    }
+
+    suspend fun setTileLabelStyle(slot: Int, style: TileLabelStyle) {
+        require(slot in 1..MAX_TILE_SLOTS)
+        context.settingsDataStore.edit { preferences ->
+            val current = decodeAssignments(preferences)
+            require(current.any { it.slot == slot }) { "Плитка $slot больше не назначена" }
+            preferences[Keys.TILE_ASSIGNMENTS] = json.encodeToString(
+                current.map { assignment ->
+                    if (assignment.slot == slot) assignment.copy(labelStyle = style) else assignment
+                },
+            )
         }
     }
 
