@@ -19,6 +19,7 @@ dist/
 *.aab
 *.apks
 *.sha256
+!docs/screenshots/APPROVED.sha256
 *.log
 *.hprof
 *.db

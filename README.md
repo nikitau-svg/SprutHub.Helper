@@ -34,6 +34,14 @@ Helper подключается напрямую к локальному хаб�
 
 [Установка](docs/INSTALLATION.md) · [Возможности](docs/CAPABILITIES.md) · [FAQ](docs/FAQ.md) · [Диагностика](docs/DIAGNOSTICS.md) · [Поддержка](SUPPORT.md) · [Приватность](PRIVACY.md)
 
+## Как выглядит
+
+Кадры сняты на отдельной демонстрационной сборке с полностью синтетическими устройствами и значениями. Нажмите на изображение, чтобы открыть его целиком.
+
+| Главный экран | Каталог и показатели | Крупная панель |
+| :---: | :---: | :---: |
+| [![Главный экран готовности SprutHub Helper](docs/screenshots/home.png)](docs/screenshots/home.png) | [![Каталог устройств и полный список показателей](docs/screenshots/catalog.png)](docs/screenshots/catalog.png) | [![Компактная панель управления устройствами](docs/screenshots/device-panel.png)](docs/screenshots/device-panel.png) |
+
 ## Возможности
 
 - подключение к локальному или настроенному облачному адресу SprutHub;
