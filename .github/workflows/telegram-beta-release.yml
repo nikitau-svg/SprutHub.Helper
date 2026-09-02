@@ -3,6 +3,10 @@ name: Telegram beta release
 on:
   release:
     types: [published]
+  push:
+    branches: [main]
+    paths:
+      - .github/telegram-beta-retry.txt
   workflow_dispatch:
     inputs:
       tag:
@@ -26,6 +30,7 @@ jobs:
   notify:
     if: >-
       github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'push' ||
       (github.event.release.prerelease == true &&
       contains(github.event.release.tag_name, '-beta.'))
     runs-on: ubuntu-latest
@@ -40,6 +45,16 @@ jobs:
     steps:
       - name: Checkout notification script
         uses: actions/checkout@v5
+
+      - name: Resolve requested retry tag
+        if: github.event_name == 'push'
+        run: |
+          retry_tag="$(sed -n '1p' .github/telegram-beta-retry.txt | tr -d '[:space:]')"
+          if ! printf '%s' "$retry_tag" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+-beta\.[0-9]+$'; then
+            echo "::error::Invalid beta tag in .github/telegram-beta-retry.txt"
+            exit 1
+          fi
+          echo "RELEASE_TAG=$retry_tag" >> "$GITHUB_ENV"
 
       - name: Verify published assets and notify Telegram
         run: python3 .github/scripts/notify_telegram_release.py

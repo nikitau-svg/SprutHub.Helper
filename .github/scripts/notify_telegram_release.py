@@ -19,6 +19,7 @@ from typing import Any
 GITHUB_API = "https://api.github.com"
 MAX_TELEGRAM_CAPTION = 1000
 MAX_TELEGRAM_UPLOAD = 50 * 1024 * 1024
+TELEGRAM_UPLOAD_TIMEOUT = 180
 
 
 def github_request(url: str, token: str, accept: str = "application/vnd.github+json"):
@@ -188,7 +189,10 @@ def send_telegram_document(
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=30) as response:
+        # GitHub-hosted runners can need more than 30 seconds to upload an APK.
+        # Keep this as one long attempt: retrying an ambiguous timed-out POST can
+        # publish the same document twice if Telegram received the first request.
+        with urllib.request.urlopen(request, timeout=TELEGRAM_UPLOAD_TIMEOUT) as response:
             result = json.load(response)
     except urllib.error.HTTPError as error:
         details = error.read(2048).decode("utf-8", errors="replace")
