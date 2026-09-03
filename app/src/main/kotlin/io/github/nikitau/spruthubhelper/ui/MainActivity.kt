@@ -2555,13 +2555,6 @@ private fun ControlActions(
                                 viewModel.assignTile(assignedSlot, control.id)
                             },
                         )
-                        DropdownMenuItem(
-                            text = { Text("Название · ${assignedLabelStyle.label()}") },
-                            onClick = {
-                                tileMenuExpanded = false
-                                tileLabelDialogOpen = true
-                            },
-                        )
                         HorizontalDivider()
                     }
                     (1..12).forEach { slot ->
@@ -2602,6 +2595,15 @@ private fun ControlActions(
                             onClick = {
                                 settingsMenuExpanded = false
                                 presentationDialogOpen = true
+                            },
+                        )
+                    }
+                    if (tileAssignment != null) {
+                        DropdownMenuItem(
+                            text = { Text("Название в шторке · ${assignedLabelStyle.label()}") },
+                            onClick = {
+                                settingsMenuExpanded = false
+                                tileLabelDialogOpen = true
                             },
                         )
                     }
